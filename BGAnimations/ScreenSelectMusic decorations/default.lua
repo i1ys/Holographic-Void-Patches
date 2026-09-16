@@ -2206,10 +2206,10 @@ t[#t + 1] = Def.ActorFrame {
 			local profile = PROFILEMAN:GetProfile(PLAYER_1)
 			if profile then
 				local notesHit = profile:GetTotalTapsAndHolds()
-				local sessionSecs = profile:GetTotalSessionSeconds()
+				local playtimeSecs = profile:GetTotalGameplaySeconds() --profile:GetTotalSessionSeconds() custom edit to show playtime instead of sesh time
 				self:settextf("%s: %d\n%s: %d:%02d", 
 					THEME:GetString("ScreenSelectMusic", "NotesFormatted"), notesHit, 
-					THEME:GetString("ScreenSelectMusic", "SessionFormatted"), math.floor(sessionSecs/60), sessionSecs%60):visible(true)
+					THEME:GetString("ScreenSelectMusic", "PlaytimeFormatted"), math.floor(playtimeSecs/60), playtimeSecs%60):visible(true)
 			else
 				self:visible(false)
 			end
