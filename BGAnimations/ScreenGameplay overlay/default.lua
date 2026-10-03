@@ -8,6 +8,7 @@ local HV_PBThreshold = 0
 local HV_JudgeScale = 1.0
 local HV_AutoFailJudgeCounts = { W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0 }
 local HV_RidiculousCount = 0
+local HV_AutoFailStopped = false
 local failSfxPath = THEME:GetPathS("", "ScreenGameplay failed")
 local failSfxPlayed = false
 
@@ -164,6 +165,7 @@ local t = Def.ActorFrame {
 		HV.OnlineEvaluationActive = nil
 		HV.OnlineEvaluationName = nil
 		failSfxPlayed = false
+		HV_AutoFailStopped = false
 		HV_AutoFailJudgeCounts = { W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0 }
 		-- Re-check sync mode via SCREENMAN now that it's safer
 		local curScreen = SCREENMAN:GetTopScreen()
@@ -320,6 +322,7 @@ local t = Def.ActorFrame {
 	-- Fully compliant with Etterna's internal wife3 scoring and evaluation mechanics
 	JudgmentMessageCommand = function(self, params)
 		if params.Player ~= PLAYER_1 then return end
+		if HV_AutoFailStopped then return end
 		
 		-- Exclude non-tap judgements that don't affect points
 		local s = params.TapNoteScore
@@ -361,6 +364,7 @@ local t = Def.ActorFrame {
 
 	HoldNoteScoreMessageCommand = function(self, params)
 		if params.Player ~= PLAYER_1 then return end
+		if HV_AutoFailStopped then return end
 		-- The engine applies the hold penalty even if the head was completely missed
 		if params.HoldNoteScore == "HoldNoteScore_LetGo" or params.HoldNoteScore == "HoldNoteScore_MissedHold" then
 			HV_PointsLost = HV_PointsLost + 4.5
@@ -370,6 +374,7 @@ local t = Def.ActorFrame {
 	
 	RollNoteScoreMessageCommand = function(self, params)
 		if params.Player ~= PLAYER_1 then return end
+		if HV_AutoFailStopped then return end
 		if params.RollNoteScore == "RollNoteScore_LetGo" or params.RollNoteScore == "RollNoteScore_MissedRoll" then
 			HV_PointsLost = HV_PointsLost + 4.5
 			MESSAGEMAN:Broadcast("HV_PointsUpdate")
@@ -753,14 +758,32 @@ t[#t + 1] = Def.ActorFrame {
 				wifePct = ((HV_MaxPoints - HV_PointsLost) / HV_MaxPoints) * 100
 			else
 				if pss then
-					local currentMaxPoints = self.currScoredTaps * 2
-					if currentMaxPoints > 0 then
-						local raw = (self.currWifePoints / currentMaxPoints) * 100
-						wifePct = math.min(raw, 100)
-					elseif self.currWifePoints < 0 then
-						wifePct = (self.currWifePoints / 2) * 100
+					-- GetWifePoints includes hold/roll NG penalties. Prefer it over
+					-- the local tap accumulator so an NG is normalized against the
+					-- same number of scored notes as the engine's Wife3 score.
+					local notesPassed = pss:GetTapNoteScores("TapNoteScore_W1") +
+						pss:GetTapNoteScores("TapNoteScore_W2") +
+						pss:GetTapNoteScores("TapNoteScore_W3") +
+						pss:GetTapNoteScores("TapNoteScore_W4") +
+						pss:GetTapNoteScores("TapNoteScore_W5") +
+						pss:GetTapNoteScores("TapNoteScore_Miss")
+					local ok, engineWifePoints = false, nil
+					if notesPassed > 0 and type(pss.GetWifePoints) == "function" then
+						ok, engineWifePoints = pcall(pss.GetWifePoints, pss)
+						engineWifePoints = ok and tonumber(engineWifePoints) or nil
+					end
+					if engineWifePoints then
+						wifePct = math.min((engineWifePoints / (notesPassed * 2)) * 100, 100)
 					else
-						wifePct = 100.0000
+						local currentMaxPoints = self.currScoredTaps * 2
+						if currentMaxPoints > 0 then
+							local raw = (self.currWifePoints / currentMaxPoints) * 100
+							wifePct = math.min(raw, 100)
+						elseif self.currWifePoints < 0 then
+							wifePct = (self.currWifePoints / 2) * 100
+						else
+							wifePct = 100.0000
+						end
 					end
 				end
 			end			
@@ -2070,52 +2093,17 @@ end
 -- ============================================================
 -- LANE COVER
 -- ============================================================
-local suddenHeight = HV.GetLaneCoverSudden()
-local hiddenHeight = HV.GetLaneCoverHidden()
-
-if suddenHeight > 0 or hiddenHeight > 0 then
-	local isReverse = GAMESTATE:GetPlayerState():GetCurrentPlayerOptions():UsingReverse()
-	
-	-- Helper to create a cover quad (isTop=true for Top, false for Bottom)
-	local function createCover(height, isTop)
-		local h = SCREEN_HEIGHT * (height / 100)
-		return Def.Quad {
-			InitCommand = function(self)
-				self:zoomto(SCREEN_WIDTH, h)
-					:diffuse(color("0,0,0,1"))
-				if isTop then
-					self:valign(0):y(-SCREEN_HEIGHT / 2)
-				else
-					self:valign(1):y(SCREEN_HEIGHT / 2)
-				end
-			end
-		}
-	end
-
-	local t_cover = Def.ActorFrame {
-		Name = "LaneCoverLayer",
-		InitCommand = function(self)
-			self:Center()
-			self:visible(not isSync)
-		end,
-	}
-
-	-- Sudden: spawn side (Top for Standard, Bottom for Reverse)
-	if suddenHeight > 0 then
-		t_cover[#t_cover + 1] = createCover(suddenHeight, not isReverse)
-	end
-
-	-- Hidden: receptor side (Bottom for Standard, Top for Reverse)
-	if hiddenHeight > 0 then
-		t_cover[#t_cover + 1] = createCover(hiddenHeight, isReverse)
-	end
-	
-	t[#t + 1] = t_cover
+-- Use Etterna's native Hidden/Sudden rendering so the modifiers follow the
+-- notefield (including reverse, fades, and all supported playfield layouts).
+if not isSync and HV.ApplyLaneCoverModifiers then
+	HV.ApplyLaneCoverModifiers()
 end
 
 if not isSync then
 	t[#t + 1] = LoadActor("scoretracking")
-	t[#t + 1] = LoadActor("pacemaker")
+	if ThemePrefs.Get("HV_ShowPacemakerGraph") then
+		t[#t + 1] = LoadActor("pacemaker")
+	end
 	t[#t + 1] = Def.ActorFrame {
 		Name = "AutofailDisplay",
 		InitCommand = function(self)
@@ -2139,7 +2127,7 @@ if not isSync then
 		end,
 		RefreshCommand = function(self)
 			local actionMode = ThemePrefs.Get("HV_AutoFailMode")
-			if actionMode == "Off" or not actionMode then
+			if GAMESTATE:IsPracticeMode() or actionMode == "Off" or not actionMode then
 				self:visible(false)
 				return
 			end
@@ -2503,7 +2491,7 @@ t[#t + 1] = Def.Actor {
 	end,
 	HV_PointsUpdateMessageCommand = function(self)
 		local actionMode = ThemePrefs.Get("HV_AutoFailMode")
-		if actionMode == "Off" or not actionMode or self.hasTriggered then return end
+		if GAMESTATE:IsPracticeMode() or actionMode == "Off" or not actionMode or self.hasTriggered then return end
 		
 		local condition = ThemePrefs.Get("HV_AutoFailCondition")
 		
@@ -2532,7 +2520,7 @@ t[#t + 1] = Def.Actor {
 			for i=idx, #order do
 				currentCount = currentCount + (HV_AutoFailJudgeCounts[order[i]] or 0)
 			end
-			if currentCount > 0 and currentCount >= limit then 
+			if currentCount > limit then
 				triggered = true 
 			end
 		end
@@ -2544,7 +2532,9 @@ t[#t + 1] = Def.Actor {
 	end,
 	ActionTriggeredCommand = function(self)
 		if self.hasTriggered then return end
+		if GAMESTATE:IsPracticeMode() then return end
 		self.hasTriggered = true
+		HV_AutoFailStopped = true
 
 		local actionMode = ThemePrefs.Get("HV_AutoFailMode")
 		local top = SCREENMAN:GetTopScreen()
@@ -2559,17 +2549,16 @@ t[#t + 1] = Def.Actor {
 			end
 			
 			if actionMode == "Fail" then
-				if top.GetLifeMeter then
-					local lifeMeter = top:GetLifeMeter(pn)
-					if lifeMeter and lifeMeter.ChangeLife then
-						lifeMeter:ChangeLife(-10)
-					end
-				end
 				top:PostScreenMessage("SM_BeginFailed", 0)
+				HardStopAutofail(top)
 			elseif actionMode == "Restart" then
 				SCREENMAN:SetNewScreen("ScreenGameplay")
 			end
 		end
+	end,
+	InputEventCommand = function(self)
+		-- Consume input while the failed-screen transition is being processed.
+		if self.hasTriggered then return true end
 	end
 }
 
