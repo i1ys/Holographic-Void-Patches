@@ -380,8 +380,8 @@ local HVPrefRows = {
 	-- Auto-Fail Trigger Condition
 	HV_AutoFailCondition = {
 		Default = "Wife Percent",
-		Choices = {"Wife Percent", "Judgement Count", "Personal Best"},
-		Values = {"Wife Percent", "Judgement Count", "Personal Best"},
+		Choices = {"Wife Percent", "Sync to Goal", "Judgement Count", "Personal Best"},
+		Values = {"Wife Percent", "Sync to Goal", "Judgement Count", "Personal Best"},
 	},
 
 	-- Auto-Fail Judgement
@@ -948,6 +948,7 @@ function OptionRowCustomizeGameplay()
 				playerConfig:get_data(pn_to_profile_slot(PLAYER_1)).CustomizeGameplay = false
 				GAMESTATE:SetAutoplay(false)
 			end
+			SavePlayerConfig(pn_to_profile_slot(PLAYER_1))
 		end
 	}
 end

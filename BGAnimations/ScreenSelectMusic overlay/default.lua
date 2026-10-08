@@ -562,7 +562,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 					end
 				end
 
-				-- Skip general overlay buttons (Login, etc.) if a tab is busy
+				-- Keep Profile tab controls reachable; other decoration tabs own their input.
 				if HV.ActiveTab ~= "" and HV.ActiveTab ~= "PROFILE" then return false end
 
 				local virtualX = INPUTFILTER:GetMouseX()
@@ -571,7 +571,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				-- Check Login Button logic (btnCX/btnCY defined above)
 				local loginOver = virtualX >= btnCX - btnW/2 and virtualX <= btnCX + btnW/2
 						 and virtualY >= btnCY - btnH/2 and virtualY <= btnCY + btnH/2
-				if loginOver then
+				if HV.ActiveTab == "" and loginOver then
 					if DLMAN:IsLoggedIn() then
 						ThemePrefs.Set("HV_Username", "")
 						ThemePrefs.Set("HV_PasswordToken", "")
@@ -1327,10 +1327,27 @@ local profileOverlay = Def.ActorFrame {
 						InitCommand = function(self) self:halign(0):x(-profileSidebarW/2 + 16):zoom(0.30):diffuse(subText):settext(ss:upper()) end
 					},
 					LoadFont("Common Normal") .. {
+						Name = "Rank",
+						InitCommand = function(self) self:halign(1):x(profileSidebarW/2 - 20):y(-6):zoom(0.3):diffuse(subText):visible(false) end,
+						UpdateOverlaySkillsetsMessageCommand = function(self)
+							if not HV.ShowMSD() or not DLMAN:IsLoggedIn() or not profileOverlayActor.isOnlineMode then
+								self:visible(false)
+								return
+							end
+							local rank = DLMAN:GetSkillsetRank(ss)
+							if rank and rank > 0 then
+								self:visible(true):settextf("#%d", rank):diffuse(HVColor.GetSkillsetRankColor(rank))
+							else
+								self:visible(false)
+							end
+						end
+					},
+					LoadFont("Common Normal") .. {
 						Name = "Val",
-						InitCommand = function(self) self:halign(1):x(profileSidebarW/2 - 20):zoom(0.32):diffuse(mainText) end,
+						InitCommand = function(self) self:halign(1):x(profileSidebarW/2 - 20):y(0):zoom(0.4):diffuse(mainText) end,
 						UpdateOverlaySkillsetsMessageCommand = function(self)
 							if not HV.ShowMSD() then self:visible(false); return end
+							self:y(profileOverlayActor.isOnlineMode and 6 or 0)
 							local val = 0
 							local prof = PROFILEMAN:GetProfile(PLAYER_1)
 							if DLMAN:IsLoggedIn() and profileOverlayActor.isOnlineMode then 
