@@ -499,7 +499,7 @@ local function GetCurrentBannerPath()
 end
 
 local function GetCurrentSongBackgroundPath()
-	local song = HV.CurrentSongData.song
+	local song = (HV.CurrentSongData and HV.CurrentSongData.song) or GAMESTATE:GetCurrentSong()
 	if song and song.GetBackgroundPath then
 		local bgPath = song:GetBackgroundPath()
 		if bgPath and bgPath ~= "" then
@@ -790,7 +790,8 @@ t[#t + 1] = Def.ActorFrame {
 				if math.abs(b1 - b2) < 1 then
 					self:settext(string.format("%.0f", b1))
 				else
-					self:settext(string.format("%.0f-%.0f", b1, b2))
+					local mainBPM = getMainBPM(song, GAMESTATE:GetCurrentSteps()) * rate
+					self:settext(string.format("%.0f-%.0f (%.0f)", b1, b2, mainBPM))
 				end
 			else
 				self:settext("---")
@@ -869,10 +870,10 @@ t[#t + 1] = Def.ActorFrame {
 			self:settext("NPS")
 		end
 	},
-	LoadFont("Common Normal") .. {
+	Def.ActorFrame {
 		Name = "NPSValue",
 		InitCommand = function(self)
-			self:halign(0):valign(0):x(panelW * 0.65 + 28):zoom(0.4):diffuse(mainText)
+			self:xy(panelW * 0.65 + 28, 0)
 		end,
 		SetCommand = function(self)
 			local data = HV.CurrentSongData
@@ -881,25 +882,45 @@ t[#t + 1] = Def.ActorFrame {
 				local vectors = data.steps:GetCDGraphVectors(rate)
 				if vectors and vectors[1] and #vectors[1] > 0 then
 					local npsV = vectors[1]
-					local mNPS = 0
-					for i=1, #npsV do
-						if npsV[i] > mNPS then mNPS = npsV[i] end
+					local maxNPS = 0
+					local startMaxNPS = 0
+					local weightedNPS = 0
+					local includedWeight = 0
+					local length = (data.steps.GetLengthSeconds and data.steps:GetLengthSeconds() or 0) / rate
+					local firstCount = length > 0 and math.max(1, math.ceil(#npsV * math.min(20, length) / length)) or #npsV
+					for i = 1, #npsV do
+						local nps = npsV[i] or 0
+						if nps > maxNPS then maxNPS = nps end
+						if i <= firstCount and nps > startMaxNPS then startMaxNPS = nps end
 					end
-					if mNPS >= 2 then
-						local peak70 = mNPS * 0.7
-						self:settextf("%.0f (%.0f)", mNPS, peak70)
-						self:diffuse(accentColor)
+					local sectionWeight = length > 0 and length / #npsV or 1
+					local npsFloor = maxNPS * 0.5
+					for i = 1, #npsV do
+						local nps = npsV[i] or 0
+						if nps >= npsFloor then
+							weightedNPS = weightedNPS + nps * sectionWeight
+							includedWeight = includedWeight + sectionWeight
+						end
+					end
+					local averageNPS = includedWeight > 0 and weightedNPS / includedWeight or 0
+					if maxNPS >= 2 then
+						self:GetChild("Start"):settextf("%.0f", startMaxNPS):diffuse(accentColor)
+						self:GetChild("Max"):settextf("%.0f", maxNPS):diffuse(accentColor)
+						self:GetChild("Average"):settextf("%.0f", averageNPS):diffuse(accentColor)
 					else
-						self:settext("-- (--)")
-						self:diffuse(dimText)
+						self:GetChild("Start"):settext("--"):diffuse(dimText)
+						self:GetChild("Max"):settext("--"):diffuse(dimText)
+						self:GetChild("Average"):settext("--"):diffuse(dimText)
 					end
 				else
-					self:settext("-- (--)")
-					self:diffuse(dimText)
+					self:GetChild("Start"):settext("--"):diffuse(dimText)
+					self:GetChild("Max"):settext("--"):diffuse(dimText)
+					self:GetChild("Average"):settext("--"):diffuse(dimText)
 				end
 			else
-				self:settext("-- (--)")
-				self:diffuse(dimText)
+				self:GetChild("Start"):settext("--"):diffuse(dimText)
+				self:GetChild("Max"):settext("--"):diffuse(dimText)
+				self:GetChild("Average"):settext("--"):diffuse(dimText)
 			end
 		end,
 		DelayedChartUpdateMessageCommand = function(self)
@@ -907,7 +928,19 @@ t[#t + 1] = Def.ActorFrame {
 		end,
 		CurrentRateChangedMessageCommand = function(self)
 			self:playcommand("Set")
-		end
+		end,
+		LoadFont("Common Normal") .. { Name = "Start", InitCommand = function(self) self:x(0):halign(0.5):valign(0):zoom(0.4):diffuse(mainText) end },
+		LoadFont("Common Normal") .. { Name = "Sep1", InitCommand = function(self) self:x(10):halign(0.5):valign(0):zoom(0.35):diffuse(dimText):settext("|") end },
+		LoadFont("Common Normal") .. { Name = "Max", InitCommand = function(self) self:x(20):halign(0.5):valign(0):zoom(0.4):diffuse(mainText) end },
+		LoadFont("Common Normal") .. { Name = "Sep2", InitCommand = function(self) self:x(30):halign(0.5):valign(0):zoom(0.35):diffuse(dimText):settext("|") end },
+		LoadFont("Common Normal") .. { Name = "Average", InitCommand = function(self) self:x(40):halign(0.5):valign(0):zoom(0.4):diffuse(mainText) end }
+	},
+	Def.ActorFrame {
+		Name = "NPSSubtext",
+		InitCommand = function(self) self:xy(panelW * 0.65 + 28, 12) end,
+		LoadFont("Common Normal") .. { InitCommand = function(self) self:x(0):halign(0.5):valign(0):zoom(0.23):diffuse(dimText):settext("START") end },
+		LoadFont("Common Normal") .. { InitCommand = function(self) self:x(20):halign(0.5):valign(0):zoom(0.23):diffuse(dimText):settext("MAX") end },
+		LoadFont("Common Normal") .. { InitCommand = function(self) self:x(40):halign(0.5):valign(0):zoom(0.23):diffuse(dimText):settext("AVG") end }
 	}
 }
 
@@ -2441,17 +2474,15 @@ root[#root + 1] = Def.ActorFrame {
 	UpdateBannerCommand = function(self)
 		local bg = self:GetChild("PeekSongBackground")
 		if not bg then return end
-		if HV.GetSongBackgroundBrightness() <= 0 then
-			bg:visible(false)
-			return
-		end
 		local bgPath = GetCurrentSongBackgroundPath()
 		if not bgPath then
 			bg:visible(false)
 			return
 		end
 		if bg.lastPath ~= bgPath then
-			bg:LoadBackground(bgPath)
+			-- This overlay is the visible zoomed background.  Do not use the
+			-- engine brightness-gated loader: mouse hold always reveals it.
+			bg:Load(bgPath)
 			bg.lastPath = bgPath
 		end
 		bg:visible(true):diffuse(color("1,1,1,1")):diffusealpha(self.hv_holdLerp)

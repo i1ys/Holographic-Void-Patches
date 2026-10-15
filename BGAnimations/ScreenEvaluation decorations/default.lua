@@ -13,6 +13,12 @@ local profile = PROFILEMAN:GetProfile(pn)
 -- Autoplay results are not player scores.  Keep this local to the evaluation
 -- screen so autoplay can still be used normally during gameplay.
 local function isAutoplayEvaluation()
+	-- Replay evaluations (including online replays) are playback of an
+	-- existing score.  Their replay/controller metadata may contain
+	-- autoplay-like values, but they must never be treated as autoplay runs.
+	if HV.IsReplayPlayback and HV.IsReplayPlayback() then return false end
+	if HV.OnlineReplayActive == true or HV.OnlineEvaluationActive == true then return false end
+
 	-- A score opened from Song Select's Scores tab is a historical score
 	-- view, not the result of the current gameplay session.  This gate keeps
 	-- the persistent autoplay setting from affecting those evaluations.
@@ -90,6 +96,9 @@ end
 -- State variables (declared early for function visibility)
 local curScore = scoringVoided and nil or pss:GetHighScore()
 local judge = 4
+-- The judge used for the play is the fixed baseline for PB comparisons.
+-- `judge` may be changed while inspecting the replay.
+local playedJudge = 4
 local judges = HV.EmulateRidiculousEnabled() and {"Ridiculous","TapNoteScore_W1","TapNoteScore_W2","TapNoteScore_W3","TapNoteScore_W4","TapNoteScore_W5","TapNoteScore_Miss"} or {"TapNoteScore_W1","TapNoteScore_W2","TapNoteScore_W3","TapNoteScore_W4","TapNoteScore_W5","TapNoteScore_Miss"}
 
 -- Rescoring/offset plot state
@@ -271,7 +280,7 @@ local function refreshRescoredPercentage()
 	rescoredPercentage = getRescoredWife3Judge(3, judge, rst)
 end
 
-local function calculateCustomWindowScore(configName, rst)
+function calculateCustomWindowScore(configName, rst)
 	if not customWindowsConfig or not rst then return 0 end
 	local config = customWindowsConfig:get_data().customWindowConfigs[configName]
 	if not config then return 0 end
@@ -355,8 +364,9 @@ local function calculateCustomWindowScore(configName, rst)
 	maxPts = maxPts + (totalMines * mineWorth)
 	
 	if maxPts <= 0 then return 0 end
-	return math.max(0, math.min(100, (pts / maxPts) * 100))
+	return math.max(0, math.min(100, (pts / maxPts) * 100)), pts, maxPts
 end
+
 
 local function updateVectors()
 	if scoringVoided then
@@ -416,6 +426,7 @@ HV.SelectEvaluationScore = function(selected)
 	if scoringVoided or not selected then return false end
 	curScore = selected
 	judge = getJudgeForScore(curScore)
+	playedJudge = judge
 	local screen = SCREENMAN:GetTopScreen()
 	if curScore.GetReplay and curScore:GetReplay() and screen then
 		pcall(function()
@@ -514,6 +525,7 @@ local function getOsuManiaGradeColor(grade)
 	return maniaGradeColors[grade] or brightText
 end
 judge = getJudgeForScore(curScore)
+playedJudge = judge
 updateVectors()
 refreshRescoredPercentage()
 
@@ -647,6 +659,46 @@ if hsTable and curScore then
 	scoreIndex = getHighScoreIndex(hsTable, curScore)
 end
 local recScore = scoringVoided and nil or getBestScore(pn, scoreIndex, rate, true)
+
+function getComparisonWifePercent(score, currentPss, currentJudge)
+	if not score then return nil end
+	-- Do not rescore the current PSS here: that compares the current play
+	-- against itself and can incorrectly produce a zero differential.
+	if score.GetRescoredWifeScore then
+		local ok, value = pcall(score.GetRescoredWifeScore, score, playedJudge)
+		if ok and tonumber(value) then return tonumber(value) * 100 end
+	end
+	return score.GetWifeScore and score:GetWifeScore() * 100 or nil
+end
+
+function comparisonArrow(diff)
+	return diff >= 0 and "▲" or "▼"
+end
+
+function nearestGradeComparison(percent)
+	if not percent or isManiaModeEnabled() then return "" end
+	local baseTiers = {
+		"Grade_Tier01", "Grade_Tier04", "Grade_Tier07", "Grade_Tier10",
+		"Grade_Tier13", "Grade_Tier14", "Grade_Tier15", "Grade_Tier16",
+	}
+	local score = percent / 100
+	local currentIndex = #baseTiers
+	for i, tier in ipairs(baseTiers) do
+		if score >= (WifeTiers[tier] or 0) then currentIndex = i; break end
+	end
+	local targetIndex = math.max(1, currentIndex - 1)
+	local currentTier = WifeTiers[baseTiers[currentIndex]] or 0
+	local targetTier = WifeTiers[baseTiers[targetIndex]] or currentTier
+	-- Only show a negative differential after crossing the midpoint toward
+	-- the next higher grade; otherwise compare positively to the current grade.
+	if targetIndex < currentIndex and score < (currentTier + targetTier) / 2 then
+		targetIndex = currentIndex
+	end
+	local target = baseTiers[targetIndex]
+	local wifeDP = score * songMaxPoints
+	local thresholdDP = (WifeTiers[target] or 0) * songMaxPoints
+	return string.format("%s %+0.2f", HV.GetGradeName(target), wifeDP - thresholdDP)
+end
 local clearType = scoringVoided and nil or getClearType(pn, steps, curScore)
 
 local tracks = scoringVoided and {} or pss:GetTrackVector()
@@ -923,6 +975,7 @@ local t = Def.ActorFrame {
 			curScore = pss:GetHighScore()
 		end
 		judge = getJudgeForScore(curScore)
+		playedJudge = judge
 		-- Historical score cards keep a different HighScore object, but the
 		-- evaluation widgets read judgment data from PlayerStageStats. Rebuild
 		-- those stats from the selected score's replay before refreshing them.
@@ -1054,6 +1107,7 @@ local function scoreBoard(pn)
 					MESSAGEMAN:Broadcast("LoadedCustomWindow")
 				end
 			end
+			MESSAGEMAN:Broadcast("CustomWindowStateChanged")
 			self:RunCommandsOnChildren(function(self) self:playcommand("UpdateCustomWindowVisibility") end)
 		end,
 		MoveCustomWindowIndexMessageCommand = function(self, params)
@@ -1125,6 +1179,8 @@ local function scoreBoard(pn)
 
 				self:GetChild("Speed"):settext(formatEvalSpeedMode(mode, speed)):diffuse(accent)
 				self:GetChild("Rate"):settext(formatEvalRateValue(rate)):diffuse(accent)
+				local mainBPM = getMainBPM(song, steps)
+				self:GetChild("BPM"):settext(mainBPM > 0 and string.format("[%d]", math.round(mainBPM * rate)) or "[???]")
 
 				local lifeKey = "L7"
 				if life <= 1 then
@@ -1172,7 +1228,7 @@ local function scoreBoard(pn)
 
 				local receptorSize = tonumber(ThemePrefs.Get("HV_Mini")) or 100
 				if math.abs(receptorSize - 100) > 0.001 then
-					table.insert(active, "MN" .. math.round(receptorSize))
+				table.insert(active, "RS" .. math.round(receptorSize))
 				end
 
 				self:GetChild("Separator"):visible(#active > 0)
@@ -1182,7 +1238,8 @@ local function scoreBoard(pn)
 				self:finishtweening():sleep(0):queuecommand("Update")
 			end,
 			LoadFont("Common Normal") .. { Name = "Speed", InitCommand = function(self) self:zoom(0.4):halign(0) end },
-			LoadFont("Common Normal") .. { Name = "Rate", InitCommand = function(self) self:x(42):zoom(0.4):halign(0) end },
+			LoadFont("Common Normal") .. { Name = "Rate", InitCommand = function(self) self:x(42):y(-4):zoom(0.4):halign(0) end },
+			LoadFont("Common Normal") .. { Name = "BPM", InitCommand = function(self) self:x(42):y(6):zoom(0.4):halign(0):diffuse(accentColor or (HVColor and HVColor.Accent) or color("#5ABAFF")) end },
 			LoadFont("Common Normal") .. { Name = "Life", InitCommand = function(self) self:x(82):zoom(0.4):halign(0) end },
 			LoadFont("Common Normal") .. { Name = "Judge", InitCommand = function(self) self:x(110):zoom(0.4):halign(0):diffuse(accentColor or (HVColor and HVColor.Accent) or color("#5ABAFF")) end },
 			LoadFont("Common Normal") .. { Name = "Fail", InitCommand = function(self) self:x(138):zoom(0.4):halign(0):diffuse(color("#CF9898")) end },
@@ -1648,9 +1705,26 @@ local function scoreBoard(pn)
 			end,
 			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end
 		},
+		LoadFont("Common Normal") .. {
+			Name = "NearestGrade",
+			InitCommand = function(self) self:halign(0):valign(0):xy(1, 25):zoom(0.38):diffuse(subText):diffusealpha(0) end,
+			OnCommand = function(self)
+				self:visible(not usingCustomWindows and not isManiaModeEnabled())
+				self:settext(nearestGradeComparison(rescoredPercentage)):sleep(0.3):linear(0.2):diffusealpha(1)
+			end,
+			SetJudgeCommand = function(self)
+				self:visible(not usingCustomWindows and not isManiaModeEnabled())
+				self:settext(nearestGradeComparison(rescoredPercentage))
+			end,
+			ToggleCustomWindowsMessageCommand = function(self) self:playcommand("SetJudge") end,
+			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end
+		},
 		-- SSR
 		LoadFont("Common Normal") .. {
-			InitCommand = function(self) self:halign(0):valign(0):xy(10, 45):zoom(0.8):diffuse(subText):diffusealpha(0) end,
+			InitCommand = function(self) self:halign(0):valign(0):xy(10, 45):zoom(1.05):diffuse(subText):diffusealpha(0) end,
 			OnCommand = function(self)
 				if HV.ShowMSD() then
 					local ssr = scoringVoided and 0 or curScore:GetSkillsetSSR("Overall")
@@ -1749,7 +1823,7 @@ local function scoreBoard(pn)
 
 			LoadFont("Common Large") .. {
 				Name = "WifeScoreLabel",
-				InitCommand = function(self) self:halign(0):valign(0):xy(0,0):zoom(0.65):diffuse(mainText):diffusealpha(0) end,
+				InitCommand = function(self) self:halign(0):valign(0):xy(0,-3):zoom(0.72):diffuse(mainText):diffusealpha(0) end,
 				SetJudgeCommand = function(self)
 					if usingCustomWindows then return end
 					if rescoredPercentage then
@@ -1762,6 +1836,34 @@ local function scoreBoard(pn)
 					local wife = lastSnapshot:GetWifePercent() * 100
 					self:settext(formatWifePercent(wife))
 				end,
+			},
+			LoadFont("Common Normal") .. {
+				Name = "WifeComparison",
+				InitCommand = function(self) self:halign(0):valign(0):xy(0, 20):zoom(0.5):diffuse(subText):diffusealpha(0) end,
+				OnCommand = function(self)
+					local failed = curScore and curScore.GetWifeGrade and curScore:GetWifeGrade() == "Grade_Failed"
+					self:visible(not usingCustomWindows and not isManiaModeEnabled() and not failed)
+					if failed then return end
+					-- Keep both sides on the judge used for the play. The displayed
+					-- judge may change, but it must not move this differential.
+					local current = getComparisonWifePercent(curScore, pss, playedJudge)
+						or rescoredPercentage or (evaluationWifeScore() * 100)
+					local best = getComparisonWifePercent(recScore, pss, playedJudge)
+					if best then
+						local diff = current - best
+						-- Keep small but real Wife% differences visible instead of
+						-- rounding them away to 0.00%.
+						local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
+						self:settextf("%s %+.3f%%%s", comparisonArrow(diff), diff, judgeLabel)
+					else self:settext("▲ New!") end
+					self:sleep(0.35):linear(0.15):diffusealpha(1)
+				end,
+				SetJudgeCommand = function(self) self:playcommand("On") end,
+				ToggleCustomWindowsMessageCommand = function(self) self:playcommand("On") end,
+				LoadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
+				UnloadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
+				CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
+				ManiaModeChangedMessageCommand = function(self) self:playcommand("On") end
 			},
 
 			-- CC indicator below Wife%
@@ -1892,16 +1994,23 @@ local function scoreBoard(pn)
 		-- DP (WifeDP)
 		Def.ActorFrame {
 			Name = "WifeDPDisplay",
-			InitCommand = function(self) self:xy(110, 45):diffusealpha(0):visible(true) end,
+			InitCommand = function(self) self:xy(110, 45):diffusealpha(0):visible(not usingCustomWindows) end,
 			ManiaModeChangedMessageCommand = function(self)
 				self:visible(true)
 				self:playcommand("On")
 			end,
 			OnCommand = function(self)
+				if usingCustomWindows then self:visible(false); return end
+				self:visible(true)
 				local wholePart = self:GetChild("WholeDP")
 				local decimalPart = self:GetChild("DecimalDP")
+				local customDP
+				if usingCustomWindows then
+					local customRst = getRescoreElements(pss, curScore)
+					if customRst then customRst.dvt = getFilteredDvt(); customDP = getCurrentCustomWindowDisplayPercentage(customRst) end
+				end
 				local displayPct = rescoredPercentage or (evaluationWifeScore() * 100)
-				local dp = isManiaModeEnabled() and getOsuManiaLongScore() or ((displayPct / 100) * songMaxPoints)
+				local dp = isManiaModeEnabled() and getOsuManiaLongScore() or customDP or ((displayPct / 100) * songMaxPoints)
 				local targetDP = dp
 				
 				local duration = 0.2
@@ -1924,6 +2033,9 @@ local function scoreBoard(pn)
 			SetJudgeCommand = function(self)
 				if HV.ManiaState and HV.ManiaState.enabled then self:playcommand("On") end
 			end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
+			LoadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
+			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
 			ResetJudgeMessageCommand = function(self) 
 				self:SetUpdateFunction(nil)
 				self:playcommand("On") 
@@ -1961,29 +2073,40 @@ local function scoreBoard(pn)
 			Name = "DPTotal",
 			InitCommand = function(self) self:halign(0):valign(0):xy(110, 52):zoom(0.35):diffuse(subText) end,
 			OnCommand = function(self)
-				self:visible(not isManiaModeEnabled())
+				self:visible(not isManiaModeEnabled() and not usingCustomWindows)
 				self:settextf("/ %s", string.format("%.2f", songMaxPoints))
 			end,
 			ManiaModeChangedMessageCommand = function(self)
-				self:visible(not isManiaModeEnabled())
+				self:visible(not isManiaModeEnabled() and not usingCustomWindows)
 				self:settextf("/ %s", string.format("%.2f", songMaxPoints))
 			end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
 		},
 		-- Personal Best / Record Comparison (Pacemaker Text)
 		LoadFont("Common Normal") .. {
 			Name = "EvaluationPBDisplay",
-			InitCommand = function(self) self:halign(0):valign(0):xy(110, 70):zoom(0.45):diffuse(subText):diffusealpha(0) end,
-			ManiaModeChangedMessageCommand = function(self) self:visible(not isManiaModeEnabled() and not isOnlineEvaluation()) end,
+			InitCommand = function(self) self:halign(0):valign(0):xy(110, 63):zoom(0.38):diffuse(subText):diffusealpha(0) end,
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("On") end,
+			ToggleCustomWindowsMessageCommand = function(self) self:playcommand("On") end,
+			LoadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
+			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
 			OnCommand = function(self)
-				if isOnlineEvaluation() then self:settext(""):visible(false); return end
+				if isOnlineEvaluation() or usingCustomWindows or isManiaModeEnabled() then self:settext(""):visible(false); return end
+				self:visible(true)
 				if recScore then
-					local pbDp = recScore.GetWifePoints and recScore:GetWifePoints() or (recScore:GetWifeScore() * songMaxPoints)
-					local curDp = evaluationWifeScore() * songMaxPoints
+					local pbPercent = getComparisonWifePercent(recScore, pss, playedJudge)
+					local currentPercent = getComparisonWifePercent(curScore, pss, playedJudge)
+					local pbDp = pbPercent and (pbPercent / 100) * songMaxPoints
+						or (recScore.GetWifePoints and recScore:GetWifePoints() or (recScore:GetWifeScore() * songMaxPoints))
+					local curDp = currentPercent and (currentPercent / 100) * songMaxPoints
+						or (evaluationWifeScore() * songMaxPoints)
 					local diff = curDp - pbDp
-					
-					self:settextf("PB: %.2f (%+5.2f)", pbDp, diff)
+					local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
+
+					self:settextf("%s %+.2f%s", comparisonArrow(diff), diff, judgeLabel)
 				else
-					self:settext("PB: New!"):diffuse(accentColor)
+					self:settext("▲ New!"):diffuse(accentColor)
 				end
 				self:stoptweening():sleep(0.5):linear(0.2):diffusealpha(1)
 			end
@@ -2028,7 +2151,7 @@ local function scoreBoard(pn)
 			InitCommand = function(self) self:xy(0, 271):visible(not isOnlineEvaluation()):z(101) end,
 			OnCommand = function(self) self:visible(not isOnlineEvaluation()) end,
 			Def.Quad { Name = "Hit", InitCommand = function(self) self:halign(0):valign(0):zoomto(100, 24):diffuse(accentColor):diffusealpha(0.24):z(101) end },
-			LoadFont("Common Normal") .. { Name = "Label", InitCommand = function(self) self:halign(0):valign(0):xy(6, 5):zoom(0.22):diffuse(accentColor):settext("WRITE COMMENT"):z(102) end }
+			LoadFont("Common Normal") .. { Name = "Label", InitCommand = function(self) self:halign(0):valign(0):xy(6, 5):zoom(0.4):diffuse(accentColor):settext("WRITE COMMENT"):z(102) end }
 		},
 		Def.Quad {
 			Name = "ScoreCommentEditHit",
@@ -2044,7 +2167,7 @@ local function scoreBoard(pn)
 		-- Clear Type Display Area
 		Def.ActorFrame {
 			Name = "ClearTypeDisplay",
-			InitCommand = function(self) self:xy(280, 45):diffusealpha(0) end,
+			InitCommand = function(self) self:xy(280, 38):diffusealpha(0) end,
 			ManiaModeChangedMessageCommand = function(self) self:visible(not isManiaModeEnabled()) end,
 			OnCommand = function(self)
 				self:stoptweening():sleep(0.55):linear(0.2):diffusealpha(1)
@@ -2070,7 +2193,26 @@ local function scoreBoard(pn)
 						if isOnlineEvaluation() then self:visible(false); return end
 						if hsTable then
 							local recCT = getHighestClearType(pn, steps, hsTable, scoreIndex) or "Clear"
-							self:settextf("Best: %s", getClearTypeText(recCT))
+							local currentCT = clearType or (scoringVoided and "Noplay" or "Clear")
+							local diff
+							local currentIsNoPlay = currentCT == "ClearType_Noplay" or currentCT == "Noplay"
+							local recordIsNoPlay = recCT == "ClearType_Noplay" or recCT == "Noplay"
+							local function comparisonLevel(ct, isNoPlay)
+								if isNoPlay or ct == "ClearType_Noplay" or ct == "Noplay" then return 21 end
+								-- Failed is below every other result except No Play.
+								if ct == "ClearType_Failed" or ct == "Failed" then return 20 end
+								if ct == "ClearType_Invalid" or ct == "Invalid" then return 19 end
+								return getClearTypeLevel(ct)
+							end
+							if currentIsNoPlay and not recordIsNoPlay then
+								diff = -1
+							elseif not currentIsNoPlay and recordIsNoPlay then
+								diff = 1
+							else
+								diff = comparisonLevel(currentCT, currentIsNoPlay) - comparisonLevel(recCT, recordIsNoPlay)
+							end
+							local arrow = diff == 0 and "" or comparisonArrow(diff)
+							self:settextf("Best: %s%s", getClearTypeText(recCT), arrow == "" and "" or " " .. arrow)
 							self:diffuse(getClearTypeColor(recCT)):diffusealpha(0.6)
 						end
 					end
@@ -2178,6 +2320,9 @@ local function scoreBoard(pn)
 				local pct = count / songTotalNotes
 				self:finishtweening():linear(0.2):zoomto((col2X - pad - col1X) * pct, rowH - 2)
 			end,
+			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			RATallyChangedCommand = function(self)
 				local count = 0
 				if showRATally then
@@ -2228,6 +2373,7 @@ local function scoreBoard(pn)
 				local count = getEvaluationRescoredJudgeCount(dvt, judge, v, k)
 				self:settext(count)
 			end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			RATallyChangedCommand = function(self)
 				if showRATally then
 					self:settext(k <= #raLabels and getRATallyCount(k) or "")
@@ -2260,6 +2406,9 @@ local function scoreBoard(pn)
 					self:settextf("%.1f%%", count / totalTaps * 100)
 				end
 			end,
+			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			RATallyChangedCommand = function(self)
 				if showRATally then
 					local count = getRATallyCount(k)
@@ -2292,11 +2441,15 @@ local function scoreBoard(pn)
 		local ry = ratioStartY + row * 26
 		
 		board[#board + 1] = LoadFont("Common Normal") .. {
-			InitCommand = function(self) self:halign(col == 1 and 1 or 0):xy(col == 1 and rx + 30 or rx, ry):zoom(0.48):diffuse(ratioColors[ri]):settext(rlabel .. ":"):diffusealpha(0):visible(true) end,
+			InitCommand = function(self) self:halign(col == 1 and 1 or 0):xy(col == 1 and rx + 20 or rx, ry):zoom(0.48):diffuse(ratioColors[ri]):settext(rlabel .. ":"):diffusealpha(0):visible(ri > 2) end,
 			OnCommand = function(self)
+				self:visible(ri > 2 or not usingCustomWindows)
 				self:stoptweening():sleep(0.65 + ri * 0.05):linear(0.2):diffusealpha(1)
 			end,
-			ManiaModeChangedMessageCommand = function(self) self:visible(ri > 2 or not isManiaModeEnabled()) end
+			ManiaModeChangedMessageCommand = function(self) self:visible(ri > 2 or not isManiaModeEnabled()) end,
+			CustomWindowStateChangedMessageCommand = function(self) self:visible(ri > 2 or not usingCustomWindows) end,
+			LoadedCustomWindowMessageCommand = function(self) self:visible(ri > 2) end,
+			UnloadedCustomWindowMessageCommand = function(self) self:visible(ri > 2) end
 		}
 		board[#board + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(col == 1 and 1 or 0):xy(col == 1 and rx + 75 or rx + 40, ry):zoom(0.5):diffuse(mainText):diffusealpha(0):visible(true) end,
@@ -2304,6 +2457,12 @@ local function scoreBoard(pn)
 				self:visible(ri > 2 or not isManiaModeEnabled())
 				self:playcommand("SetJudge")
 			end,
+			CustomWindowStateChangedMessageCommand = function(self)
+				self:visible(ri > 2 or not usingCustomWindows)
+				self:playcommand("SetJudge")
+			end,
+			LoadedCustomWindowMessageCommand = function(self) self:visible(ri > 2); self:playcommand("SetJudge") end,
+			UnloadedCustomWindowMessageCommand = function(self) self:visible(ri > 2); self:playcommand("SetJudge") end,
 			OnCommand = function(self)
 				if maniaRescore then
 					self:settext(getManiaRatioText(ri)):diffuse(ratioColors[ri])
