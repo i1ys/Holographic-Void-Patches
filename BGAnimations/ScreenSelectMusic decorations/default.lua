@@ -1,5 +1,11 @@
 --- Holographic Void: ScreenSelectMusic Decorations
 
+-- A saved score is only being viewed while ScreenEvaluation was opened from
+-- the Scores tab. Reset this state whenever returning to song select so it
+-- cannot be mistaken for a newly completed play.
+HV.SelectedEvaluationScore = nil
+HV.ViewingHistoricalEvaluationScore = false
+
 -- ============================================================
 -- LAYOUT CONSTANTS
 -- ============================================================
@@ -111,6 +117,20 @@ local root = Def.ActorFrame {
 	Name = "SelectMusicDecorations"
 }
 
+local function makePackGradeItem(grade, index)
+	return Def.ActorFrame {
+		Name = "Grade_" .. grade,
+		LoadFont("Common Normal") .. {
+			Name = "Label",
+			InitCommand = function(self) self:halign(0) end
+		},
+		LoadFont("Common Normal") .. {
+			Name = "Count",
+			InitCommand = function(self) self:x(52):halign(0):diffuse(subText) end
+		}
+	}
+end
+
 local t = Def.ActorFrame {
 	Name = "SelectMusicContent",
 	InitCommand = function(self)
@@ -131,6 +151,37 @@ local t = Def.ActorFrame {
 		self.hv_holdTarget = held and 1 or 0
 	end
 }
+
+local function getPackLamp(songs, stepsType)
+	local lowestLevel = 0
+	local lowestType = nil
+	for _, song in ipairs(songs) do
+		local songLevel = nil
+		local songType = nil
+		for _, steps in ipairs(song:GetStepsByStepsType(stepsType)) do
+			local scoreList = SCOREMAN:GetScoresByKey(steps:GetChartKey())
+			if scoreList then
+				for _, rateScores in pairs(scoreList) do
+					for _, score in ipairs(rateScores:GetScores() or {}) do
+						local ct = getClearType(PLAYER_1, steps, score)
+						local level = getClearTypeLevel(ct)
+						if level < 19 and (not songLevel or level < songLevel) then
+							songLevel = level
+							songType = ct
+						end
+					end
+				end
+			end
+		end
+		if not songLevel then return nil end
+		if songLevel > lowestLevel then
+			lowestLevel = songLevel
+			local key = tostring(songType)
+			lowestType = key:find("^ClearType_") and key or "ClearType_" .. key
+		end
+	end
+	return lowestType
+end
 root[#root + 1] = t
 
 
@@ -151,6 +202,8 @@ HV.CurrentSongData = {
 	avgMSD = 0,
 	packMSDDistribution = {}, -- Histogram of every chart's overall MSD in the selected pack
 	packChartCount = 0,
+	packGradeDistribution = {}, -- Main grade counts for the selected pack (midgrades excluded)
+	packLamp = nil,
 	songCount = 0,
 	progress = 0,
 	rate = 1.0,
@@ -205,39 +258,41 @@ local function GetPlayableChartSeconds(song, steps)
 end
 
 -- The CDTitle can receive a hover event before GAMESTATE has finished
--- updating its player-specific steps. Prefer the selection cache, then use
--- the engine's simfile author lookup before falling back to the chart/song
--- credits.
-local function GetCDTitleAuthor(song)
+-- updating its player-specific steps. The tooltip is for the simfile's
+-- Credits field, so read that value directly from the song.
+local function GetCDTitleCredit(song)
 	local function usable(value)
 		return type(value) == "string" and value ~= "" and value:lower() ~= "none defined"
 	end
-	local data = HV.CurrentSongData
-	local steps = data and data.steps
-	if not steps then
-		local ok, currentSteps = pcall(function() return GAMESTATE:GetCurrentSteps() end)
-		if ok then steps = currentSteps end
-	end
-
-	if steps then
-		local ok, author = pcall(function() return steps:GetAuthorCredit() end)
-		if ok and usable(author) then
-			return author
+	local function readCredit(path)
+		if not path or path == "" or not FILEMAN:DoesFileExist(path) then return nil end
+		local file = RageFileUtil.CreateRageFile()
+		local text = ""
+		if file:Open(path, 1) then
+			text = file:Read()
+			file:Close()
 		end
-		local okCredit, credit = pcall(function() return steps:GetCredit() end)
-		if okCredit and usable(credit) then
-			return credit
+		file:destroy()
+		local credit = text:match("#CREDIT%s*:%s*([^;]*)")
+		if credit then
+			credit = credit:gsub("^%s+", ""):gsub("%s+$", "")
+			if usable(credit) then return credit end
 		end
 	end
 
 	if song then
-		local ok, author = pcall(function() return song:GetOrTryAtLeastToGetSimfileAuthor() end)
-		if ok and usable(author) then
-			return author
-		end
 		local okCredit, credit = pcall(function() return song:GetCredit() end)
 		if okCredit and usable(credit) then
 			return credit
+		end
+
+		-- Some engine builds expose #CREDIT through the simfile parser only
+		-- after the song has finished loading. Read the selected simfile as a
+		-- fallback so the CDTitle does not incorrectly report None defined.
+		local okPath, path = pcall(function() return song:GetSongFilePath() end)
+		if okPath then
+			local credit = readCredit(path)
+			if credit then return credit end
 		end
 	end
 
@@ -285,6 +340,8 @@ t[#t + 1] = Def.Actor {
 		data.group = nil
 		data.packMSDDistribution = {}
 		data.packChartCount = 0
+		data.packGradeDistribution = {}
+		data.packLamp = nil
 		if not data.song then
 			local screen = SCREENMAN:GetTopScreen()
 			if screen and screen.GetMusicWheel then
@@ -299,6 +356,15 @@ t[#t + 1] = Def.Actor {
 						local totalMSD = 0
 						local countedSongs = 0
 						local clearedSongs = 0
+						local gradeTiers = {
+							Tier01 = "AAAAA",
+							Tier02 = "AAAA", Tier03 = "AAAA", Tier04 = "AAAA",
+							Tier05 = "AAA", Tier06 = "AAA", Tier07 = "AAA",
+							Tier08 = "AA", Tier09 = "AA", Tier10 = "AA",
+							Tier11 = "A", Tier12 = "A", Tier13 = "A",
+							Tier14 = "B", Tier15 = "C", Tier16 = "D",
+						}
+						for _, label in pairs(gradeTiers) do data.packGradeDistribution[label] = 0 end
 						local packBins = {}
 						local stype = GAMESTATE:GetCurrentStyle():GetStepsType()
 						for _, s in ipairs(songs) do
@@ -322,11 +388,15 @@ t[#t + 1] = Def.Actor {
 							local grade = s:GetHighestGrade()
 							if grade and grade ~= "Grade_NoData" and grade ~= "Grade_Failed" then
 								clearedSongs = clearedSongs + 1
+								local tier = tostring(grade):match("Tier%d+")
+								local label = gradeTiers[tier]
+								if label then data.packGradeDistribution[label] = data.packGradeDistribution[label] + 1 end
 							end
 						end
 						data.avgMSD = countedSongs > 0 and (totalMSD / countedSongs) or 0
 						data.packMSDDistribution = packBins
 						data.progress = data.songCount > 0 and (clearedSongs / data.songCount) * 100 or 0
+						if data.progress >= 100 then data.packLamp = getPackLamp(songs, stype) end
 					end
 				end
 			end
@@ -599,16 +669,33 @@ t[#t + 1] = Def.ActorFrame {
 	},
 
 	-- Pack Stats (Songs and Average MSD)
-	LoadFont("Common Normal") .. {
+	Def.ActorFrame {
 		Name = "PackStats",
 		InitCommand = function(self)
 			self:halign(0):valign(0):y(22):zoom(0.4)
-				:diffuse(subText)
 		end,
 		SetCommand = function(self)
 			local data = HV.CurrentSongData
 			if not data.song and data.group and data.group ~= "" then
-				self:settextf("%d Songs\nProgress: %.1f%%", data.songCount, data.progress)
+				local counts = data.packGradeDistribution or {}
+				if data.packLamp then
+					self:GetChild("Summary"):settextf("%d Songs\nLamp: %s", data.songCount, getClearTypeText(data.packLamp))
+				else
+					self:GetChild("Summary"):settextf("%d Songs\nProgress: %.1f%%", data.songCount, data.progress)
+				end
+				local visibleGrade = 0
+				for i, grade in ipairs({"AAAAA", "AAAA", "AAA", "AA", "A", "B", "C", "D"}) do
+					local item = self:GetChild("Grade_" .. grade)
+					local count = counts[grade] or 0
+					item:visible(count > 0)
+					if count > 0 then
+						visibleGrade = visibleGrade + 1
+						item:xy(((visibleGrade - 1) % 4) * 90, 52 + math.floor((visibleGrade - 1) / 4) * 14)
+						local label = item:GetChild("Label")
+						label:settext(grade):diffuse(HVColor.GetGradeColor(grade))
+						item:GetChild("Count"):x(label:GetWidth() + 8):settext(tostring(count))
+					end
+				end
 				self:visible(true)
 			else
 				self:visible(false)
@@ -616,7 +703,15 @@ t[#t + 1] = Def.ActorFrame {
 		end,
 		InstantChartUpdateMessageCommand = function(self)
 			self:playcommand("Set")
-		end
+		end,
+		LoadFont("Common Normal") .. {
+			Name = "Summary",
+			InitCommand = function(self) self:halign(0):valign(0):diffuse(subText) end
+		},
+		makePackGradeItem("AAAAA", 1), makePackGradeItem("AAAA", 2),
+		makePackGradeItem("AAA", 3), makePackGradeItem("AA", 4),
+		makePackGradeItem("A", 5), makePackGradeItem("B", 6),
+		makePackGradeItem("C", 7), makePackGradeItem("D", 8)
 	},
 
 	-- Artist
@@ -715,7 +810,7 @@ t[#t + 1] = Def.ActorFrame {
 			ToolTipCommand = function(self)
 				if isOver(self) then
 					if self.song and self.song:HasCDTitle() and self:GetVisible() then
-						TOOLTIP:SetText(GetCDTitleAuthor(self.song))
+						TOOLTIP:SetText(GetCDTitleCredit(self.song))
 						TOOLTIP:Show()
 					else
 						TOOLTIP:Hide()
@@ -724,11 +819,11 @@ t[#t + 1] = Def.ActorFrame {
 			end,
 			MouseDownCommand = function(self, params)
 				if params and params.button and params.button ~= "DeviceButton_left mouse button" then return end
-				local author = GetCDTitleAuthor(self.song)
-				if type(author) ~= "string" or author == "" or author:lower() == "none defined" then return end
+				local credit = GetCDTitleCredit(self.song)
+				if type(credit) ~= "string" or credit == "" or credit:lower() == "none defined" then return end
 				local currentQuery = HV.GetMusicSearchQuery and HV.GetMusicSearchQuery() or ""
 				if HV.SetMusicSearchQuery then
-					local authorQuery = "author=" .. author
+					local authorQuery = "author=" .. credit
 					HV.SetMusicSearchQuery(currentQuery == authorQuery and "" or authorQuery)
 				end
 			end,
@@ -959,6 +1054,11 @@ t[#t + 1] = Def.Quad {
 -- ============================================================
 local msdY = detailY + 35
 local skillsets = {"Overall", "Stream", "Jumpstream", "Handstream", "Stamina", "JackSpeed", "Chordjack", "Technical"}
+local msdTooltipMaxSSR = false
+
+local function isShiftPressed()
+	return INPUTFILTER and INPUTFILTER.IsShiftPressed and INPUTFILTER:IsShiftPressed()
+end
 
 t[#t + 1] = Def.ActorFrame {
 	Name = "MSDFrame",
@@ -974,13 +1074,16 @@ t[#t + 1] = Def.ActorFrame {
 			self:halign(0):valign(0):zoom(0.35):diffuse(accentColor)
 		end,
 		SetCommand = function(self)
-			if not HV.CurrentSongData.song and HV.CurrentSongData.group then
+			if msdTooltipMaxSSR then
+				self:settext("MAX SSR (96.5%)")
+			elseif not HV.CurrentSongData.song and HV.CurrentSongData.group then
 				self:settext("AVERAGE MSD")
 			else
 				self:settext(THEME:GetString("ScreenSelectMusic", "MSDRatings"))
 			end
 		end,
 		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		MSDModeChangedMessageCommand = function(self) self:playcommand("Set") end,
 	}
 }
 
@@ -1000,9 +1103,15 @@ t[#t + 1] = Def.ActorFrame {
 		end,
 		SetCommand = function(self)
 			local data = HV.CurrentSongData
-			local msd = data.skillsetMSDs[1] -- Overall
+			local msd
+			if msdTooltipMaxSSR and data.steps then
+				local ssrs = data.steps:GetSSRs(data.rate or getCurRateValue(), 0.965)
+				msd = ssrs and ssrs[1]
+			else
+				msd = data.skillsetMSDs[1] -- Overall
+			end
 			
-			if not data.song and data.avgMSD > 0 then
+			if not msdTooltipMaxSSR and not data.song and data.avgMSD > 0 then
 				msd = data.avgMSD
 			end
 			
@@ -1015,6 +1124,7 @@ t[#t + 1] = Def.ActorFrame {
 			end
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		MSDModeChangedMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
 	-- Top 3 Skillsets Displays
@@ -1094,11 +1204,15 @@ local msdTooltipW = 280
 local msdTooltipH = 56
 
 local msdTooltipActor = nil
+
 local msdTooltip = Def.ActorFrame {
 	Name = "MSDTooltip",
 	InitCommand = function(self)
 		msdTooltipActor = self
 		self:visible(false)
+	end,
+	MSDModeChangedMessageCommand = function(self)
+		self:playcommand("Set")
 	end,
 	-- Background
 	Def.Quad {
@@ -1151,9 +1265,15 @@ for i, ss in ipairs(tooltipSkillsets) do
 				if song then
 					local curSteps = GAMESTATE:GetCurrentSteps()
 					if curSteps then
-						local msd = curSteps:GetMSD(getCurRateValue(), ss.idx)
-						if msd and msd > 0 then
-							self:settext(string.format("%.2f", msd)):diffuse(HVColor.GetMSDRatingColor(msd))
+						local value
+						if msdTooltipMaxSSR then
+							local ssrs = curSteps:GetSSRs(getCurRateValue(), 0.965)
+							value = ssrs and ssrs[ss.idx]
+						else
+							value = curSteps:GetMSD(getCurRateValue(), ss.idx)
+						end
+						if value and value > 0 then
+							self:settext(string.format("%.2f", value)):diffuse(HVColor.GetMSDRatingColor(value))
 						else self:settext("-"):diffuse(dimText) end
 					else self:settext("-"):diffuse(dimText) end
 				else self:settext("-"):diffuse(dimText) end
@@ -1170,6 +1290,13 @@ t[#t + 1] = Def.ActorFrame {
 		self:queuecommand("Tick")
 	end,
 	TickCommand = function(self)
+		-- Folders have an average MSD but no chart SSR data to display.
+		local maxSSR = isShiftPressed() and GAMESTATE:GetCurrentSong() ~= nil
+		if maxSSR ~= msdTooltipMaxSSR then
+			msdTooltipMaxSSR = maxSSR
+			MESSAGEMAN:Broadcast("MSDModeChanged")
+		end
+
 		if msdTooltipActor then
 			-- The label is at msdY and the number is at msdY + 18 with zoom ~0.45.
 			-- The text height is around 40px, so 18 + 40 = 58.
@@ -1198,7 +1325,7 @@ local diffSelectorY = msdY + 80
 local diffTabW = 64 -- Smaller
 local diffTabH = 26 -- Smaller
 local maxVisibleCharts = 6 -- Exactly 6
-local diffShort = {Beginner = "BG", Easy = "EZ", Medium = "MD", Hard = "HD", Challenge = "CH", Edit = "ED"}
+local diffShort = {Beginner = "BG", Easy = "EZ", Medium = "MD", Hard = "HD", Challenge = "IN", Edit = "ED"}
 local diffSelectorX = panelX + panelW + 14
 local diffSelectorTopY = panelY + 8
 
@@ -2491,12 +2618,12 @@ root[#root + 1] = Def.ActorFrame {
 		self:playcommand("Set")
 	end,
 	CurrentSongChangedMessageCommand = function(self)
-		if self:GetVisible() then
+		if self.hv_holdTarget > 0 then
 			self:playcommand("UpdateBanner")
 		end
 	end,
 	DelayedChartUpdateMessageCommand = function(self)
-		if self:GetVisible() then
+		if self.hv_holdTarget > 0 then
 			self:playcommand("UpdateBanner")
 		end
 	end,

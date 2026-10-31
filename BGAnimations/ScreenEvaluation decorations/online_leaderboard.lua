@@ -14,6 +14,8 @@ local hsTable = getScoreTable(pn, getCurRate()) or {}
 
 -- HV Color palette
 local accentColor = HVColor.Accent
+local accentHSV = ColorToHSV(accentColor)
+local profileHighlightColor = HSV(accentHSV.Hue, accentHSV.Sat * 0.35, accentHSV.Value * 0.35)
 local brightText = color("1,1,1,1")
 local dimText = brightText
 local subText = brightText
@@ -32,6 +34,36 @@ local alreadyPulled = false
 local scoreList = hsTable
 local showAllRates = false
 local showInvalidScores = false
+
+local function getOnlineProfileName()
+	local name = HV.OnlineEvaluationName
+	if name and name ~= "" then return name end
+	if DLMAN and DLMAN:IsLoggedIn() and DLMAN.GetUsername then
+		name = DLMAN:GetUsername()
+		if name and name ~= "" then return name end
+	end
+	if profile and profile.GetDisplayName then return profile:GetDisplayName() end
+	return nil
+end
+
+local function getOnlineScoreName(s)
+	if not s then return nil end
+	if type(s) == "table" then
+		return s.name or s.username or s.user or s.displayName
+	end
+	for _, getterName in ipairs({"GetDisplayName", "GetName"}) do
+		if type(s[getterName]) == "function" then
+			local ok, name = pcall(s[getterName], s)
+			if ok and name and tostring(name) ~= "" then return tostring(name) end
+		end
+	end
+	return nil
+end
+
+local function isHighlightedScore(s)
+	local target = getOnlineProfileName()
+	return target and getOnlineScoreName(s) == target or false
+end
 
 local function isOnlineScoreInvalid(s)
 	if not s then return false end
@@ -125,6 +157,7 @@ local function selectLocalScore(index)
 	-- Keep the selected score in theme state; this Etterna build exposes no
 	-- SCOREMAN setter for replacing the stage's most-recent score.
 	HV.SelectedEvaluationScore = selected
+	HV.ViewingHistoricalEvaluationScore = true
 	if HV.SelectEvaluationScore then HV.SelectEvaluationScore(selected) end
 	MESSAGEMAN:Broadcast("ScoreChanged")
 end
@@ -232,6 +265,14 @@ local function refreshScores(self)
 		maxPages = 1
 		scoreList = {}
 	end
+	if not isLocal then
+		for index, onlineScore in ipairs(scoreList) do
+			if isHighlightedScore(onlineScore) then
+				curPage = math.floor((index - 1) / scoresPerPage) + 1
+				break
+			end
+		end
+	end
 end
 
 local function scoreItem(i)
@@ -278,7 +319,8 @@ local function scoreItem(i)
 			end,
 			SetScoreCommand = function(self, params)
 				local s = scoreList[params.index]
-				self:diffuse(not isLocal and isOnlineScoreInvalid(s) and color("#7A1018") or color("0,0,0,0.4"))
+				local highlighted = not isLocal and isHighlightedScore(s)
+				self:diffuse(highlighted and profileHighlightColor or (not isLocal and isOnlineScoreInvalid(s) and color("#7A1018") or color("0,0,0,0.4")))
 			end,
 			WheelUpSlowMessageCommand = function(self) if isOver(self) then movePage(-1) end end,
 			WheelDownSlowMessageCommand = function(self) if isOver(self) then movePage(1) end end

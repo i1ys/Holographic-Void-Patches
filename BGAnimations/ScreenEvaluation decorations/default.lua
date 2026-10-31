@@ -183,7 +183,17 @@ end
 local function formatWifePercent(pct)
 	local precision = pct >= 99 and 4 or 2
 	local rounded = roundTo(pct, precision)
+	if pct >= 100 then return "100%" end
 	return string.format("%." .. precision .. "f%%", rounded)
+end
+
+setPerfectScoreGlow = function(actor, perfect)
+	if not actor then return end
+	local perfectGlowColor = (HVColor and HVColor.Accent) or color("#5ABAFF")
+	actor:stoptweening():glow(color("0,0,0,0"))
+	if perfect then
+		actor:glow(perfectGlowColor):linear(0.45):glow(color("0,0,0,0")):linear(0.45):glow(perfectGlowColor):queuecommand("PerfectScoreGlow")
+	end
 end
 
 local evalModShorthands = {
@@ -675,8 +685,16 @@ function comparisonArrow(diff)
 	return diff >= 0 and "▲" or "▼"
 end
 
+local function isCurrentBestScore()
+	-- A newly completed play can become rank 1, but it should still show
+	-- the advantage over the previous best.  "Best!" is for a best score
+	-- opened from the evaluation leaderboard.
+	return scoreIndex == 1 and HV.ViewingHistoricalEvaluationScore == true
+end
+
 function nearestGradeComparison(percent)
 	if not percent or isManiaModeEnabled() then return "" end
+	if percent >= 100 then return "100%!" end
 	local baseTiers = {
 		"Grade_Tier01", "Grade_Tier04", "Grade_Tier07", "Grade_Tier10",
 		"Grade_Tier13", "Grade_Tier14", "Grade_Tier15", "Grade_Tier16",
@@ -696,8 +714,11 @@ function nearestGradeComparison(percent)
 	end
 	local target = baseTiers[targetIndex]
 	local wifeDP = score * songMaxPoints
-	local thresholdDP = (WifeTiers[target] or 0) * songMaxPoints
-	return string.format("%s %+0.2f", HV.GetGradeName(target), wifeDP - thresholdDP)
+	local threshold = WifeTiers[target] or 0
+	-- AAAAA has no higher grade tier to target; compare it directly to 100%.
+	if currentIndex == 1 then threshold = 1 end
+	local precision = targetIndex <= 2 and 4 or 2
+	return string.format("%s %+0." .. precision .. "f", HV.GetGradeName(target), wifeDP - (threshold * songMaxPoints))
 end
 local clearType = scoringVoided and nil or getClearType(pn, steps, curScore)
 
@@ -1563,7 +1584,7 @@ local function scoreBoard(pn)
 			-- Shorthand (colored by difficulty type)
 			LoadFont("Common Normal") .. {
 				InitCommand = function(self)
-					self:halign(1):valign(1):xy(-51, 14):zoom(0.55)
+					self:halign(1):valign(1):xy(0, -5):zoom(0.55)
 				end,
 				OnCommand = function(self)
 					if steps then
@@ -1724,6 +1745,7 @@ local function scoreBoard(pn)
 		},
 		-- SSR
 		LoadFont("Common Normal") .. {
+			Name = "EvaluationSSR",
 			InitCommand = function(self) self:halign(0):valign(0):xy(10, 45):zoom(1.05):diffuse(subText):diffusealpha(0) end,
 			OnCommand = function(self)
 				if HV.ShowMSD() then
@@ -1737,6 +1759,69 @@ local function scoreBoard(pn)
 				end
 			end
 		},
+		-- Hovering the overall SSR reveals the individual skillset ratings.
+		(function()
+			local function getActorScreenPosition(actor)
+				local x, y = 0, 0
+				local current = actor
+				while current do
+					x = x + (current.GetX and current:GetX() or 0)
+					y = y + (current.GetY and current:GetY() or 0)
+					current = current.GetParent and current:GetParent() or nil
+				end
+				return x, y
+			end
+			local tooltip = Def.ActorFrame {
+			Name = "SSRSkillsetTooltip",
+			InitCommand = function(self)
+				-- Keep this above every evaluation widget, including late-loaded
+				-- graphs and scoreboard overlays.
+				self:visible(false):z(999):draworder(999)
+				self:SetUpdateFunction(function(actor)
+					local ssr = actor:GetParent():GetChild("EvaluationSSR")
+					if not ssr or not HV.ShowMSD() then actor:visible(false); return end
+					local x, y = getActorScreenPosition(ssr)
+					local mx, my = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
+					local over = mx >= x - 6 and mx <= x + 70 and my >= y - 8 and my <= y + 28
+					if over then
+						local parent = actor:GetParent()
+						local px, py = getActorScreenPosition(parent)
+						actor:playcommand("Set", {x = mx + 12 - px, y = my + 12 - py})
+					else actor:visible(false) end
+				end)
+			end,
+			SetCommand = function(self, p)
+				local score = curScore
+				if not score or not score.GetSkillsetSSR or not p or not p.x or not p.y then
+					self:visible(false)
+					return
+				end
+				self:xy(p.x, p.y):visible(true)
+				for i, ss in ipairs({"Stream", "Jumpstream", "Handstream", "Stamina", "JackSpeed", "Chordjack", "Technical"}) do
+					local label = self:GetChild("Skillset" .. i)
+					local value = score:GetSkillsetSSR(ss) or 0
+					local val = label and label:GetChild("Val")
+					if val then val:settext(string.format("%.2f", value)):diffuse(HVColor.GetMSDRatingColor(value)) end
+				end
+			end,
+			Def.Quad { Name = "Bg", InitCommand = function(self) self:halign(0):valign(1):zoomto(280, 56):diffuse(color("0.05,0.05,0.05,0.95")) end },
+			Def.Quad { Name = "Border", InitCommand = function(self) self:halign(0):valign(1):zoomto(280, 1):y(-56):diffuse(HVColor.Accent):diffusealpha(0.5) end },
+			}
+			for i = 1, 8 do
+				if i <= 7 then
+					local col, row, colW
+					if i <= 4 then row, col, colW = 0, i - 1, 280 / 4
+					else row, col, colW = 1, i - 5, 280 / 3 end
+					tooltip[#tooltip + 1] = Def.ActorFrame {
+						Name = "Skillset" .. i,
+						InitCommand = function(self) self:xy(col * colW + colW / 2, -56 + 12 + row * 24) end,
+						LoadFont("Common Normal") .. { InitCommand = function(self) self:y(-7):zoom(0.22):diffuse(subText):settext(({"Stream", "Jumpstream", "Handstream", "Stamina", "JackSpeed", "Chordjack", "Technical"})[i]) end },
+						LoadFont("Common Normal") .. { Name = "Val", InitCommand = function(self) self:y(5):zoom(0.35):diffuse(mainText) end }
+					}
+				end
+			end
+			return tooltip
+		end)(),
 
 		-- Custom Scoring Label
 		LoadFont("Common Normal") .. {
@@ -1764,11 +1849,15 @@ local function scoreBoard(pn)
 			OnCommand = function(self)
 				local label = self:GetChild("WifeScoreLabel")
 				local wife = rescoredPercentage or (evaluationWifeScore() * 100)
+				-- Set the final value immediately as a fallback.  The animated update
+				-- below may not run on every evaluation screen lifecycle.
+				label:settext(formatEvaluationPercent(wife))
 				label:sleep(0.35):linear(0.15):diffusealpha(1)
 				
 				-- Incremental counting
 				local val = math.max(0, wife)
-				local duration = 0.2
+				-- it is buggy idk why.
+				local duration = 0.4
 				local curTime = 0
 				local targetWife = wife
 				self:SetUpdateFunction(function(self, delta)
@@ -1823,12 +1912,15 @@ local function scoreBoard(pn)
 
 			LoadFont("Common Large") .. {
 				Name = "WifeScoreLabel",
-				InitCommand = function(self) self:halign(0):valign(0):xy(0,-3):zoom(0.72):diffuse(mainText):diffusealpha(0) end,
+				InitCommand = function(self) self:halign(0):valign(0):xy(0,-3):zoom(0.72):diffuse(mainText):diffusealpha(0):glow(color("0,0,0,0")) end,
+				OnCommand = function(self)
+					local wife = rescoredPercentage or (evaluationWifeScore() * 100)
+					self:settext(formatEvaluationPercent(wife)):sleep(0.35):linear(0.15):diffusealpha(1)
+				end,
+				PerfectScoreGlowCommand = function(self) self:linear(0.45):glow(accentColor):linear(0.45):glow(color("0,0,0,0")):queuecommand("PerfectScoreGlow") end,
 				SetJudgeCommand = function(self)
 					if usingCustomWindows then return end
-					if rescoredPercentage then
-						self:settext(formatEvaluationPercent(rescoredPercentage))
-					end
+					self:settext(formatEvaluationPercent(rescoredPercentage or (evaluationWifeScore() * 100)))
 				end,
 				ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 				LoadedCustomWindowMessageCommand = function(self)
@@ -1849,7 +1941,9 @@ local function scoreBoard(pn)
 					local current = getComparisonWifePercent(curScore, pss, playedJudge)
 						or rescoredPercentage or (evaluationWifeScore() * 100)
 					local best = getComparisonWifePercent(recScore, pss, playedJudge)
-					if best then
+					if isCurrentBestScore() then
+						self:settext("Best!")
+					elseif best then
 						local diff = current - best
 						-- Keep small but real Wife% differences visible instead of
 						-- rounding them away to 0.00%.
@@ -2012,8 +2106,8 @@ local function scoreBoard(pn)
 				local displayPct = rescoredPercentage or (evaluationWifeScore() * 100)
 				local dp = isManiaModeEnabled() and getOsuManiaLongScore() or customDP or ((displayPct / 100) * songMaxPoints)
 				local targetDP = dp
-				
-				local duration = 0.2
+
+				local duration = 0.4
 				local curTime = 0
 
 				self:stoptweening():sleep(0.4):linear(0.15):diffusealpha(1)
@@ -2046,7 +2140,6 @@ local function scoreBoard(pn)
 				Name = "WholeDP",
 				InitCommand = function(self) self:halign(0):valign(1):xy(0, 5):zoom(0.8):diffuse(accentColor) end,
 				SetJudgeCommand = function(self)
-					self:GetParent():SetUpdateFunction(nil)
 					if rescoredPercentage then
 						local dp = isManiaModeEnabled() and getOsuManiaLongScore() or ((rescoredPercentage / 100) * songMaxPoints)
 						local decimalPart = self:GetParent():GetChild("DecimalDP")
@@ -2101,10 +2194,14 @@ local function scoreBoard(pn)
 						or (recScore.GetWifePoints and recScore:GetWifePoints() or (recScore:GetWifeScore() * songMaxPoints))
 					local curDp = currentPercent and (currentPercent / 100) * songMaxPoints
 						or (evaluationWifeScore() * songMaxPoints)
-					local diff = curDp - pbDp
-					local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
+					if isCurrentBestScore() then
+						self:settext("Best!"):diffuse(accentColor)
+					else
+						local diff = curDp - pbDp
+						local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
 
-					self:settextf("%s %+.2f%s", comparisonArrow(diff), diff, judgeLabel)
+						self:settextf("%s %+.2f%s", comparisonArrow(diff), diff, judgeLabel)
+					end
 				else
 					self:settext("▲ New!"):diffuse(accentColor)
 				end
@@ -2192,24 +2289,33 @@ local function scoreBoard(pn)
 					OnCommand = function(self)
 						if isOnlineEvaluation() then self:visible(false); return end
 						if hsTable then
+							if isCurrentBestScore() then
+								self:settext("Best!"):diffuse(accentColor):diffusealpha(0.6)
+								return
+							end
 							local recCT = getHighestClearType(pn, steps, hsTable, scoreIndex) or "Clear"
 							local currentCT = clearType or (scoringVoided and "Noplay" or "Clear")
 							local diff
 							local currentIsNoPlay = currentCT == "ClearType_Noplay" or currentCT == "Noplay"
 							local recordIsNoPlay = recCT == "ClearType_Noplay" or recCT == "Noplay"
+							local comparisonOrder = {
+								RFC = 1, RF = 2, SDM = 3, MFC = 4, WF = 5, SDP = 6,
+								PFC = 7, BF = 8, SDG = 9, FC = 10, NGFC = 11, MF = 12,
+								SDCB = 13, Clear = 14, Failed = 15, Invalid = 16, Noplay = 17,
+							}
 							local function comparisonLevel(ct, isNoPlay)
-								if isNoPlay or ct == "ClearType_Noplay" or ct == "Noplay" then return 21 end
-								-- Failed is below every other result except No Play.
-								if ct == "ClearType_Failed" or ct == "Failed" then return 20 end
-								if ct == "ClearType_Invalid" or ct == "Invalid" then return 19 end
-								return getClearTypeLevel(ct)
+								if isNoPlay or ct == "ClearType_Noplay" or ct == "Noplay" then
+									return comparisonOrder.Noplay
+								end
+								ct = (ct or ""):gsub("^ClearType_", "")
+								return comparisonOrder[ct] or comparisonOrder.Clear
 							end
 							if currentIsNoPlay and not recordIsNoPlay then
 								diff = -1
 							elseif not currentIsNoPlay and recordIsNoPlay then
 								diff = 1
 							else
-								diff = comparisonLevel(currentCT, currentIsNoPlay) - comparisonLevel(recCT, recordIsNoPlay)
+								diff = comparisonLevel(recCT, recordIsNoPlay) - comparisonLevel(currentCT, currentIsNoPlay)
 							end
 							local arrow = diff == 0 and "" or comparisonArrow(diff)
 							self:settextf("Best: %s%s", getClearTypeText(recCT), arrow == "" and "" or " " .. arrow)
