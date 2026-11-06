@@ -62,6 +62,11 @@ local HVPrefRows = {
 		Choices = {"Off", "On"},
 		Values = {false, true},
 	},
+	HV_OsuManiaStarRating = {
+		Default = "Classic",
+		Choices = {"Off", "Classic", "Enissay rework"},
+		Values = {"Off", "Classic", "Enissay rework"},
+	},
 
 
 	-- Show Profile Stats on Select Music
@@ -504,7 +509,7 @@ function HVThemeOptionsLines()
 		
 		-- Music Select
 		-- Music Select
-		"HV_ShowMSD", "HV_ShowProfileStats", "HV_SongPreview", "HV_SongSelectBGM", "HV_InstantSearch",
+		"HV_ShowMSD", "HV_OsuManiaStarRating", "HV_ShowProfileStats", "HV_SongPreview", "HV_SongSelectBGM", "HV_InstantSearch",
 		
 		-- Gameplay HUD
 		"HV_MinimalisticMode", "HV_ShowJudgment", "HV_EmulateRidiculous", "HV_JudgmentAnimation", "HV_RecentJudgmentDisplay", "HV_PrioritizeLowerJudgements", "HV_DisplayLowerJudgementOffset", "HV_OffsetDisplayJudgement", "HV_ShowCombo", "HV_ComboAnimation", "HV_ShowCurrentWife",
@@ -604,6 +609,10 @@ function OptionRowShowMSD()
 	return HVThemePrefRow("HV_ShowMSD", "Show MSD Ratings")
 end
 
+function OptionRowOsuManiaStarRating()
+	return HVThemePrefRow("HV_OsuManiaStarRating", "osu!mania Star Rating")
+end
+
 function OptionRowShowProfileStats()
 	return HVThemePrefRow("HV_ShowProfileStats", "Show Profile Stats")
 end
@@ -614,6 +623,10 @@ end
 
 function OptionRowShowNPS()
 	return HVThemePrefRow("HV_ShowNPS", "Show NPS")
+end
+
+function OptionRowShowSSR()
+	return HVThemePrefRow("HV_ShowSSR", "Show SSR")
 end
 
 function OptionRowShowMean()

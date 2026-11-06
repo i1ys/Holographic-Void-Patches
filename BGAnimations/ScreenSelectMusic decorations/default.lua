@@ -1,8 +1,3 @@
---- Holographic Void: ScreenSelectMusic Decorations
-
--- A saved score is only being viewed while ScreenEvaluation was opened from
--- the Scores tab. Reset this state whenever returning to song select so it
--- cannot be mistaken for a newly completed play.
 HV.SelectedEvaluationScore = nil
 HV.ViewingHistoricalEvaluationScore = false
 
@@ -1056,6 +1051,319 @@ local msdY = detailY + 35
 local skillsets = {"Overall", "Stream", "Jumpstream", "Handstream", "Stamina", "JackSpeed", "Chordjack", "Technical"}
 local msdTooltipMaxSSR = false
 
+local osuManiaStarCache = {}
+
+-- Lua adaptation of Enissay's osu!mania rating rework. The theme's chart API
+-- provides note rows instead of osu! hit objects, so the rework derives the
+-- five strain skills from note timing, columns, and reconstructed hold spans.
+local function enissayReworkStars(events, keyCount)
+	if #events < 2 or keyCount < 1 then return nil end
+	local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end
+	local function smoothstep(v, lo, hi)
+		local t = clamp((v - lo) / (hi - lo), 0, 1)
+		return t * t * (3 - 2 * t)
+	end
+	local function decay(base, delta) return base ^ (math.max(0, delta) / 1000) end
+	local rows, rowAt = {}, {}
+	for _, event in ipairs(events) do
+		local row = rows[#rows]
+		if not row or row.time ~= event.time then
+			row = {time = event.time, columns = {}}
+			rows[#rows + 1] = row
+			rowAt[event.time] = row
+		end
+		row.columns[#row.columns + 1] = event.column
+	end
+	local strain, skillValues = {0, 0, 0, 0, 0}, {{}, {}, {}, {}, {}}
+	local totalValues, tapValues, lastInColumn = {}, {}, {}
+	local previousColumn, previousPreviousColumn = nil, nil
+	local previousTime, previousDelta = events[1].time, nil
+	local holdCount, holdDuration = 0, 0
+	for _, event in ipairs(events) do
+		if event.endTime and event.endTime > event.time then
+			holdCount = holdCount + 1
+			holdDuration = holdDuration + event.endTime - event.time
+		end
+	end
+	local meanHold = holdCount > 0 and holdDuration / holdCount or 0
+	for i = 2, #events do
+		local event = events[i]
+		local delta = event.time - previousTime
+		local previousColumnTime = lastInColumn[event.column]
+		local columnDelta = previousColumnTime and event.time - previousColumnTime or math.huge
+		local row = rowAt[event.time]
+		local chordDepth = 1
+		for _, column in ipairs(row.columns) do
+			if lastInColumn[column] and lastInColumn[column] >= event.time - 8 then chordDepth = chordDepth + 1 end
+		end
+
+		local sameColumn = previousColumn == event.column
+		local direction = previousColumn and event.column - previousColumn or 0
+		local trill = previousPreviousColumn == event.column and not sameColumn
+		local speedPattern = sameColumn and .49996 or (trill and .85 or 1)
+		local speedAdd = delta >= 8 and 1000 / (delta + 30) * speedPattern * 1.405 or 0
+		strain[1] = strain[1] * decay(.05007, delta) + speedAdd
+
+		local jackAdd = 0
+		if columnDelta <= 350 then
+			local tapRate = 1000 / (math.max(columnDelta, 1) + 60)
+			local chordBonus = math.max(.1, 1 + .1746 * clamp(140.625 / math.max(columnDelta, 1), .1, 2) * (chordDepth - 1))
+			local rowMultiplier = chordDepth >= 2 and .45397 or (trill and .85 or 1)
+			jackAdd = (tapRate * (1 + .7 / (1 + math.exp(-.5 * (tapRate - 5)))) * chordBonus)^1.29407 * rowMultiplier * .62159 * 1.19496
+		end
+		strain[2] = strain[2] * decay(.50497, delta) + jackAdd
+
+		local irregularity = 0
+		if previousDelta and previousDelta > 8 and delta > 0 then
+			irregularity = 1 - math.min(delta / previousDelta, previousDelta / delta)
+		end
+		local reversal = previousPreviousColumn and previousColumn and (previousColumn - previousPreviousColumn) * direction < 0 and .6 or 0
+		local complexity = math.max(irregularity + reversal, 1.55 * smoothstep(math.abs(direction), 2.5, 5.5))
+		local rhythmAmplifier = 1 + .9 * math.exp(-.5 * ((irregularity - .15) / .085)^2)
+		local technicalAdd = delta >= 8 and .6974 * complexity / (delta / 1000 + .05) * 1.49964 * rhythmAmplifier * 1.58087 or 0
+		strain[3] = strain[3] * decay(.06696, delta) + technicalAdd
+
+		local coordinationAdd = 0
+		for column = math.max(1, event.column - 1), math.min(keyCount, event.column + 1) do
+			if column ~= event.column and lastInColumn[column] then
+				local adjacentDelta = event.time - lastInColumn[column]
+				if adjacentDelta >= 8 then coordinationAdd = coordinationAdd + 1300 / (adjacentDelta + 35) * .18 end
+			end
+		end
+		if chordDepth >= 2 then
+			local chordSpeed = columnDelta == math.huge and 1 or clamp(140.625 / math.max(columnDelta, 1), .1, 2)
+			coordinationAdd = coordinationAdd + .9 * (chordDepth - 1) * chordSpeed
+		end
+		strain[4] = strain[4] * decay(.52909, delta) + coordinationAdd * 1.81659
+
+		local releaseAdd = 0
+		if event.endTime and event.endTime > event.time then
+			local duration = math.min(event.endTime - event.time, 1000)
+			local gate = 1 / (1 + math.exp(-.07 * (duration - 110.90068)))
+			releaseAdd = (.42 + .9 * duration / 1000 + 1.6 * smoothstep(duration, 500, 680) * duration / 1000) * gate * 2.83449
+		end
+		strain[5] = strain[5] * decay(.89647, delta) + releaseAdd
+		for skill = 1, 5 do skillValues[skill][#skillValues[skill] + 1] = strain[skill] end
+		local tapTotal = math.sqrt(strain[1]^2 + strain[2]^2 + strain[3]^2 + strain[4]^2)
+		totalValues[#totalValues + 1] = tapTotal + strain[5]
+		tapValues[#tapValues + 1] = tapTotal
+		previousPreviousColumn, previousColumn = previousColumn, event.column
+		previousTime, previousDelta = event.time, delta
+		lastInColumn[event.column] = event.time
+	end
+	local totalWeight = #events - 1
+	for i = 2, #events do
+		local event = events[i]
+		if event.endTime and event.endTime > event.time then totalWeight = totalWeight + .6 * math.min(event.endTime - event.time, 1000) / 200 end
+	end
+	local function difficulty(values, weight)
+		local positive = {}
+		for _, value in ipairs(values) do if value > 0 then positive[#positive + 1] = value end end
+		if #positive == 0 then return 0 end
+		table.sort(positive)
+		local function percentile(p) return positive[math.floor((#positive - 1) * p + .5) + 1] end
+		local high = (percentile(.945) + percentile(.935) + percentile(.925) + percentile(.915)) / 4
+		local mid = (percentile(.845) + percentile(.835) + percentile(.825) + percentile(.815)) / 4
+		local fifthPowerSum = 0
+		for _, value in ipairs(positive) do fifthPowerSum = fifthPowerSum + value^5 end
+		return (.25 * .88 * high + .20 * .94 * mid + .55 * (fifthPowerSum / #positive)^.2) * (weight / (weight + 34.64147)) * .90741
+	end
+	local fullDifficulty = difficulty(totalValues, totalWeight)
+	local tapDifficulty = difficulty(tapValues, #events - 1)
+	local coordinationDifficulty = difficulty(skillValues[4], totalWeight)
+	local star = fullDifficulty > 0 and .360643 * fullDifficulty^.52899 or 0
+	local lnRatio = holdCount / #events
+	local hybridLn = smoothstep(lnRatio, .15, .35) * (1 - smoothstep(lnRatio, .50, .75))
+	local lnDamper = (1 - .06263 * lnRatio^2) * (1 - .028 * hybridLn)
+	local lnAddedFraction = star > 0 and math.max(0, 1 - (.360643 * tapDifficulty^.52899) / star) or 0
+	star = star * (1 - math.min(1 - lnDamper, lnAddedFraction))
+	local shortness = (1 - clamp((#events / keyCount) / 197, 0, 1)) * (1 - smoothstep(meanHold, 250, 450))
+	local sortedTotal = {}
+	for _, value in ipairs(totalValues) do if value > 0 then sortedTotal[#sortedTotal + 1] = value end end
+	table.sort(sortedTotal)
+	local median = sortedTotal[math.floor((#sortedTotal - 1) * .5 + .5) + 1] or 0
+	local high = sortedTotal[math.floor((#sortedTotal - 1) * .9 + .5) + 1] or 0
+	local sustainRatio = high > 0 and median / high or 1
+	star = star * (1 - .195 * shortness) * (1 - .118 * (1 - smoothstep(sustainRatio, .24, .50)))
+	if star > 11.5 then
+		local coordinationStars = .360643 * coordinationDifficulty^.52899
+		star = 11.5 + (star - 11.5) * (1 - .5 * smoothstep(coordinationStars, 7.40522, 11.65637))
+	end
+	return star
+end
+
+local osuStarSpectrum = {
+	{0.1, "aaaaaa"}, {0.1, "4290fb"}, {1.25, "4fc0ff"},
+	{2.0, "4fffd5"}, {2.5, "7cff4f"}, {3.3, "f6f05c"},
+	{4.2, "ff8068"}, {4.9, "ff4e6f"}, {5.8, "c645b8"},
+	{6.7, "6563de"}, {7.7, "18158e"}, {9.0, "000000"},
+	{10.0, "000000"},
+}
+
+local function getOsuStarDifficultyColor(stars)
+	stars = math.floor(stars * 100 + 0.5) / 100
+	if stars < osuStarSpectrum[1][1] then stars = osuStarSpectrum[1][1] end
+	for i = 1, #osuStarSpectrum - 1 do
+		local from, to = osuStarSpectrum[i], osuStarSpectrum[i + 1]
+		if stars < to[1] then
+			local amount = (stars - from[1]) / (to[1] - from[1])
+			local fr, fg, fb = tonumber(from[2]:sub(1, 2), 16), tonumber(from[2]:sub(3, 4), 16), tonumber(from[2]:sub(5, 6), 16)
+			local tr, tg, tb = tonumber(to[2]:sub(1, 2), 16), tonumber(to[2]:sub(3, 4), 16), tonumber(to[2]:sub(5, 6), 16)
+			return color(string.format("%.4f,%.4f,%.4f,1", (fr + (tr - fr) * amount) / 255, (fg + (tg - fg) * amount) / 255, (fb + (tb - fb) * amount) / 255))
+		end
+	end
+	local hex = osuStarSpectrum[#osuStarSpectrum][2]
+	return color(string.format("#%s", hex))
+end
+
+local function getOsuStarTextColor(stars)
+	if stars < 6.5 then return color("0,0,0,0.75") end
+	if stars < 9 then return color("#ffd966") end
+	local textSpectrum = {
+		{9.0, "f6f05c"}, {9.9, "ff8068"}, {10.6, "ff4e6f"},
+		{11.5, "c645b8"}, {12.4, "6563de"},
+	}
+	for i = 1, #textSpectrum - 1 do
+		local from, to = textSpectrum[i], textSpectrum[i + 1]
+		if stars < to[1] then
+			local amount = (stars - from[1]) / (to[1] - from[1])
+			local fr, fg, fb = tonumber(from[2]:sub(1, 2), 16), tonumber(from[2]:sub(3, 4), 16), tonumber(from[2]:sub(5, 6), 16)
+			local tr, tg, tb = tonumber(to[2]:sub(1, 2), 16), tonumber(to[2]:sub(3, 4), 16), tonumber(to[2]:sub(5, 6), 16)
+			return color(string.format("%.4f,%.4f,%.4f,1", (fr + (tr - fr) * amount) / 255, (fg + (tg - fg) * amount) / 255, (fb + (tb - fb) * amount) / 255))
+		end
+	end
+	return color("#6563de")
+end
+
+local function getOsuManiaStars(steps, rate)
+	local chartKey = steps and steps:GetChartKey()
+	if not chartKey then return nil end
+	local mode = ThemePrefs.Get("HV_OsuManiaStarRating") or "Classic"
+	if mode ~= "Enissay rework" then mode = (mode == "Off") and "Off" or "Classic" end
+	if mode == "Off" then return nil end
+	rate = tonumber(rate) or 1
+	if rate <= 0 then rate = 1 end
+	local cacheKey = chartKey .. "@" .. tostring(rate) .. (mode == "Classic" and "" or "@" .. mode)
+	if osuManiaStarCache[cacheKey] ~= nil then return osuManiaStarCache[cacheKey] or nil end
+
+	local ok, data = pcall(steps.GetNonEmptyNoteData, steps)
+	if not ok or type(data) ~= "table" or type(data[1]) ~= "table" then
+		osuManiaStarCache[cacheKey] = false
+		return nil
+	end
+	local times, columns = data[1], {}
+	for col = 2, #data do columns[col - 1] = data[col] end
+	if #times < 2 or #columns == 0 then
+		osuManiaStarCache[cacheKey] = false
+		return nil
+	end
+
+	local timing = steps.GetTimingData and steps:GetTimingData()
+	if not timing or type(timing.GetElapsedTimeFromNoteRowNoOffset) ~= "function" then
+		osuManiaStarCache[cacheKey] = false
+		return nil
+	end
+
+	if mode == "Enissay rework" then
+		local keyCount = #data - 2
+		if keyCount < 1 then keyCount = #data - 1 end
+		local holdHeads, events = {}, {}
+		for column = 1, keyCount do holdHeads[column] = {} end
+		for i = 1, #times do
+			local row = tonumber(times[i])
+			if row then
+				local timeOk, time = pcall(timing.GetElapsedTimeFromNoteRowNoOffset, timing, row)
+				time = timeOk and tonumber(time) and tonumber(time) * 1000 / rate or nil
+				if time then
+					for column = 1, keyCount do
+						local noteType = tonumber(data[column + 1][i])
+						if noteType == 1 or noteType == 2 then
+							local event = {time = time, column = column}
+							events[#events + 1] = event
+							if noteType == 2 then holdHeads[column][#holdHeads[column] + 1] = event end
+						elseif noteType == 3 and #holdHeads[column] > 0 then
+							table.remove(holdHeads[column], 1).endTime = time
+						end
+					end
+				end
+			end
+		end
+		table.sort(events, function(a, b)
+			if a.time == b.time then return a.column < b.column end
+			return a.time < b.time
+		end)
+		local stars = enissayReworkStars(events, keyCount)
+		osuManiaStarCache[cacheKey] = stars or false
+		return stars
+	end
+
+	local events = {}
+	for i = 1, #times do
+		local row = tonumber(times[i])
+		if row then
+			-- GetNonEmptyNoteData returns note row indices, not timestamps.
+			-- Convert through chart timing and seconds to milliseconds, then
+			-- apply the selected music rate before osu!'s strain decay constants.
+			local timeOk, time = pcall(timing.GetElapsedTimeFromNoteRowNoOffset, timing, row)
+			time = timeOk and tonumber(time) and tonumber(time) * 1000 / rate or nil
+			if time then
+				for col = 1, #columns do
+					-- Count taps and hold heads; hold durations and releases are omitted.
+					local noteType = tonumber(columns[col][i])
+					if noteType == 1 or noteType == 2 then
+						events[#events + 1] = {time = time, column = col}
+					end
+				end
+			end
+		end
+	end
+	if #events < 2 then
+		osuManiaStarCache[cacheKey] = false
+		return nil
+	end
+
+	local decayIndividual, decayOverall = 0.125, 0.30
+	local individual, previousInColumn, peaks = {}, {}, {}
+	for col = 1, #columns do individual[col] = 0 end
+	previousInColumn[events[1].column] = events[1]
+	local overall = 1
+	local sectionEnd = math.ceil(events[2].time / 400) * 400
+	local sectionPeak, highestIndividual = 0, 0
+	local previousTime = events[1].time
+	for i = 2, #events do
+		local event = events[i]
+		while event.time > sectionEnd do
+			peaks[#peaks + 1] = sectionPeak
+			local elapsed = math.max(0, sectionEnd - previousTime)
+			sectionPeak = highestIndividual * math.pow(decayIndividual, elapsed / 1000)
+				+ overall * math.pow(decayOverall, elapsed / 1000)
+			sectionEnd = sectionEnd + 400
+		end
+		local delta = math.max(0, event.time - previousTime)
+		local prevColumn = previousInColumn[event.column]
+		local columnDelta = prevColumn and event.time - prevColumn.time or event.time
+		individual[event.column] = individual[event.column] * math.pow(decayIndividual, math.max(0, columnDelta) / 1000) + 2
+		if delta <= 1 then
+			highestIndividual = math.max(highestIndividual, individual[event.column])
+		else
+			highestIndividual = individual[event.column]
+		end
+		overall = overall * math.pow(decayOverall, delta / 1000) + 1
+		sectionPeak = math.max(sectionPeak, highestIndividual + overall)
+		previousInColumn[event.column] = event
+		previousTime = event.time
+	end
+	peaks[#peaks + 1] = sectionPeak
+	table.sort(peaks, function(a, b) return a > b end)
+	local total, weight = 0, 1
+	for _, peak in ipairs(peaks) do
+		if peak > 0 then total, weight = total + peak * weight, weight * 0.9 end
+	end
+	local stars = total * 0.018
+	osuManiaStarCache[cacheKey] = stars
+	return stars
+end
+
 local function isShiftPressed()
 	return INPUTFILTER and INPUTFILTER.IsShiftPressed and INPUTFILTER:IsShiftPressed()
 end
@@ -1096,7 +1404,7 @@ t[#t + 1] = Def.ActorFrame {
 		self:visible(show == "true" or show == true)
 	end,
 
-	LoadFont("Common Large") .. {
+	LoadFont("MSD 20px") .. {
 		Name = "MSD_Overall",
 		InitCommand = function(self)
 			self:halign(0):valign(0):zoom(0.45):diffuse(mainText)
@@ -1125,6 +1433,44 @@ t[#t + 1] = Def.ActorFrame {
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		MSDModeChangedMessageCommand = function(self) self:playcommand("Set") end,
+	},
+
+	Def.Quad {
+		Name = "OsuManiaStarBackground",
+		InitCommand = function(self)
+			self:halign(0):valign(0):xy(0, 17):zoomto(25, 10):visible(false)
+		end,
+		SetCommand = function(self)
+			local data = HV.CurrentSongData
+			local stars = data.song and getOsuManiaStars(data.steps, getCurRateValue() or data.rate or 1)
+			if stars then
+				self:diffuse(getOsuStarDifficultyColor(stars)):visible(true)
+			else
+				self:visible(false)
+			end
+		end,
+		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		CurrentRateChangedMessageCommand = function(self) self:playcommand("Set") end,
+	},
+
+	LoadFont("Common Normal") .. {
+		Name = "OsuManiaStarRating",
+		InitCommand = function(self)
+			self:halign(0):valign(0):xy(3, 20):zoom(0.32):visible(false)
+		end,
+		SetCommand = function(self)
+			local data = HV.CurrentSongData
+			local stars = data.song and getOsuManiaStars(data.steps, getCurRateValue() or data.rate or 1)
+			if stars then
+				self:settext(string.format("%.2f★", stars)):diffuse(getOsuStarTextColor(stars)):visible(true)
+			else
+				self:settext(""):visible(false)
+			end
+		end,
+		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		CurrentRateChangedMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
 	-- Top 3 Skillsets Displays
@@ -1204,6 +1550,7 @@ local msdTooltipW = 280
 local msdTooltipH = 56
 
 local msdTooltipActor = nil
+local tooltipOverallMSDAvailable = true
 
 local msdTooltip = Def.ActorFrame {
 	Name = "MSDTooltip",
@@ -1213,6 +1560,33 @@ local msdTooltip = Def.ActorFrame {
 	end,
 	MSDModeChangedMessageCommand = function(self)
 		self:playcommand("Set")
+	end,
+	CurrentSongChangedMessageCommand = function(self)
+		if self:GetVisible() then self:playcommand("Set") end
+	end,
+	CurrentStepsChangedMessageCommand = function(self)
+		if self:GetVisible() then self:playcommand("Set") end
+	end,
+	DelayedChartUpdateMessageCommand = function(self)
+		if self:GetVisible() then self:playcommand("Set") end
+	end,
+	SetCommand = function(self)
+		local steps = GAMESTATE:GetCurrentSteps()
+		local overallMSD = 0
+		if steps and type(steps.GetMSD) == "function" then
+			local ok, value = pcall(steps.GetMSD, steps, getCurRateValue(), 1)
+			if ok then overallMSD = tonumber(value) or 0 end
+		end
+		tooltipOverallMSDAvailable = overallMSD > 0
+		local message = self:GetChild("UnavailableMessage")
+		if message then
+			message:settext(tooltipOverallMSDAvailable and "" or "This chart contains intervals that violates limits of the calculator.")
+			message:visible(not tooltipOverallMSDAvailable)
+		end
+		for i = 1, 7 do
+			local group = self:GetChild("Skillset" .. i)
+			if group then group:visible(tooltipOverallMSDAvailable) end
+		end
 	end,
 	-- Background
 	Def.Quad {
@@ -1234,6 +1608,14 @@ local tooltipSkillsets = {
 	{name="JackSpeed", idx=6}, {name="Chordjack", idx=7}, {name="Technical", idx=8}
 }
 
+msdTooltip[#msdTooltip + 1] = LoadFont("Common Normal") .. {
+	Name = "UnavailableMessage",
+	InitCommand = function(self)
+		self:xy(msdTooltipW / 2, -msdTooltipH / 2):zoom(0.34):diffuse(mainText)
+		self:maxwidth(msdTooltipW / 0.34):visible(false)
+	end
+}
+
 for i, ss in ipairs(tooltipSkillsets) do
 	local col, row, colW, offsetX
 	if i <= 4 then
@@ -1251,6 +1633,7 @@ for i, ss in ipairs(tooltipSkillsets) do
 	local offsetY = -msdTooltipH + 12 + row * 24
 
 	msdTooltip[#msdTooltip + 1] = Def.ActorFrame {
+		Name = "Skillset" .. i,
 		InitCommand = function(self)
 			self:xy(offsetX, offsetY)
 		end,
@@ -1261,6 +1644,10 @@ for i, ss in ipairs(tooltipSkillsets) do
 			Name = "Val",
 			InitCommand = function(self) self:y(5):zoom(0.35):diffuse(mainText) end,
 			SetCommand = function(self)
+				if not tooltipOverallMSDAvailable then
+					self:settext("")
+					return
+				end
 				local song = GAMESTATE:GetCurrentSong()
 				if song then
 					local curSteps = GAMESTATE:GetCurrentSteps()
@@ -1458,7 +1845,7 @@ for i = 1, maxVisibleCharts do
 			DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		},
 
-		LoadFont("Common Normal") .. {
+		LoadFont("MSD 20px") .. {
 			Name = "MSDVal",
 			InitCommand = function(self)
 				self:halign(1):valign(0.5)
@@ -2310,7 +2697,7 @@ t[#t + 1] = Def.ActorFrame {
 	},
 
 	-- MSD/Rating (Bottom Left)
-	LoadFont("Common Large") .. {
+	LoadFont("MSD 20px") .. {
 		Name = "Rating",
 		InitCommand = function(self)
 			self:halign(0):valign(1):x(56):y(53):zoom(0.35)

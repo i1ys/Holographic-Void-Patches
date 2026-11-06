@@ -1,7 +1,5 @@
 --- Holographic Void: Local Scoreboard (ported from spawncamping-wallhack)
--- Displays paginated local high-scores for the chart at the current rate.
--- Features: SSR, Judgment tally (no labels), ClearType lamp, sort by SSR.
--- NEW: Clickable score cards to view different score data
+-- Displays paginated local high-scores for the chart.
 
 local lines = 4
 local pn = GAMESTATE:GetEnabledPlayers()[1]
@@ -228,8 +226,8 @@ local function scoreItem(i)
 		},
 
 		-- SSR
-		LoadFont("Common Normal") .. {
-			InitCommand = function(self) self:xy(290, 8):zoom(0.45):halign(1) end,
+		LoadFont("MSD 20px") .. {
+			InitCommand = function(self) self:xy(290, 8):zoom(0.225):halign(1) end,
 			SetScoreCommand = function(self, params)
 				if not HV.ShowMSD() then
 					self:settext("")

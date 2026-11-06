@@ -348,9 +348,19 @@ local HVPrefs = {
 		Choices = {"Off", "On"},
 		Values = {false, true},
 	},
+	HV_OsuManiaStarRating = {
+		Default = "Classic",
+		Choices = {"Off", "Classic", "Enissay rework"},
+		Values = {"Off", "Classic", "Enissay rework"},
+	},
 
 	-- Gameplay: Toggle real-time NPS display
 	HV_ShowNPS = {
+		Default = true,
+		Choices = {"Off", "On"},
+		Values = {false, true}
+	},
+	HV_ShowSSR = {
 		Default = true,
 		Choices = {"Off", "On"},
 		Values = {false, true}
@@ -888,6 +898,10 @@ end
 --- Check if real-time NPS should be shown.
 function HV.ShowNPS()
 	return isTrue(ThemePrefs.Get("HV_ShowNPS"))
+end
+
+function HV.ShowSSR()
+	return isTrue(ThemePrefs.Get("HV_ShowSSR"))
 end
 
 --- Check if NPS graph should be shown.

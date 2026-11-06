@@ -180,11 +180,17 @@ local main_af = Def.ActorFrame {
 	HV_FilterUpdatedMessageCommand = function(self)
 		searchString = ""
 		HV.MusicSearchQuery = ""
+		local screen = SCREENMAN:GetTopScreen()
+		local whee = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+		if whee then whee:SongSearch("") end
 		MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = "", applied = true})
 	end,
 	HV_FilterModeChangedMessageCommand = function(self)
 		searchString = ""
 		HV.MusicSearchQuery = ""
+		local screen = SCREENMAN:GetTopScreen()
+		local whee = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+		if whee then whee:SongSearch("") end
 		MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = "", applied = true})
 	end,
 	InitCommand = function(self)
@@ -211,6 +217,13 @@ local main_af = Def.ActorFrame {
 		local whee = HV.SSM and HV.SSM.GetMusicWheel and HV.SSM:GetMusicWheel()
 		if whee and searchString ~= "" then whee:SongSearch(searchString) end
 		if whee and searchString == "" then whee:SongSearch("") end
+		-- SongSearch may move the wheel to its first match. Restore the song
+		-- captured when gameplay started after the wheel has finished updating.
+		local returnSong = HV.ReturnToSongSelectSong
+		HV.ReturnToSongSelectSong = nil
+		if whee and returnSong then
+			HV.ReturnToSongSelectSongPending = returnSong
+		end
 		MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = true})
 		HV.LeftMousePeekHoldAllowed = false
 		ApplyNativeMusicWheelHoldTransform(0)
@@ -279,6 +292,10 @@ local main_af = Def.ActorFrame {
 		end
 	end,
 	EndCommand = function(self)
+		-- Fallback for exits that do not use the normal Start command.
+		if not HV.ReturnToSongSelectSong and GAMESTATE and GAMESTATE.GetCurrentSong then
+			HV.ReturnToSongSelectSong = GAMESTATE:GetCurrentSong()
+		end
 		SCREENMAN:set_input_redirected(PLAYER_1, false)
 		SCREENMAN:set_input_redirected(PLAYER_2, false)
 		if HV.LeftMousePeekHold then
@@ -287,6 +304,18 @@ local main_af = Def.ActorFrame {
 			MESSAGEMAN:Broadcast("HVLeftMousePeekHoldChanged", {Held = false, Allowed = false})
 		end
 		ApplyNativeMusicWheelHoldTransform(0)
+	end,
+	StartCommand = function(self)
+		-- Capture the wheel's actual selection before gameplay transitions alter
+		-- GameState's current song.
+		local screen = SCREENMAN:GetTopScreen()
+		local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+		local song
+		if wheel and wheel.GetSelectedSong then
+			local ok, selected = pcall(function() return wheel:GetSelectedSong() end)
+			if ok then song = selected end
+		end
+		HV.ReturnToSongSelectSong = song or (GAMESTATE and GAMESTATE.GetCurrentSong and GAMESTATE:GetCurrentSong())
 	end,
 	LoginMessageCommand = function(self)
 		local user = DLMAN:GetUsername()
@@ -856,9 +885,9 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				-- Handle Delete
 				if btn:lower() == "devicebutton_delete" then
 					if evType ~= "InputEventType_Release" then
-							searchString = ""
-							HV.MusicSearchQuery = searchString
-							if instant and whee then whee:SongSearch(searchString) end
+						searchString = ""
+						HV.MusicSearchQuery = searchString
+						if whee then whee:SongSearch(searchString) end
 						MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
 					end
 					return true
@@ -994,6 +1023,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				if btn:lower() == "devicebutton_delete" then
 					if searchString ~= "" then
 						searchString = ""
+						HV.MusicSearchQuery = searchString
 						local whee = top.GetMusicWheel and top:GetMusicWheel() or (HV.SSM and HV.SSM.GetMusicWheel and HV.SSM:GetMusicWheel())
 						if whee then whee:SongSearch(searchString) end
 						MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
@@ -1014,6 +1044,24 @@ main_af[#main_af + 1] = Def.ActorFrame {
 		end -- end of HV.OverlayInputCallback
 		screen:AddInputCallback(HV.OverlayInputCallback)
 	end
+}
+
+
+-- Keep the delayed restore on its own tween queue. The main actor queues other
+-- startup commands, which would replace a delay queued on that same actor.
+main_af[#main_af + 1] = Def.Actor {
+	BeginCommand = function(self)
+		if HV.ReturnToSongSelectSongPending then
+			self:sleep(0.25):queuecommand("RestoreReturnedSong")
+		end
+	end,
+	RestoreReturnedSongCommand = function(self)
+		local song = HV.ReturnToSongSelectSongPending
+		HV.ReturnToSongSelectSongPending = nil
+		local screen = SCREENMAN:GetTopScreen()
+		local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+		if wheel and song then wheel:SelectSong(song) end
+	end,
 }
 
 
@@ -1201,7 +1249,23 @@ local profileOverlay = Def.ActorFrame {
 		-- Avatar / Info
 		Def.ActorFrame {
 			Name = "PlayerInfo",
-			InitCommand = function(self) self:y(-overlayH/2 + 50) end,
+			InitCommand = function(self)
+				self:y(-overlayH/2 + 50)
+				self:SetUpdateFunction(function(actor)
+					local rating = actor:GetChild("Rating")
+					if not rating or not rating:GetVisible() then return end
+					local infoX = SCREEN_CENTER_X - overlayW / 2 + gradeSidebarW + profileSidebarW / 2
+					local infoY = SCREEN_CENTER_Y - overlayH / 2 + 50
+					local mx, my = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
+					local hovered = mx >= infoX - 12 and mx <= infoX + 76
+						and my >= infoY + 25 and my <= infoY + 82
+					local prof = PROFILEMAN:GetProfile(PLAYER_1)
+					local val = (DLMAN:IsLoggedIn() and profileOverlayActor.isOnlineMode)
+						and DLMAN:GetSkillsetRating("Overall") or (prof and prof:GetPlayerRating() or 0)
+					local display = hovered and tostring(val) or string.format("%.2f", val)
+					if rating:GetText() ~= display then rating:settext(display) end
+				end)
+			end,
 			Def.Quad { Name = "Bg", InitCommand = function(self) self:zoomto(54, 54):diffuse(color("0,0,0,0.5")) end },
 			Def.Sprite {
 				Name = "Avatar",
@@ -1300,9 +1364,11 @@ local profileOverlay = Def.ActorFrame {
 					InitCommand = function(self) self:y(8):zoom(0.22):diffuse(subText) end
 				}
 			},
-			LoadFont("Common Normal") .. {
+			LoadFont("MSD 20px") .. {
 				Name = "Rating",
-				InitCommand = function(self) self:xy(22, 54):zoom(0.55):diffuse(accentColor) end,
+				InitCommand = function(self)
+					self:xy(22, 54):zoom(0.275):diffuse(accentColor)
+				end,
 				UpdateOverlaySkillsetsMessageCommand = function(self)
 					if not HV.ShowMSD() then self:visible(false); return end
 					local val = 0
@@ -1314,7 +1380,7 @@ local profileOverlay = Def.ActorFrame {
 					end
 					self:visible(true):settext(string.format("%.2f", val)):diffuse(HVColor.GetMSDRatingColor(val))
 				end
-			}
+			},
 		},
 
 		-- Vertical Skillset Tabs
@@ -1364,10 +1430,10 @@ local profileOverlay = Def.ActorFrame {
 					},
 					LoadFont("Common Normal") .. {
 						Name = "Val",
-						InitCommand = function(self) self:halign(1):x(profileSidebarW/2 - 20):y(0):zoom(0.4):diffuse(mainText) end,
+						InitCommand = function(self) self:halign(1):valign(0.5):x(profileSidebarW/2 - 20):y(0):zoom(0.4):diffuse(mainText) end,
 						UpdateOverlaySkillsetsMessageCommand = function(self)
 							if not HV.ShowMSD() then self:visible(false); return end
-							self:y(profileOverlayActor.isOnlineMode and 6 or 0)
+							self:halign(1):valign(0.5):x(profileSidebarW/2 - 20):y(DLMAN:IsLoggedIn() and profileOverlayActor.isOnlineMode and 6 or 0)
 							local val = 0
 							local prof = PROFILEMAN:GetProfile(PLAYER_1)
 							if DLMAN:IsLoggedIn() and profileOverlayActor.isOnlineMode then 
@@ -1563,7 +1629,7 @@ local profileOverlay = Def.ActorFrame {
 								:diffuse(accentColor):diffusealpha(0.05)
 						end
 					},
-					LoadFont("Common Normal") .. {
+					LoadFont("MSD 20px") .. {
 						Name = "SSR",
 						InitCommand = function(self) self:halign(0):x(-mainPartW/2 + 30):zoom(0.4) end
 					},
