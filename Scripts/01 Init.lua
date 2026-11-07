@@ -4,7 +4,18 @@
 -- and common helper utilities.
 
 -- Theme namespace
-HV = {}
+HV = HV or {}
+
+-- storing & retrival stuff
+HV.Config = HV.Config or {}
+HV.State = HV.State or {}
+
+-- oddly prevalent bits
+HV.Color = HV.Color or {}
+HV.UI = HV.UI or {}
+
+
+
 HV.ActiveTab = "" -- Tracks the currently open song select overlay (SCORES, FILTERS, etc.)
 HV.AlarmTimerSeconds = 0 -- Global alarm timer state (deprecated for logic, used for UI)
 HV.AlarmTimerEndTime = 0 -- Target completion time for timer
@@ -71,7 +82,7 @@ function HV.LerpColor(t, c1, c2)
 	-- Support both numeric indices and named keys
 	local r1, g1, b1, a1 = c1[1] or c1.r or 1, c1[2] or c1.g or 1, c1[3] or c1.b or 1, c1[4] or c1.a or 1
 	local r2, g2, b2, a2 = c2[1] or c2.r or 1, c2[2] or c2.g or 1, c2[3] or c2.b or 1, c2[4] or c2.a or 1
-	
+
 	return {
 		HV.Lerp(r1, r2, t),
 		HV.Lerp(g1, g2, t),
