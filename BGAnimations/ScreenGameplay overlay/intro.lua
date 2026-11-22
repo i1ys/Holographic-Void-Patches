@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 local lScreen = Var "LoadingScreen" or ""
 local isSync = lScreen:find("Sync") ~= nil
 

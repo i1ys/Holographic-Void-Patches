@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenSelectMusic Overlay
 -- Restore sequential Til Death-style login flow.
 

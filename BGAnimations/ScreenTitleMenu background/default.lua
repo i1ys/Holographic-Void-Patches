@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 -- Global State Initialization
 HV.TitleState = HV.TitleState or {}
 HV.TitleState.player = HV.TitleState.player or { song = nil, paused = true, offset = 0, lastStart = 0, duration = 0, history = {}, lastToggleAt = 0 }

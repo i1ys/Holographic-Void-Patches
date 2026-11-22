@@ -93,9 +93,7 @@ local defaultConfig = {
 	BackgroundType = 1,
 	UserName = "",
 	PasswordToken = "",
-	CustomizeGameplay = false,
 	CustomEvaluationWindowTimings = false,
-	PracticeMode = false,
 	GameplayXYCoordinates = {
 		["3K"] = DeepCopy(defaultGameplayCoordinates),
 		["4K"] = DeepCopy(defaultGameplayCoordinates),
@@ -130,97 +128,75 @@ function getDefaultGameplayCoordinate(obj)
 	return defaultGameplayCoordinates[obj]
 end
 
--- create the playerConfig global
-playerConfig = create_setting("playerConfig", "playerConfig.lua", defaultConfig, -1)
-
--- shadow settings_mt.load to do several things:
---	load missing values from default
---	load missing values for the current keymode from the 4k config
---	load missing values for the current slot from the global slot
-local tmp2 = playerConfig.load
-playerConfig.load = function(self, slot)
-	-- redefinition of force_table_elements_to_match_type to let settings_system
-	-- completely ignore the format of the table if it changed dramatically between versions
-	-- this lets us introduce backwards/forwards compatibility
-	local tmp = force_table_elements_to_match_type
-	force_table_elements_to_match_type = function()
+local Config = HV.Config
+local function normalizeLayout(layout, defaults)
+	if type(layout) ~= "table" then layout = {} end
+	local result = {}
+	for keymode, modeDefaults in pairs(defaults) do
+		local saved = type(layout[keymode]) == "table" and layout[keymode] or layout
+		local values = {}
+		for key, default in pairs(modeDefaults) do
+			values[key] = Config.IsFinite(saved[key]) and saved[key] or default
+		end
+		result[keymode] = values
 	end
-
-	local x = create_setting("playerConfig", "playerConfig.lua", {}, -1)
-	x = x:load(slot)
-	local coords = x.GameplayXYCoordinates
-	local sizes = x.GameplaySizes
-	if sizes and not sizes["4K"] then
-		defaultConfig.GameplaySizes["3K"] = sizes
-		defaultConfig.GameplaySizes["4K"] = sizes
-		defaultConfig.GameplaySizes["5K"] = sizes
-		defaultConfig.GameplaySizes["6K"] = sizes
-		defaultConfig.GameplaySizes["7K"] = sizes
-		defaultConfig.GameplaySizes["8K"] = sizes
-		defaultConfig.GameplaySizes["9K"] = sizes
-		defaultConfig.GameplaySizes["10K"] = sizes
-		defaultConfig.GameplaySizes["12K"] = sizes
-		defaultConfig.GameplaySizes["16K"] = sizes
-
-	end
-	if coords and not coords["4K"] then
-		defaultConfig.GameplayXYCoordinates["3K"] = coords
-		defaultConfig.GameplayXYCoordinates["4K"] = coords
-		defaultConfig.GameplayXYCoordinates["5K"] = coords
-		defaultConfig.GameplayXYCoordinates["6K"] = coords
-		defaultConfig.GameplayXYCoordinates["7K"] = coords
-		defaultConfig.GameplayXYCoordinates["8K"] = coords
-		defaultConfig.GameplayXYCoordinates["9K"] = coords
-		defaultConfig.GameplayXYCoordinates["10K"] = coords
-		defaultConfig.GameplayXYCoordinates["12K"] = coords
-		defaultConfig.GameplayXYCoordinates["16K"] = coords
-	end
-	force_table_elements_to_match_type = tmp
-	local loaded = tmp2(self, slot)
-	-- Customization is an editing mode, not a gameplay preference.  Keep the
-	-- saved layout, but always require it to be enabled again after a reboot.
-	if loaded then
-		loaded.CustomizeGameplay = false
-	end
-	return loaded
-end
-playerConfig:load()
-
--- Persist in-place edits consistently, including changes made by option rows.
-function SavePlayerConfig(slot)
-	if not slot then return end
-	playerConfig:set_dirty(slot)
-	playerConfig:save(slot)
+	return result
 end
 
-function LoadProfileCustom(profile, dir)
-	local players = GAMESTATE:GetEnabledPlayers()
-	local playerProfile
-	local pn
-	for k, v in pairs(players) do
-		playerProfile = PROFILEMAN:GetProfile(v)
-		if playerProfile:GetGUID() == profile:GetGUID() then
-			pn = v
+local function normalizePlayer(data)
+	data.CustomizeGameplay = nil
+	data.PracticeMode = nil
+	for key, default in pairs(defaultConfig) do
+		local value = data[key]
+		if type(default) == "table" then
+			data[key] = normalizeLayout(value, default)
+		elseif type(value) ~= type(default) or (type(value) == "number" and not Config.IsFinite(value)) then
+			data[key] = default
 		end
 	end
-
-	if pn then
-		local conf = playerConfig:load(pn_to_profile_slot(pn))
-	end
+	return data
 end
 
-function SaveProfileCustom(profile, dir)
-	local players = GAMESTATE:GetEnabledPlayers()
-	local playerProfile
-	local pn
-	for k, v in pairs(players) do
-		playerProfile = PROFILEMAN:GetProfile(v)
-		if playerProfile:GetGUID() == profile:GetGUID() then
-			pn = v
-		end
-	end
+local profiles = Config.CreateStore("playerConfig.lua", defaultConfig, normalizePlayer)
 
-	if pn then
-		SavePlayerConfig(pn_to_profile_slot(pn))
-	end
+Config.Player = {
+	Get = function(pn, key)
+		if defaultConfig[key] == nil then return nil end
+		local directory = Config.ProfileDirectory(pn)
+		local data = directory and profiles.Get(directory) or defaultConfig
+		local value = data[key]
+		return type(value) == "table" and DeepCopy(value) or value
+	end,
+	Set = function(pn, key, value, directory)
+		directory = directory or Config.ProfileDirectory(pn)
+		local default = defaultConfig[key]
+		if not directory or default == nil or type(value) ~= type(default) then return false end
+		if type(value) == "table" then
+			for keymode, values in pairs(value) do
+				if not default[keymode] or type(values) ~= "table" then return false end
+				for field, number in pairs(values) do
+					if not default[keymode][field] or not Config.IsFinite(number) then return false end
+				end
+			end
+			value = normalizeLayout(value, default)
+		elseif type(value) == "number" and not Config.IsFinite(value) then
+			return false
+		end
+		profiles.Set(directory, key, value)
+		return true
+	end,
+	Save = function(pn, directory)
+		directory = directory or Config.ProfileDirectory(pn)
+		if not directory then return false end
+		return profiles.Save(directory)
+	end,
+}
+
+local customizationProfile
+function HV.IsGameplayCustomizationEnabled()
+	return customizationProfile ~= nil and customizationProfile == Config.ProfileDirectory(PLAYER_1)
+end
+
+function HV.SetGameplayCustomization(enabled)
+	customizationProfile = enabled and Config.ProfileDirectory(PLAYER_1) or nil
 end

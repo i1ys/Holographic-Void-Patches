@@ -31,7 +31,7 @@ local cardGap = 3
 local startX = 10
 local startY = 40
 local maxEntries = 5
-local isCustomizeGameplay = playerConfig:get_data(pn_to_profile_slot(PLAYER_1)).CustomizeGameplay
+local isCustomizeGameplay = HV.IsGameplayCustomizationEnabled()
 
 -- Get player name (prefer online)
 local profileName = HV.GetPlayerName()
@@ -217,7 +217,7 @@ local t = Def.ActorFrame {
 
 -- Create historical cards
 for i = 1, maxEntries do
-	local cardY = (i - 1) * (cardH + cardGap)
+	local cardY = i * (cardH + cardGap)
 
 	t[#t + 1] = Def.ActorFrame {
 		Name = "ScoreCard_" .. i,
@@ -296,15 +296,8 @@ for i = 1, maxEntries do
 end
 
 -- Current Score Card (Live)
-local currentAccent = accentColor
-
 t[#t + 1] = Def.ActorFrame {
 	Name = "CurrentScoreRow",
-	RefreshScoresCommand = function(self)
-		local y = #highScores * (cardH + cardGap) + 6
-		self:stoptweening():linear(0.2):y(y)
-		self:visible(true)
-	end,
 
 	-- Card Background
 	Def.Quad {
@@ -314,14 +307,12 @@ t[#t + 1] = Def.ActorFrame {
 		end
 	},
 
-	-- Pulsing Accent Strip
 	Def.Quad {
 		Name = "CurrentAccent",
 		InitCommand = function(self)
 			self:halign(0):valign(0):zoomto(2, cardH)
-				:diffuse(currentAccent)
+				:diffuse(accentColor)
 				:diffusealpha(0.8)
-				:pulse():effectmagnitude(1.0, 0.4, 0):effectperiod(1.5)
 		end
 	},
 
@@ -329,7 +320,7 @@ t[#t + 1] = Def.ActorFrame {
 	LoadFont("Common Normal") .. {
 		InitCommand = function(self)
 			self:halign(0):valign(0):xy(6, 3):zoom(0.24)
-				:diffuse(currentAccent):settext("NOW")
+				:diffuse(accentColor):settext("NOW")
 		end
 	},
 
@@ -366,7 +357,7 @@ t[#t + 1] = Def.ActorFrame {
 			local c = HVColor.GetGradeColor(g)
 			self:diffuse(c)
 			local acc = self:GetParent():GetChild("CurrentAccent")
-			if acc then acc:diffuse(c) end
+			if acc then acc:diffuse(c):diffusealpha(0.8) end
 		end
 	},
 	LoadFont("Common Normal") .. {

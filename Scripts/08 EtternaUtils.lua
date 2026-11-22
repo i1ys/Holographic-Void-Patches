@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: Etterna Utility Functions
 -- Consolidates grade calculation, clear types, score retrieval,
 -- rate management, timing stats, and judge rescoring.
@@ -92,7 +94,7 @@ if next(gradeDefaults) == nil then
 	for i, value in ipairs(fallback) do gradeDefaults[string.format("Grade_Tier%02d", i)] = value end
 	gradeDefaults.Grade_Tier17, gradeDefaults.Grade_Failed, gradeDefaults.Grade_None = "Grade_Tier17", "F", "None"
 end
-local gradeConfigPath = "Save/Holographic Void_settings/CustomGrades.lua"
+local gradeConfigPath = HV.Config.SaveDirectory .. "/CustomGrades.lua"
 local gradeConfig = nil
 if FILEMAN:DoesFileExist(gradeConfigPath) then
 	local f = RageFileUtil.CreateRageFile()
@@ -113,7 +115,7 @@ function HV.GetTitleChoiceNames()
 end
 
 function HV.SaveCustomGrades()
-	if FILEMAN.CreateDir then FILEMAN:CreateDir("Save/Holographic Void_settings") end
+	if FILEMAN.CreateDir then FILEMAN:CreateDir(HV.Config.SaveDirectory) end
 	local f = RageFileUtil.CreateRageFile()
 	if f:Open(gradeConfigPath, 2) then
 		local out = "return {\n"
@@ -122,9 +124,6 @@ function HV.SaveCustomGrades()
 	end
 	f:destroy()
 end
-
--- Ensure the editable configuration exists on first launch.
-if not FILEMAN:DoesFileExist(gradeConfigPath) then HV.SaveCustomGrades() end
 
 function HV.GetGradeName(grade)
 	if not grade then return "" end
@@ -1444,7 +1443,7 @@ end
 ------------------------------------------------------------
 -- SCORE COMMENTS
 ------------------------------------------------------------
-HV.ScoreCommentsPath = HV.ScoreCommentsPath or "Save/Holographic Void_settings/ScoreComments.lua"
+HV.ScoreCommentsPath = HV.Config.SaveDirectory .. "/ScoreComments.lua"
 HV.ScoreComments = HV.ScoreComments or {}
 
 function HV.WrapScoreComment(text, maxCharacters)
@@ -1487,7 +1486,7 @@ local function hvReadLuaTable(path)
 end
 
 local function hvEnsureSettingsDir()
-	if FILEMAN.CreateDir then FILEMAN:CreateDir("Save/Holographic Void_settings") end
+	if FILEMAN.CreateDir then FILEMAN:CreateDir(HV.Config.SaveDirectory) end
 end
 
 function HV.ScoreCommentKey(score)
@@ -1835,7 +1834,7 @@ end
 ------------------------------------------------------------
 -- LEVELLING LOGIC
 ------------------------------------------------------------
-HV.XPFile = "Save/Holographic Void_settings/profileXP.lua"
+HV.XPFile = HV.Config.SaveDirectory .. "/profileXP.lua"
 HV.XPData = nil
 
 function HV.LoadXPData()

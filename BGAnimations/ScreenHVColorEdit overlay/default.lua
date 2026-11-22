@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenHVColorEdit Overlay
 -- HSV color picker for custom element colors
 -- Based on 'Til Death's color editor

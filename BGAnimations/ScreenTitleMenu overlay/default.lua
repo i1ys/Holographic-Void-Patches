@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenTitleMenu Overlay
 -- Rebuilt to focus only on custom cursor and jukebox shortcuts.
 

@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenColorTheme Overlay
 -- Custom Lua UI for selecting the theme's accent color.
 -- Features clickable swatches with a live preview panel that updates in real time.

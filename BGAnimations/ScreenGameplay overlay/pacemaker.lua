@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 -- Holographic Void: Pacemaker graph (from someone on Discord)
 -- Visual score meter comparing current score against personal best and a target goal.
 -- Includes a real-time grade display, colored by HVColor.

@@ -1,19 +1,26 @@
 local keymode
 local allowedCustomization
 local usingReverse
+local layoutProfile
+local layouts
+local changedLayouts
 local WIDESCREENWHY = -5
 local WIDESCREENWHX = -5
 
 MovableValues = {}
 
 local function loadValuesTable()
-	allowedCustomization = playerConfig:get_data(pn_to_profile_slot(PLAYER_1)).CustomizeGameplay
+	allowedCustomization = HV.IsGameplayCustomizationEnabled()
 	usingReverse = GAMESTATE:GetPlayerState():GetCurrentPlayerOptions():UsingReverse()
 
-	-- Cache player data to reduce repeated lookups
-	local playerData = playerConfig:get_data(pn_to_profile_slot(PLAYER_1))
-	local gameplayCoords = playerData.GameplayXYCoordinates[keymode] or {}
-	local gameplaySizes = playerData.GameplaySizes[keymode] or {}
+	layoutProfile = HV.Config.ProfileDirectory(PLAYER_1)
+	layouts = {
+		GameplayXYCoordinates = HV.Config.Player.Get(PLAYER_1, "GameplayXYCoordinates"),
+		GameplaySizes = HV.Config.Player.Get(PLAYER_1, "GameplaySizes"),
+	}
+	changedLayouts = {}
+	local gameplayCoords = layouts.GameplayXYCoordinates[keymode] or {}
+	local gameplaySizes = layouts.GameplaySizes[keymode] or {}
 	local function coord(name)
 		return gameplayCoords[name] or getDefaultGameplayCoordinate(name) or 0
 	end
@@ -98,6 +105,26 @@ end
 function setMovableKeymode(key)
 	keymode = key
 	loadValuesTable()
+end
+
+local function editLayout(tree, field, value)
+	local layout = layouts[tree]
+	layout[keymode] = layout[keymode] or {}
+	if layout[keymode][field] ~= value then
+		layout[keymode][field] = value
+		changedLayouts[tree] = true
+	end
+end
+
+function HV.SaveGameplayLayout()
+	if not layoutProfile then return false end
+	for tree in pairs(changedLayouts) do
+		if not HV.Config.Player.Set(PLAYER_1, tree, layouts[tree], layoutProfile) then
+			return false, "HV2: Invalid gameplay layout."
+		end
+		changedLayouts[tree] = nil
+	end
+	return HV.Config.Player.Save(PLAYER_1, layoutProfile)
 end
 
 local Round = notShit.round
@@ -1043,7 +1070,8 @@ function MovableInput(event)
 						local keyProperty = curKey.property
 						local prop = current.name .. string.gsub(keyProperty, "Add", "")
 						local newVal = 0
-						if posvals[keyProperty] then
+						local comboPosition = current.name == "Combo" and current.elementTree == "GameplayXYCoordinates"
+						if posvals[keyProperty] or comboPosition then
 							newVal = getDefaultGameplayCoordinate(prop)
 						elseif sizevals[keyProperty] then
 							newVal = getDefaultGameplaySize(prop)
@@ -1059,6 +1087,10 @@ function MovableInput(event)
 							else
 								curKey.arbitraryFunction(newVal)
 							end
+						elseif comboPosition then
+							local axis = keyProperty:sub(4)
+							local origin = axis == "X" and SCREEN_CENTER_X or SCREEN_CENTER_Y
+							propsFunctions[axis](current.element, origin + newVal)
 						elseif keyProperty == "AddX" or keyProperty == "AddY" then
 							if keyProperty == "AddY" then
 								diff = -diff -- sigh
@@ -1085,10 +1117,7 @@ function MovableInput(event)
 							end
 						end
 						updatetext(Movable.current)
-						local playerData = playerConfig:get_data(pn_to_profile_slot(PLAYER_1))
-						playerData[current.elementTree][keymode] = playerData[current.elementTree][keymode] or {}
-						playerData[current.elementTree][keymode][prop] = MovableValues[prop]
-						playerConfig:set_dirty(pn_to_profile_slot(PLAYER_1))
+						editLayout(current.elementTree, prop, MovableValues[prop])
 					end
 				end
 				return false
@@ -1164,14 +1193,7 @@ function MovableInput(event)
 			if not event.hellothisismouse then
 				updatetext(Movable.current)	-- updates text when keyboard movements are made (mouse already updated)
 			end
-			local playerData = playerConfig:get_data(pn_to_profile_slot(PLAYER_1))
-			playerData[current.elementTree][keymode] = playerData[current.elementTree][keymode] or {}
-			playerData[current.elementTree][keymode][prop] = newVal
-			playerConfig:set_dirty(pn_to_profile_slot(PLAYER_1))
-			-- commented this to save I/O time and reduce lag
-			-- just make sure to call this somewhere else to make sure stuff saves.
-			-- (like when the screen changes....)
-			--playerConfig:save(pn_to_profile_slot(PLAYER_1))
+			editLayout(current.elementTree, prop, newVal)
 		end
 	end
 	return false

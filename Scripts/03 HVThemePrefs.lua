@@ -1,214 +1,3 @@
---- Holographic Void: Theme Preferences
--- @module 03_ThemePrefs
-
--- ==========================================================================
--- ThemePrefs Relocation & Migration System
--- ==========================================================================
--- We override the global ThemePrefs system to use a theme-specific folder.
--- This prevents settings from being overwritten by other themes and 
--- allows for better organization.
-
-local HVThemePrefsPath = "Save/Holographic Void_settings/themeConfig.lua"
-local NewIniPath = "Save/Holographic Void_settings/ThemePrefs.ini"
-local OldIniPath = "Save/ThemePrefs.ini"
-local ThemeName = THEME:GetThemeDisplayName()
-
--- Internal storage for preferences (since _fallback's table is local to its script)
-local PrefsTable = {}
-local PrefDefinitions = {}
-local FallbackTheme = "_fallback"
-
-local function GetThemeName()
-	return ThemeName
-	-- return (themeInfo and themeInfo.Name) or THEME:GetThemeDisplayName()
-end
-
-local function coerce_pref_value(pref, value)
-	local def = PrefDefinitions[pref]
-	if not def then return value end
-	local default = def.Default
-	if type(default) == "boolean" then
-		if value == "true" then return true end
-		if value == "false" then return false end
-	elseif type(default) == "number" then
-		if type(value) == "string" then
-			local num = tonumber(value)
-			if num ~= nil then return num end
-		end
-	elseif type(default) == "string" then
-		if value == true or value == false then
-			return tostring(value)
-		end
-	end
-	return value
-end
-
--- Resolve which section a preference belongs to
-local function ResolveTable(pref)
-	local name = GetThemeName()
-	if PrefsTable[name] and PrefsTable[name][pref] ~= nil then
-		return PrefsTable[name]
-	end
-	if PrefsTable[FallbackTheme] and PrefsTable[FallbackTheme][pref] ~= nil then
-		return PrefsTable[FallbackTheme]
-	end
-	for section, _ in pairs(PrefsTable) do
-		if PrefsTable[section][pref] ~= nil then
-			return PrefsTable[section]
-		end
-	end
-	return nil
-end
-
--- Helper to load a Lua config file safely
-local function load_lua_config(path)
-	local file = RageFileUtil.CreateRageFile()
-	local ret = nil
-	if file:Open(path, 1) then -- READ
-		local content = file:Read()
-		local data = loadstring(content)
-		if data then
-			setfenv(data, {})
-			local success, data_ret = pcall(data)
-			if success then
-				ret = data_ret
-			end
-		end
-		file:Close()
-	end
-	file:destroy()
-	return ret
-end
-
--- Helper to serialize a Lua table to a string for saving
-local function lua_table_to_string(tbl)
-	if type(tbl) ~= "table" then
-		if type(tbl) == "string" then return string.format("%q", tbl) end
-		if type(tbl) == "boolean" then return tostring(tbl) end
-		if type(tbl) == "number" then return tostring(tbl) end
-		return "nil"
-	end
-	local res = "{"
-	for k, v in pairs(tbl) do
-		local key = (type(k) == "string") and string.format("[%q]", k) or string.format("[%d]", k)
-		res = res .. key .. "=" .. lua_table_to_string(v) .. ","
-	end
-	return res .. "}"
-end
-
--- Re-implement ThemePrefs with the new path
-ThemePrefs = {
-	NeedsSaved = false,
-	Init = function(prefs, bLoadFromDisk)
-		if bLoadFromDisk then
-			ThemePrefs.Load()
-		end
-		local section = GetThemeName()
-		PrefsTable[section] = PrefsTable[section] or {}
-		for k, tbl in pairs(prefs) do
-			PrefDefinitions[k] = tbl
-			if PrefsTable[section][k] == nil then
-				PrefsTable[section][k] = tbl.Default
-			else
-				PrefsTable[section][k] = coerce_pref_value(k, PrefsTable[section][k])
-			end
-		end
-	end,
-	Load = function()
-		-- 1. Try new .lua path first
-		if FILEMAN:DoesFileExist(HVThemePrefsPath) then
-			local data = load_lua_config(HVThemePrefsPath)
-			if type(data) == "table" then
-				PrefsTable = data
-				return true
-			end
-		end
-
-		-- 2. Fall back to theme-specific .ini for migration
-		if FILEMAN:DoesFileExist(NewIniPath) then
-			if IniFile then
-				Trace("Holographic Void: Migrating settings from " .. NewIniPath)
-				PrefsTable = IniFile.ReadFile(NewIniPath)
-				ThemePrefs.NeedsSaved = true
-				ThemePrefs.Save()
-				return true
-			end
-		end
-
-		-- 3. Fall back to legacy .ini for migration
-		if FILEMAN:DoesFileExist(OldIniPath) then
-			if IniFile then
-				Trace("Holographic Void: Migrating legacy settings from " .. OldIniPath)
-				PrefsTable = IniFile.ReadFile(OldIniPath)
-				ThemePrefs.NeedsSaved = true
-				ThemePrefs.Save()
-				return true
-			end
-		end
-
-		PrefsTable = {}
-		return true
-	end,
-	Save = function()
-		if ThemePrefs.NeedsSaved then
-			local file = RageFileUtil.CreateRageFile()
-			if file:Open(HVThemePrefsPath, 2) then -- WRITE
-				local output = "return " .. lua_table_to_string(PrefsTable)
-				file:Write(output)
-				file:Close()
-				ThemePrefs.NeedsSaved = false
-			else
-				Warn("Holographic Void: Could not open '" .. HVThemePrefsPath .. "' for writing.")
-			end
-			file:destroy()
-		end
-	end,
-	ForceSave = function()
-		ThemePrefs.NeedsSaved = true
-		ThemePrefs.Save()
-	end,
-	Get = function(name)
-		--Trace("ThemePrefs Get "..name)
-		local tbl = ResolveTable(name)
-		if tbl and tbl[name] ~= nil then
-			local value = coerce_pref_value(name, tbl[name])
-			if value ~= tbl[name] then
-				tbl[name] = value
-				ThemePrefs.NeedsSaved = true
-			end
-			return value
-		end
-		local def = PrefDefinitions[name]
-		if def then
-			local section = GetThemeName()
-			PrefsTable[section] = PrefsTable[section] or {}
-			PrefsTable[section][name] = def.Default
-			ThemePrefs.NeedsSaved = true
-			ThemePrefs.Save()
-			return def.Default
-		end
-		return nil
-	end,
-	Set = function(name, value)
-		local tbl = ResolveTable(name)
-		if not tbl and PrefDefinitions[name] then
-			local section = GetThemeName()
-			PrefsTable[section] = PrefsTable[section] or {}
-			tbl = PrefsTable[section]
-		end
-		if tbl then
-			tbl[name] = coerce_pref_value(name, value)
-			ThemePrefs.NeedsSaved = true
-			ThemePrefs.Save() -- Global Consistency: persist immediately on change
-		end
-	end
-}
-
--- Update global aliases
-GetThemePref = ThemePrefs.Get
-SetThemePref = ThemePrefs.Set
-
-
 -- Generate 5% increment tables for Lane Cover heights (0-100%)
 local laneCoverChoices = {"Off"}
 local laneCoverValues = {0}
@@ -219,7 +8,6 @@ for i = 1, 20 do
 end
 
 -- Preference definitions: each key maps to a table with a Default value.
--- These are registered with the _Fallback ThemePrefs.Init system.
 local HVPrefs = {
 	-- Offset Graph: Hover mode (Point or Slice)
 	HV_OffsetGraphHoverMode = {
@@ -340,13 +128,6 @@ local HVPrefs = {
 		Default = 0,
 		Choices = laneCoverChoices,
 		Values = laneCoverValues,
-	},
-
-	-- Gameplay: Instant Search (Real-time filtering)
-	HV_InstantSearch = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
 	},
 
 	-- Gameplay: Toggle real-time NPS display
@@ -756,9 +537,19 @@ local HVPrefs = {
 	},
 }
 
--- bLoadFromDisk = true on the first call to read existing prefs from file.
-ThemePrefs.Init(HVPrefs, true)
-ThemePrefs.ForceSave() -- Ensure new defaults are written to disk
+HV.Config.RegisterThemeDefaults(HVPrefs)
+
+local Theme = HV.Config.Theme
+local ThemePrefs = {
+	Get = Theme.Get,
+	Save = Theme.Save,
+	ForceSave = Theme.Save,
+	Set = function(key, value)
+		if not Theme.Set(key, value) then return false end
+		return Theme.Save()
+	end,
+}
+HV.LegacyPrefs = ThemePrefs
 
 -- After loading, refresh accent colors and style palettes
 if HVColor then
@@ -936,7 +727,7 @@ end
 
 --- Check if instant search is enabled.
 function HV.InstantSearch()
-	return isTrue(ThemePrefs.Get("HV_InstantSearch"))
+	return Theme.Get("HV_InstantSearch")
 end
 
 --- Get judgment tally mode ("Full" or "Simple").
@@ -986,12 +777,7 @@ end
 
 --- Get song background brightness (0.0-1.0).
 function HV.GetSongBackgroundBrightness()
-	local brightness = tonumber(PREFSMAN:GetPreference("BGBrightness")) or 1.0
-	local customBrightness = tonumber(ThemePrefs.Get("HV_SongBackgroundBrightness"))
-	if customBrightness ~= brightness then
-		ThemePrefs.Set("HV_SongBackgroundBrightness", brightness)
-	end
-	return brightness
+	return tonumber(PREFSMAN:GetPreference("BGBrightness")) or 1.0
 end
 
 --- Check if mouse parallax effects are enabled.

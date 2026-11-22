@@ -6,7 +6,7 @@ keys[17], keys[18] = "Grade_Failed", "Grade_None"
 
 local saved = nil
 local file = RageFileUtil.CreateRageFile()
-if file:Open("Save/Holographic Void_settings/CustomGrades.lua", 1) then
+if file:Open(HV.Config.SaveDirectory .. "/CustomGrades.lua", 1) then
 	local chunk = loadstring(file:Read())
 	if chunk then local ok, data = pcall(chunk); if ok and type(data) == "table" then saved = data end end
 	file:Close()

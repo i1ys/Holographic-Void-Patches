@@ -119,7 +119,7 @@ local function initCustomColors()
 		customColorData = customColorConfig:get_data()
 	else
 		-- Manual load from file
-		local path = "Save/Holographic Void_settings/HVCustomColors.lua"
+		local path = HV.Config.SaveDirectory .. "/HVCustomColors.lua"
 		local file = RageFileUtil.CreateRageFile()
 		if file:Open(path, 1) then -- READ
 			local content = file:Read()
@@ -178,7 +178,7 @@ local function saveCustomColors()
 		customColorConfig:save()
 	else
 		-- Manual save
-		local path = "Save/Holographic Void_settings/HVCustomColors.lua"
+		local path = HV.Config.SaveDirectory .. "/HVCustomColors.lua"
 		local file = RageFileUtil.CreateRageFile()
 		if file:Open(path, 2) then -- WRITE
 			local function tableToString(tbl, indent)

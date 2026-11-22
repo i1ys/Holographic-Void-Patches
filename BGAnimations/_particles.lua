@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: Shared Background Particles
 -- Loads animated background particles based on ThemePrefs.
 

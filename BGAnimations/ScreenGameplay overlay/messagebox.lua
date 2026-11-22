@@ -1,6 +1,6 @@
 local settext = BitmapText.settext
 local isPractice = GAMESTATE:IsPracticeMode()
-local allowedCustomization = playerConfig:get_data(pn_to_profile_slot(PLAYER_1)).CustomizeGameplay
+local allowedCustomization = HV.IsGameplayCustomizationEnabled()
 
 local function highlight(self)
 	self:queuecommand("Highlight")
@@ -33,8 +33,8 @@ return Def.ActorFrame {
 	end,
 	OffCommand = function(self)
 		if allowedCustomization then
-			-- save CustomizeGameplay changes when leaving the screen
-			SavePlayerConfig(pn_to_profile_slot(PLAYER_1))
+			local saved, err = HV.SaveGameplayLayout()
+			if not saved and err then SCREENMAN:SystemMessage(err) end
 			GAMESTATE:SetAutoplay(false)
 		end
 	end,
@@ -94,7 +94,7 @@ return Def.ActorFrame {
 				".: "..transStr("DPDisplayPosition"),
 				"/: "..transStr("DPDisplaySize"),
 			}
-			if playerConfig:get_data(pn_to_profile_slot(PLAYER_1)).LaneCover ~= 0 then
+			if HV.Config.Player.Get(PLAYER_1, "LaneCover") ~= 0 then
 				local selectStr = THEME:GetString("GameButton", "Select")
 				table.insert(text, selectStr..": "..transStr("LaneCoverHeight"))
 			end

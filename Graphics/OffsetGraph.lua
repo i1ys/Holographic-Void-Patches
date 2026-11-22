@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: Offset Plot Graph
 -- Ported from spawncamping-wallhack OffsetGraph.lua
 -- Shows timing offsets as colored dots on a time axis with judgment threshold lines.

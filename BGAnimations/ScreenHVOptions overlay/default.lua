@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenHVOptions Background/Overlay
 -- Themed options screen for configuring ThemePrefs.
 -- Uses ScreenMiniMenu from _Fallback as the base class.

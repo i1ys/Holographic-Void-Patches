@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenPlayerOptions Overlay
 -- Shows tab bar (Player Options / Quick Theme Options / Effect Options),
 -- effective scroll speed display, and noteskin preview.

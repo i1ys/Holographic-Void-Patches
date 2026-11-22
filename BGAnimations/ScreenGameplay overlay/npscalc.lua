@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 -- Holographic Void: NPS Calculator
 -- Ported from spawncamping-wallhack
 -- Time-based moving average with ActorMultiVertex graph display
@@ -24,7 +26,7 @@ local graphX = 10
 local graphY = SCREEN_CENTER_Y + 100
 local fontZoom = 0.65
 local accentColor = HVColor.Accent or color("#00CFFF")
-local isCustomizeGameplay = playerConfig:get_data(pn_to_profile_slot(PLAYER_1)).CustomizeGameplay
+local isCustomizeGameplay = HV.IsGameplayCustomizationEnabled()
 
 -- Graph settings
 local initialPeak = 1 -- Set lower so easy songs don't look broken

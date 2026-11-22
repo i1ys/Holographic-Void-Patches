@@ -17,7 +17,7 @@ HVColor = {
 	TextBright  = color("1,1,1,1"),               -- #FFFFFF - Headers / emphasis
 	White       = color("1,1,1,1"),               -- #FFFFFF
 
-	-- Accent: configurable via ThemePrefs, defaults to a cool blue-white
+	-- Accent: configurable via HV.LegacyPrefs, defaults to a cool blue-white
 	Accent      = color("#5ABAFF"),               -- Default accent (icy blue)
 	AccentDim   = color("#2A6A9F"),               -- Dimmed accent for hover states
 
@@ -28,10 +28,10 @@ HVColor = {
 }
 
 --- Update the accent color from theme preferences.
--- Called after ThemePrefs loads to apply user's chosen accent.
+-- Called after HV.LegacyPrefs loads to apply user's chosen accent.
 function HVColor.RefreshAccent()
-	if ThemePrefs and ThemePrefs.Get then
-		local hex = ThemePrefs.Get("HV_AccentColor")
+	if HV.LegacyPrefs and HV.LegacyPrefs.Get then
+		local hex = HV.LegacyPrefs.Get("HV_AccentColor")
 		if hex and hex ~= "" then
 			HVColor.Accent = color(hex)
 			-- Derive a dimmed version at 60% brightness
@@ -68,7 +68,7 @@ HVColor.Difficulty = HVColor.DifficultyHolographic
 
 --- Refresh global difficulty color overrides based on style.
 function HVColor.RefreshDifficultyColors()
-	local style = ThemePrefs.Get("HV_DifficultyColorStyle") or "Holographic"
+	local style = HV.LegacyPrefs.Get("HV_DifficultyColorStyle") or "Holographic"
 	local s = tostring(style):lower()
 	local palette
 	if s == "custom" and HVCustomColors then
@@ -130,7 +130,7 @@ HVColor.JudgmentClassic = {
 
 --- Refresh global judgment colors based on style.
 function HVColor.RefreshJudgmentColors()
-	local style = ThemePrefs.Get("HV_JudgmentColorStyle") or "Holographic"
+	local style = HV.LegacyPrefs.Get("HV_JudgmentColorStyle") or "Holographic"
 	local s = tostring(style):lower()
 	if s == "custom" and HVCustomColors then
 		HVColor.Judgment = {
@@ -194,8 +194,8 @@ function HVColor.GetMSDRatingColor(msd)
 	if not msd or msd < 0 then return msdTable[1][2] end
 
 	local scale = "Holographic"
-	if ThemePrefs and ThemePrefs.Get then
-		local prefValue = ThemePrefs.Get("HV_MSDColorScaleV3")
+	if HV.LegacyPrefs and HV.LegacyPrefs.Get then
+		local prefValue = HV.LegacyPrefs.Get("HV_MSDColorScaleV3")
 		-- Robust fallback: if preference is empty, nil, or explicitly "None" (which was causing issues), 
 		-- default to our premium "Holographic" scale.
 		if prefValue and prefValue ~= "" then
@@ -279,7 +279,7 @@ HVColor.ClearTypeClassic = {
 
 --- Refresh global clear type colors based on style.
 function HVColor.RefreshClearTypeColors()
-	local style = ThemePrefs.Get("HV_ClearTypeColorStyle") or "Holographic"
+	local style = HV.LegacyPrefs.Get("HV_ClearTypeColorStyle") or "Holographic"
 	local s = tostring(style):lower()
 	if s == "custom" and HVCustomColors then
 		HVColor.ClearType = {
@@ -373,7 +373,7 @@ HVColor.GradeClassic = {
 
 --- Refresh global grade colors based on style.
 function HVColor.RefreshGradeColors()
-	local style = ThemePrefs.Get("HV_GradeColorStyle") or "Holographic"
+	local style = HV.LegacyPrefs.Get("HV_GradeColorStyle") or "Holographic"
 	local s = tostring(style):lower()
 	if s == "custom" and HVCustomColors then
 		HVColor.GradePalette = {
@@ -530,7 +530,7 @@ function getMainColor(type)
 end
 
 -- Initial refresh
-if ThemePrefs and ThemePrefs.Get then
+if HV.LegacyPrefs and HV.LegacyPrefs.Get then
 	HVColor.RefreshAccent()
 	HVColor.RefreshDifficultyColors()
 	HVColor.RefreshJudgmentColors()

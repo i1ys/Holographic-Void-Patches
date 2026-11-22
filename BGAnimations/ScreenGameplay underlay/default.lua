@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenGameplay Underlay (Lane Filter)
 -- Localized dimming for the notefield area.
 

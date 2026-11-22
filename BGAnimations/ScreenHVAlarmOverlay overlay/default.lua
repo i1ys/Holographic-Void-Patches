@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 -- Global Alarm Overlay
 -- Handles checking current time or decrementing timer
 -- Displaying non-intrusive notifications across the theme

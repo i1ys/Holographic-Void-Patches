@@ -93,7 +93,7 @@ local playerName = "Replay"
 if HV.OnlineReplayActive and HV.OnlineReplayName then
 	playerName = HV.OnlineReplayName
 end
-local isCustomizeGameplay = playerConfig:get_data(pn_to_profile_slot(PLAYER_1)).CustomizeGameplay
+local isCustomizeGameplay = HV.IsGameplayCustomizationEnabled()
 
 local t = Def.ActorFrame {
 	Name = "ReplayControls",

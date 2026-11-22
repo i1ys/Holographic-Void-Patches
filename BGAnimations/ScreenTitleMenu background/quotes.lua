@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 -- Holographic Void: Scrolling Quotes & Tips Display
 -- A horizontally scrolling text component for the title screen.
 

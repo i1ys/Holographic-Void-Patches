@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 --- Holographic Void: ScreenEvaluation Decorations
 -- Full-featured evaluation screen ported from spawncamping-wallhack.
 -- Features: Life/Combo graphs, Avatar+Player info, Grade+Score with rescoring (needs testing to ensure nothing breaks),

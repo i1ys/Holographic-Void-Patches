@@ -29,20 +29,10 @@ t[#t + 1] = Def.Quad {
 	end
 }
 
--- Listen for option changes and force save to disk immediately
 t[#t + 1] = Def.Actor {
 	ThemePrefChangedMessageCommand = function(self, params)
-		if params and params.Name then
-			-- If accent color changed, refresh it globally
-			if params.Name == "HV_AccentColor" and HVColor and HVColor.RefreshAccent then
-				HVColor.RefreshAccent()
-			end
-		end
-		-- The fallback theme engine sets ThemePrefs.NeedsSaved = true
-		-- but doesn't actually commit it to file automatically from this screen.
-		-- Force it here so settings persist if the game is closed.
-		if ThemePrefs and ThemePrefs.ForceSave then
-			ThemePrefs.ForceSave()
+		if params and params.Name == "HV_AccentColor" then
+			HVColor.RefreshAccent()
 		end
 	end
 }

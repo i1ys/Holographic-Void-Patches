@@ -1,3 +1,5 @@
+local ThemePrefs = HV.LegacyPrefs
+
 local curSong = nil
 local start = math.max(0, HV.LastPlayedSecond or 0)
 local delay = 0.02
