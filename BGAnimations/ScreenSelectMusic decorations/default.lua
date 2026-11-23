@@ -1382,6 +1382,7 @@ t[#t + 1] = Def.ActorFrame {
 		
 		HV.DiffSelectorInputCallback = function(event)
 			if not event or not event.DeviceInput then return false end
+			if HV.ChartPreviewActive then return false end
 			local top = SCREENMAN:GetTopScreen()
 			if not top or top:GetName() ~= "ScreenSelectMusic" then return false end
 			if event.type ~= "InputEventType_FirstPress" then return false end

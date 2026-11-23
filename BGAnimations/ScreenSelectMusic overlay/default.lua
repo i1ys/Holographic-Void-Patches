@@ -40,7 +40,6 @@ local bgCard = color("0.06,0.06,0.06,0.9")
 
 local profileOverlayActor = nil
 local globalTooltipActor = nil
-local previewActive = false
 local inputDebugActor = nil
 local searchString = ""
 local appliedSearch = ""
@@ -538,7 +537,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 			if not top or top:GetName() ~= "ScreenSelectMusic" then return false end
 			
 			-- Banish inputs processing if chart preview is active so clicks don't leak through
-			if previewActive then return false end
+			if HV.ChartPreviewActive then return false end
 			
 			local deviceInput = event.DeviceInput
 			local btn = deviceInput.button or ""
@@ -2183,18 +2182,10 @@ end
 -- Loaded before other layers to ensure its message listeners clear state first.
 main_af[#main_af + 1] = LoadActor("bgm.lua")
 
--- Load the Chart Preview layer (initially hidden)
-main_af[#main_af + 1] = LoadActor("../ScreenChartPreview overlay/default.lua") .. {
-	InitCommand = function(self)
-		self:visible(false)
-	end
-}
+main_af[#main_af + 1] = LoadActor("../ScreenChartPreview overlay/default.lua")
 
 -- Load Isolated Input Debugger (Always on top with draworder 9999)
 main_af[#main_af + 1] = LoadActor("input_debugger.lua")
-
--- Sync previewActive state from outside
-
 
 -- Load Decoration Overlays (Initially hidden, using standard Toggle[NAME]Overlay messages)
 local decorOverlays = {"scores", "filters", "playlists", "tags", "goals"}
@@ -2205,69 +2196,35 @@ end
 main_af[#main_af + 1] = LoadActor("../_cursor")
 
 
--- ============================================================
--- MASTER INPUT SINK & TAB MANAGEMENT (LOWER PRIORITY)
--- ============================================================
--- Relocated to ensures decoration input callbacks (search, playlists, etc.) 
--- can capture input FIRST before the global sink takes over.
 main_af[#main_af + 1] = Def.ActorFrame {
 	Name = "MasterInputSink",
 	BeginCommand = function(self)
 		local screen = SCREENMAN:GetTopScreen()
-		if not screen then return end
-		
+		local preview = self:GetParent():GetChild("ChartPreviewRoot")
+		if not screen or not preview then return end
+
 		screen:AddInputCallback(function(event)
-			if not event or not event.DeviceInput then return end
-			local btn = event.DeviceInput.button
-
-			-- 1. TRACK GLOBAL TAB STATE
+			if SCREENMAN:GetTopScreen() ~= screen or not event or not event.DeviceInput then return false end
+			local btn = event.DeviceInput.button or ""
+			local button = event.GameButton or event.button
+			local firstPress = event.type == "InputEventType_FirstPress"
 			local activeTab = HV.ActiveTab or ""
-			
-			-- 2. CHART PREVIEW TRIGGER (Space key)
-			if btn == "DeviceButton_space" and activeTab == "" then
-				if event.type ~= "InputEventType_FirstPress" then return end
-				if previewActive then
-					previewActive = false
-					HV.ChartPreviewActive = false
-					MESSAGEMAN:Broadcast("ChartPreviewOff")
-				else
-					previewActive = true
-					HV.ChartPreviewActive = true
-					MESSAGEMAN:Broadcast("ChartPreviewOn")
-				end
-				return true
-			end
-			
-			-- 3. HANDLE OVERLAY INPUT SINKING
-			if activeTab ~= "" then
-				-- Sink everything for any active tab (mouse excluded)
-				-- This is a fallback; primary tab logic is in HV.OverlayInputCallback
-				if btn and btn:match("mouse") then return false end
-				return true
-			end
-			
-			-- 3. HANDLE CHART PREVIEW INPUT
-			if previewActive then
-				-- SINK ALL INPUT while preview is active except mouse
-				if btn and btn:match("mouse") then return false end
-				
-				if event.type ~= "InputEventType_FirstPress" then return true end
-				
-				-- Let rate preview shortcuts pass through to the chart preview's own callback
-				if event.button == "EffectUp" or event.button == "EffectDown" then return false end
-				
-				if event.button == "Back" or event.button == "Start" or btn == "DeviceButton_escape" then
-					previewActive = false
-					HV.ChartPreviewActive = false
-					MESSAGEMAN:Broadcast("ChartPreviewOff")
-				end
-				return true
-			end
 
-			return false -- Allow all other input through
+			if btn == "DeviceButton_space" and activeTab == "" then
+				if firstPress then preview:playcommand("ToggleChartPreview") end
+				return true
+			end
+			if HV.ChartPreviewActive then
+				if firstPress and (button == "Back" or button == "Start" or btn == "DeviceButton_escape") then
+					preview:playcommand("CloseChartPreview")
+				else
+					preview:playcommand("PreviewInput", event)
+				end
+				return true
+			end
+			return activeTab ~= "" and not btn:match("mouse")
 		end)
 	end
 }
 
 return main_af
-

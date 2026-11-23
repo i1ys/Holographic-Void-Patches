@@ -6,13 +6,10 @@ local pn = PLAYER_1
 local song = GAMESTATE:GetCurrentSong()
 local steps = GAMESTATE:GetCurrentSteps()
 
--- Global state
-local ssm = nil
-local musicratio = 1
-local snapGraph = nil
-local densityGraph = nil
+local ssm
 local musicLength = 0
-local inputCallback = nil
+local loadedRate
+local densityVectors
 
 -- Safe fallbacks for engine globals that may not exist in all contexts
 local function getCurRateValue()
@@ -36,111 +33,86 @@ local function changeMusicRate(delta)
 end
 
 -- References for sync
-local noteFieldRef = nil
 local progressRef = nil
 local cdgFrameRef = nil
+local noteField
 local rootRef = nil
 local cdgInfoTimeRef = nil
 local cdgInfoBPMRef  = nil
 local cdgInfoNPSRef  = nil
 
-local musicStartTime = 0
-local musicStartOffset = 0
+local npsTooltipActor
+local msdTooltipActor
 local isPaused = false
-local pausedPos = 0
-local visualSeekActive = false
-local visualSeekStartTime = 0
-local visualSeekStartPos = 0
--- During the async sample-music handoff the engine briefly reports position 0.
--- Keep the timestamp used to initialise the preview until that handoff is done.
 local previewPosition = 0
-local previewSongPath = nil
-
-local fullSongMode = false
-
-local function syncPreviewSongPosition(pos)
-	local screen = ssm or SCREENMAN:GetTopScreen()
-	if not screen or not screen.SetSongPosition then return end
-
-	local ok = pcall(function()
-		screen:SetSongPosition(pos, 0, false)
-	end)
-	if not ok then
-		pcall(function()
-			screen:SetSongPosition(pos)
-		end)
-	end
-end
-
-local function setPreviewClock(pos)
-	if not song then return end
-	pos = math.max(0, pos or 0)
-	local td = song:GetTimingData()
-	if not td then return end
-
-	local beat = td:GetBeatFromElapsedTime(pos)
-
-	pcall(function()
-		Actor.SetBGMTime(pos, beat, pos, beat)
-	end)
-	pcall(function()
-		Actor.SetPlayerBGMBeat(beat, beat)
-	end)
-end
+local chartPreviewPath
+local audioPath
+local requestedPosition
+local requestedAt
+local previousRedirection
+local returnScreen
+local readyAt = 0
+local lastDirection
+local lastDirectionAt
 
 local function applyPreviewPosition(pos)
-	pos = math.max(0, math.min(pos or 0, musicLength > 0 and musicLength or math.huge))
-	setPreviewClock(pos)
+	local proportion = pos / musicLength
 
 	if progressRef then
-		local p = math.min(pos / math.max(1, musicLength), 1)
-		progressRef:stoptweening():zoomto(p * (SCREEN_WIDTH - 40), 2)
+		progressRef:stoptweening():zoomto(proportion * (SCREEN_WIDTH - 40), 2)
 	end
 
 	if cdgFrameRef then
 		local seek = cdgFrameRef:GetChild("ProgressMarker")
 		if seek then
-			local p = math.min(pos / math.max(1, musicLength), 1)
-			seek:x(p * (SCREEN_WIDTH - 120) - (SCREEN_WIDTH - 120) / 2)
+			seek:x((proportion - 0.5) * (SCREEN_WIDTH - 120))
 		end
 	end
 end
 
-local function scheduleVerifiedSeek(pos)
-	pos = math.max(0, pos or 0)
-	if not rootRef then return end
-	rootRef.pendingSeekPos = pos
-	rootRef:stoptweening():sleep(0.04):queuecommand("PerformSeek")
+local function ownsPreview()
+	return HV.ChartPreviewActive and ssm and ssm == SCREENMAN:GetTopScreen() and not ssm:IsTransitioning()
 end
 
-local function startVisualSeekClock(pos)
-	visualSeekActive = true
-	visualSeekStartTime = GetTimeSinceStart()
-	visualSeekStartPos = math.max(0, pos or 0)
+local function validMusicPath(path)
+	return path and path ~= "" and FILEMAN:DoesFileExist(path)
 end
 
-local function playFrom(pos, forceRestart, isInitialOpen)
-	if not song then return end
-	isPaused = false
-	local screen = ssm or SCREENMAN:GetTopScreen()
-	if not screen then return end
-	
-	if isInitialOpen or forceRestart or not fullSongMode then
-		-- Stop any bgm.lua-managed stream and hand ownership to the screen's
-		-- sample-music system (required for GetSampleMusicPosition / updateSync).
-		SOUND:StopMusic()
-		screen:PlayCurrentSongSampleMusic(true, true)
-		fullSongMode = true
-		-- isInitialOpen: seek is deferred to PlayingSampleMusicMessageCommand
-		-- so the stream is guaranteed to be ready before we seek.
-		if not isInitialOpen and screen.SetSampleMusicPosition then
-			screen:SetSampleMusicPosition(pos)
-		end
-	else
-		if screen.SetSampleMusicPosition then
-			screen:SetSampleMusicPosition(pos)
-		end
+local function playFrom(position)
+	local path = chartPreviewPath
+	local songMusic = song:GetMusicPath()
+	if path == song:GetPreviewMusicPath() and validMusicPath(songMusic) then
+		path = songMusic
 	end
+	local limit = musicLength
+	if path == songMusic then
+		local soundLength = song:MusicLengthSeconds()
+		if soundLength > 0 then limit = math.min(limit, soundLength) end
+	end
+	local start = math.max(0, math.min(position, limit - 0.05))
+	previewPosition = start
+	audioPath = path
+	requestedPosition = start
+	requestedAt = GetTimeSinceStart()
+	if noteField then noteField:visible(false) end
+	-- Queue an offset in the new play request so it never refers to the old sound.
+	SOUND:PlayMusicPart(path, start, limit - start, 0, 0, true, true, false)
+end
+
+local function playNativePreview()
+	local start = song:GetSampleStart()
+	if start < 0 or musicLength - start < 1 then
+		playFrom(0)
+		return
+	end
+	audioPath = chartPreviewPath
+	requestedPosition = start
+	requestedAt = GetTimeSinceStart()
+	previewPosition = start
+	if noteField then noteField:visible(false) end
+	-- Force a reload if the same file is already playing as a short wheel sample.
+	SOUND:StopMusic()
+	ssm:PlayCurrentSongSampleMusic(true, true)
 end
 
 -- Helper: format seconds as m:ss.x
@@ -221,38 +193,32 @@ end
 ------------------------------------------------------------
 -- AUDIO CONTROL & SYNC
 ------------------------------------------------------------
-local function updateSync(self)
-	if isPaused then
-		applyPreviewPosition(pausedPos)
-		-- Still update tooltip while paused
-		return
-	end
-	if not ssm then return end
-	
-	local pos = ssm:GetSampleMusicPosition()
-	-- PlayCurrentSongSampleMusic can reset its position to the sample start
-	-- for a frame while the deferred seek is being applied. Do not let that
-	-- transient value reset the graph cursor to the beginning.
-	local pendingSeek = rootRef and rootRef.pendingSeekPos
-	if pendingSeek ~= nil then
-		pos = rootRef.pendingSeekPos
-	end
-	if visualSeekActive then
-		local visualPos = visualSeekStartPos + ((GetTimeSinceStart() - visualSeekStartTime) * math.max(MIN_MUSIC_RATE, getCurRateValue()))
-		-- Keep the visual clock authoritative for the whole async seek. The
-		-- engine may still report 0 even after the first SetSampleMusicPosition
-		-- call, and accepting that value would put the marker back at the start.
-		if pendingSeek ~= nil then
-			pos = visualPos
-		elseif pos and math.abs(pos - visualPos) < 0.15 then
-			visualSeekActive = false
-		else
-			pos = visualPos
+local function npsAt(proportion)
+	local bins = densityVectors and densityVectors[1]
+	if not bins or #bins == 0 then return nil end
+	return bins[math.min(#bins, math.floor(proportion * #bins) + 1)]
+end
+
+local function bpmAt(position, rate)
+	local timing = steps:GetTimingData()
+	local beat = timing:GetBeatFromElapsedTime(position)
+	return timing:GetBPMAtBeat(beat) * rate
+end
+
+local function updateSync()
+	if not ownsPreview() then return end
+
+	if not isPaused and audioPath and SOUND:GetMusicPath() == audioPath then
+		local position = ssm:GetSampleMusicPosition()
+		local expected = not requestedPosition or math.abs(position - requestedPosition)
+			<= 0.5 + (GetTimeSinceStart() - requestedAt) * getCurRateValue()
+		if expected then
+			previewPosition = math.max(0, math.min(position, musicLength))
+			requestedPosition = nil
 		end
 	end
-	if pos > musicLength then pos = musicLength end
-	previewPosition = math.max(0, pos or 0)
-
+	if noteField then noteField:visible(not isPaused and not requestedPosition) end
+	local pos = previewPosition
 	applyPreviewPosition(pos)
 
 	-- CDG hover + info bar update
@@ -272,45 +238,16 @@ local function updateSync(self)
 			local relX = mx - cdgX
 			local p = math.max(0, math.min(1, relX / cdgW))
 			
-			local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
-			local vectors = steps:GetCDGraphVectors(rate)
-			
-			if vectors and vectors[1] and #vectors[1] > 0 then
-				local npsV = vectors[1]
-				local idx = math.floor(p * #npsV) + 1
-				idx = math.max(1, math.min(#npsV, idx))
-				local nps = npsV[idx]
-				local textActor = npsTooltipActor:GetChild("NPSText")
-				if textActor then textActor:settextf("%.1f NPS", nps) end
-			else
-				local textActor = npsTooltipActor:GetChild("NPSText")
-				if textActor then textActor:settext("no data") end
+			local nps = npsAt(p)
+			local textActor = npsTooltipActor:GetChild("NPSText")
+			if textActor then
+				textActor:settext(nps and string.format("%.1f NPS", nps) or "no data")
 			end
 		else
 			npsTooltipActor:visible(false)
 		end
 	elseif npsTooltipActor then
 		npsTooltipActor:visible(false)
-	end
-
-	-- Helper: BPM at a given elapsed-time position (rate-adjusted)
-	local function getBPMAt(t)
-		local td = song and song:GetTimingData()
-		if not td then return 0 end
-		local beat = td:GetBeatFromElapsedTime(t)
-		local bpm  = td:GetBPMAtBeat(beat)
-		return bpm * math.max(MIN_MUSIC_RATE, getCurRateValue())
-	end
-
-	-- Helper: NPS at a proportion p (0–1)
-	local function getNPSAt(p)
-		local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
-		local vectors = steps:GetCDGraphVectors(rate)
-		if not (vectors and vectors[1] and #vectors[1] > 0) then return 0 end
-		local npsV = vectors[1]
-		local idx = math.floor(p * #npsV) + 1
-		idx = math.max(1, math.min(#npsV, idx))
-		return npsV[idx]
 	end
 
 	-- Update info bar below CDG
@@ -321,17 +258,16 @@ local function updateSync(self)
 			local relX    = mx - cdgX
 			local p       = math.max(0, math.min(1, relX / cdgW))
 			local hoverT  = p * musicLength
-			local hoverBPM = getBPMAt(hoverT)
-			local hoverNPS = getNPSAt(p)
+			local hoverBPM = bpmAt(hoverT, displayRate)
+			local hoverNPS = npsAt(p) or 0
 
 			cdgInfoTimeRef:settextf("%s",         formatTime(hoverT / displayRate)):diffuse(accentColor)
 			cdgInfoBPMRef :settextf("%.0f BPM",   hoverBPM):diffuse(accentColor)
 			cdgInfoNPSRef :settextf("%.1f NPS",   hoverNPS):diffuse(accentColor)
 		else
 			-- Normal mode: show current playback values in dim colors
-			local p      = math.max(0, math.min(1, pos / math.max(1, musicLength)))
-			local curBPM = getBPMAt(pos)
-			local curNPS = getNPSAt(p)
+			local curBPM = bpmAt(pos, displayRate)
+			local curNPS = npsAt(pos / musicLength) or 0
 
 			cdgInfoTimeRef:settextf("%s",         formatTime(pos / displayRate)):diffuse(textDim)
 			cdgInfoBPMRef :settextf("%.0f BPM",   curBPM):diffuse(textSub)
@@ -376,28 +312,29 @@ end
 -- INPUT HANDLING
 ------------------------------------------------------------
 local function input(event)
-	-- Guard: if the overlay isn't visible the callback is stale — drop silently.
-	-- This also protects against the callback firing after RemoveInputCallback races.
-	if not rootRef or not rootRef:GetVisible() then return false end
-
-	if event.type ~= "InputEventType_FirstPress" then return false end
+	if not ownsPreview() or event.type ~= "InputEventType_FirstPress" then return end
 	local btn = event.DeviceInput.button
-
-	-- Close mechanisms — sink the event only.
-	-- MasterInputSink is the sole authority for broadcasting ChartPreviewOff
-	-- so that previewActive and HV.ChartPreviewActive stay in sync.
-	if btn == "DeviceButton_escape" or event.button == "Back" or event.button == "Start" then
-		return true
+	local button = event.GameButton or event.button
+	local direction = (button == "MenuUp" or button == "Up" or btn == "DeviceButton_up") and -1
+		or (button == "MenuDown" or button == "Down" or btn == "DeviceButton_down") and 1
+	local now = GetTimeSinceStart()
+	if direction then
+		if direction == lastDirection and now - lastDirectionAt <= 0.6 then
+			lastDirection = nil
+			ssm:ChangeSteps(direction)
+		else
+			lastDirection, lastDirectionAt = direction, now
+		end
+		return
 	end
+	lastDirection = nil
 
-	-- Keyboard Rate Control (EffectUp/EffectDown are logical game buttons)
-	if event.button == "EffectUp" then
+	if button == "EffectUp" then
 		changeMusicRate(0.05)
-		return true
-	end
-	if event.button == "EffectDown" then
+		return
+	elseif button == "EffectDown" then
 		changeMusicRate(-0.05)
-		return true
+		return
 	end
 
 	-- Mouse Interaction
@@ -416,8 +353,6 @@ local function input(event)
 					local s = chartPanelRef.available and chartPanelRef.available[d]
 					if s then
 						GAMESTATE:SetCurrentSteps(PLAYER_1, s)
-						steps = s
-						MESSAGEMAN:Broadcast("ReloadChartPreview")
 						return true
 					end
 				end
@@ -446,38 +381,30 @@ local function input(event)
 				local p = (mx - fx) / (SCREEN_WIDTH - 120)
 				p = math.max(0, math.min(1, p))
 				local pos = p * musicLength
-				pausedPos = pos
-				startVisualSeekClock(pos)
-				syncPreviewSongPosition(pos)
-				applyPreviewPosition(pos)
-				playFrom(pos)
-				scheduleVerifiedSeek(pos)
+				if isPaused then
+					previewPosition = pos
+				else
+					playFrom(pos)
+				end
+				applyPreviewPosition(previewPosition)
 				return true
 			end
 		end
 	end
 
-	-- Right click to pause/unpause
 	if btn == "DeviceButton_right mouse button" then
-		if ssm and ssm.PauseSampleMusic then
-			-- Capture exact position BEFORE toggling pause to avoid frame slip
-			if not isPaused then
-				pausedPos = ssm:GetSampleMusicPosition() or 0
-				if pausedPos <= 0 then pausedPos = previewPosition end
-			end
-			previewPosition = pausedPos
-			ssm:PauseSampleMusic()
-			isPaused = not isPaused
-			MESSAGEMAN:Broadcast("MusicPauseToggled")
-			if rootRef then
-				local text = rootRef:GetChild("NoteFieldContainer"):GetChild("PausedText")
-				if text then text:diffusealpha(isPaused and 1 or 0) end
-			end
+		isPaused = not isPaused
+		if isPaused then
+			audioPath = nil
+			requestedPosition = nil
+			SOUND:StopMusic()
+		else
+			playFrom(previewPosition)
 		end
-		return true
+		if noteField then noteField:visible(false) end
+		local text = rootRef:GetChild("NoteFieldContainer"):GetChild("PausedText")
+		text:diffusealpha(isPaused and 1 or 0)
 	end
-
-	return true -- Sink ALL input while preview is active
 end
 
 ------------------------------------------------------------
@@ -720,7 +647,6 @@ end
 -- 3. CHORD DENSITY GRAPH
 local peak70LineActor = nil
 local tooltipActor = nil
-local npsTooltipActor = nil
 local showTooltip = false
 
 local function densityGraphComp()
@@ -737,9 +663,11 @@ local function densityGraphComp()
 		Def.ActorMultiVertex {
 			Name = "GraphAMV",
 			ReloadCommand = function(self)
-				local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
-				local vectors = steps:GetCDGraphVectors(rate)
-				if not vectors then self:SetVertices({}):SetDrawState({Mode="DrawMode_Quads", First=0, Num=0}) return end
+				local vectors = densityVectors
+				if not vectors or not vectors[1] or #vectors[1] == 0 then
+					self:SetVertices({}):SetDrawState({Mode="DrawMode_Quads", First=1, Num=0})
+					return
+				end
 				
 				local npsV = vectors[1]
 				local nRows = #npsV
@@ -755,12 +683,14 @@ local function densityGraphComp()
 				local verts, nCols = {}, steps:GetNumColumns()
 				
 				for d=1, nCols do
+					local chordVector = vectors[d] or {}
 					for r=1, nRows do
-						if vectors[d][r] > 0 then
+						local count = chordVector[r] or 0
+						if count > 0 then
 							local val = 0.2 + (nCols - (d-1)) * (0.6 / nCols)
 							local c = color(val..","..val..","..val..",1")
 							local x, y = -(gW/2) + (r-1)*rW, gH/2 +20
-							local bh, bw = rW, -(vectors[d][r]*2*mHeight)
+							local bh, bw = rW, -(count*2*mHeight)
 							verts[#verts+1] = {{x, y, 0}, c}
 							verts[#verts+1] = {{x+bh, y, 0}, c}
 							verts[#verts+1] = {{x+bh, y+bw, 0}, c}
@@ -783,7 +713,7 @@ local function densityGraphComp()
 			ReloadCommand = function(self)
 				if steps then
 					local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
-					local vectors = steps:GetCDGraphVectors(rate)
+					local vectors = densityVectors
 					if vectors and vectors[1] then
 						local npsV = vectors[1]
 						local mNPS = 0
@@ -944,7 +874,6 @@ end
 -- ============================================================
 local tooltipW = 280
 local tooltipH = 56
-local msdTooltipActor = nil
 
 local msdTooltip = Def.ActorFrame {
 	Name = "MSDTooltip",
@@ -1018,178 +947,145 @@ end
 ------------------------------------------------------------
 -- ROOT ACTORFRAME
 ------------------------------------------------------------
+local function restoreWheelAudio(screen)
+	if screen:IsTransitioning() then return end
+	if HV.LegacyPrefs.Get("HV_SongPreview") == 1 then
+		SOUND:StopMusic()
+		if GAMESTATE:GetCurrentSong() then
+			screen:PlayCurrentSongSampleMusic(false, false)
+		else
+			screen:PlayLoopMusic()
+		end
+	end
+	MESSAGEMAN:Broadcast("ChartPreviewOff")
+end
+
+local function closePreview(self, restoreAudio)
+	if not HV.ChartPreviewActive or not ssm then return end
+	local screen = ssm
+	HV.ChartPreviewActive = false
+	ssm = nil
+	audioPath = nil
+	requestedPosition = nil
+	lastDirection = nil
+	densityVectors = nil
+	loadedRate = nil
+	self:visible(false)
+
+	if screen == SCREENMAN:GetTopScreen() then
+		SCREENMAN:set_input_redirected(PLAYER_1, previousRedirection)
+		if restoreAudio then restoreWheelAudio(screen) end
+	end
+end
+
+local function reloadPreviewChart(self)
+	if not ownsPreview() then return end
+	local selected = GAMESTATE:GetCurrentSteps()
+	if GAMESTATE:GetCurrentSong() ~= song or not selected then
+		closePreview(self, true)
+		return
+	end
+	local rate = getCurRateValue()
+	if selected == steps and loadedRate == rate then return end
+	steps, loadedRate = selected, rate
+	local path = steps:GetPreviewMusicPath()
+	if path ~= chartPreviewPath then
+		if not validMusicPath(path) then
+			closePreview(self, true)
+			return
+		end
+		chartPreviewPath = path
+		if not isPaused then playNativePreview() end
+	end
+	densityVectors = nil
+	local radar = steps:GetRadarValues(PLAYER_1)
+	if radar and radar:GetValue("RadarCategory_TapsAndHolds") > 0 then
+		densityVectors = steps:GetCDGraphVectors(rate)
+	end
+	self:RunCommandsOnChildren(function(child) child:playcommand("Reload") end)
+end
+
 local t = Def.ActorFrame {
 	Name = "ChartPreviewRoot",
-	InitCommand = function(self) 
+	InitCommand = function(self)
 		rootRef = self
-		self:SetUpdateFunction(updateSync)
-		self:visible(false)
-	end,
-	
-	ChartPreviewOnMessageCommand = function(self)
-		ssm = SCREENMAN:GetTopScreen()
-		song = GAMESTATE:GetCurrentSong()
-		steps = GAMESTATE:GetCurrentSteps()
-		if not song or not steps then return end
-		local currentSongPath = song:GetMusicPath()
-		if previewSongPath ~= nil and previewSongPath ~= currentSongPath then
-			previewPosition = 0
-		end
-		previewSongPath = currentSongPath
-		
-		musicLength = song:GetLastSecond()
-		visualSeekActive = false
-		
-		-- Always remove any stale callback first to prevent double-registration
-		-- across repeated open/close cycles (even if RemoveOldCallback hasn't fired yet).
-		if inputCallback and ssm then
-			pcall(function() ssm:RemoveInputCallback(inputCallback) end)
-		end
-		inputCallback = function(event) return input(event) end
-		ssm:AddInputCallback(inputCallback)
-		
-		-- Always enter with a clean, unpaused state
-		isPaused = false
-		pausedPos = 0
-		local pText = self:GetChild("NoteFieldContainer") and self:GetChild("NoteFieldContainer"):GetChild("PausedText")
-		if pText then pText:diffusealpha(0) end
-		
-		-- Capture current audio position from bgm.lua's wall-clock tracker.
-		-- HV.GetBgmCurrentPos() is set at every SOUND:PlayMusicPart call, so it
-		-- correctly reflects the live absolute-seconds position for ALL preview modes.
-		-- We store it as a pending seek rather than applying immediately, because
-		-- PlayCurrentSongSampleMusic initialises its stream asynchronously — any
-		-- SetSampleMusicPosition called before the stream is ready gets overwritten
-		-- by the engine's own reset to song:GetSampleStart().
-		-- PlayingSampleMusicMessageCommand (below) applies the seek once the stream is live.
-		local capturedPos = 0
-		-- GetSampleMusicPosition is not populated for the custom SOUND preview
-		-- modes, so use the engine song clock and the custom-preview tracker as
-		-- fallbacks. Only accept positive values: zero is the stream handoff
-		-- value, not a reliable indication that playback is at the beginning.
-		if ssm and ssm.GetSampleMusicPosition then
-			local ok, sp = pcall(function() return ssm:GetSampleMusicPosition() end)
-			if ok and type(sp) == "number" and sp > capturedPos then capturedPos = sp end
-		end
-		local ok, songPos = pcall(function()
-			return GAMESTATE:GetSongPosition():GetMusicSeconds()
+		self:SetUpdateFunction(function()
+			local screen = SCREENMAN:GetTopScreen()
+			if returnScreen and screen == returnScreen then
+				returnScreen = nil
+				SCREENMAN:set_input_redirected(PLAYER_1, previousRedirection)
+				restoreWheelAudio(screen)
+			elseif HV.ChartPreviewActive then
+				if screen ~= ssm then
+					returnScreen = ssm
+					closePreview(self, false)
+				elseif screen:IsTransitioning() then
+					closePreview(self, false)
+				else
+					updateSync()
+				end
+			end
 		end)
-		if ok and type(songPos) == "number" and songPos > capturedPos then
-			capturedPos = songPos
-		end
-		if HV.GetBgmCurrentPos then
-			local ok, bgmPos = pcall(HV.GetBgmCurrentPos)
-			if ok and type(bgmPos) == "number" and bgmPos > capturedPos then
-				capturedPos = bgmPos
-			end
-		end
-		if capturedPos < 0 then capturedPos = 0 end
-		if capturedPos == 0 and previewPosition > 0 then
-			capturedPos = previewPosition
-		end
-		self.pendingSeekPos = capturedPos
-		previewPosition = capturedPos
-		-- Start the visual clock before starting the async stream so the first
-		-- update frame cannot render the marker at the engine's temporary zero.
-		startVisualSeekClock(capturedPos)
-		
-		-- Try the seek immediately on open so audio can snap to the
-		-- notefield ASAP, then let the deferred seek path verify it.
-		playFrom(capturedPos, false, false)
-		syncPreviewSongPosition(capturedPos)
-		applyPreviewPosition(capturedPos)
-		scheduleVerifiedSeek(capturedPos)
-		
-		SCREENMAN:set_input_redirected(PLAYER_1, true)
-		self:visible(true)
-		MESSAGEMAN:Broadcast("ReloadChartPreview")
-	end,
-
-	-- Apply the deferred seek once PlayCurrentSongSampleMusic signals the stream is live.
-	-- This fires after the audio thread has initialised the stream. We perform an
-	-- immediate seek, followed by a verification seek after a short delay (0.04s)
-	-- to ensure the engine's asynchronous audio start didn't overwrite the initial call.
-	PlayingSampleMusicMessageCommand = function(self)
-		if not HV.ChartPreviewActive then return end
-		if self.pendingSeekPos ~= nil and ssm and ssm.SetSampleMusicPosition then
-			-- First attempt: immediate
-			ssm:SetSampleMusicPosition(self.pendingSeekPos)
-			syncPreviewSongPosition(self.pendingSeekPos)
-			applyPreviewPosition(self.pendingSeekPos)
-			startVisualSeekClock(self.pendingSeekPos)
-			-- Second attempt: verification after a short delay to be certain
-			scheduleVerifiedSeek(self.pendingSeekPos)
-		end
-	end,
-	
-	PerformSeekCommand = function(self)
-		if not HV.ChartPreviewActive then return end
-		if self.pendingSeekPos ~= nil and ssm and ssm.SetSampleMusicPosition then
-			ssm:SetSampleMusicPosition(self.pendingSeekPos)
-			syncPreviewSongPosition(self.pendingSeekPos)
-			applyPreviewPosition(self.pendingSeekPos)
-			startVisualSeekClock(self.pendingSeekPos)
-		end
-		self.pendingSeekPos = nil
-	end,
-	
-	ChartPreviewOffMessageCommand = function(self)
-		-- Preserve the exact position before handing audio back to the song
-		-- preview. This is also the fallback if the next entry occurs while the
-		-- audio position APIs are between streams.
-		if ssm and ssm.GetSampleMusicPosition then
-			local ok, pos = pcall(function() return ssm:GetSampleMusicPosition() end)
-			-- Custom preview audio does not update this API and reports 0.
-			-- Never replace a valid tracked position with that sentinel value.
-			if ok and type(pos) == "number" and pos > 0 then
-				previewPosition = math.min(pos, musicLength > 0 and musicLength or pos)
-			end
-		end
 		self:visible(false)
-		SCREENMAN:set_input_redirected(PLAYER_1, false)
-		-- Don't stop music — let the screen handle it naturally
-		fullSongMode = false
-		visualSeekActive = false
-		-- Always clear pause state so re-entry does not inherit a stale flag
+	end,
+	BeginCommand = function(self)
+		local delay = tonumber(THEME:GetMetric("ScreenSelectMusic", "SampleMusicDelayInit")) or 0
+		readyAt = GetTimeSinceStart() + delay
+	end,
+	ToggleChartPreviewCommand = function(self)
+		if HV.ChartPreviewActive then
+			closePreview(self, true)
+			return
+		end
+
+		local screen = SCREENMAN:GetTopScreen()
+		local selectedSong = GAMESTATE:GetCurrentSong()
+		local selectedSteps = GAMESTATE:GetCurrentSteps()
+		if not screen or screen:GetName() ~= "ScreenSelectMusic" or screen:IsTransitioning()
+			or not selectedSong or not selectedSteps or GetTimeSinceStart() < readyAt then return end
+		local wheel = screen:GetMusicWheel()
+		if not wheel:IsSettled() or wheel:GetSelectedType() ~= "WheelItemDataType_Song" then return end
+
+		local path = selectedSteps:GetPreviewMusicPath()
+		local length = selectedSong:GetLastSecond()
+		if not validMusicPath(path) or length <= 0 then return end
+
+		ssm, song, musicLength, chartPreviewPath = screen, selectedSong, length, path
+		returnScreen = nil
+		loadedRate = nil
 		isPaused = false
-		pausedPos = 0
-		local pText = self:GetChild("NoteFieldContainer") and self:GetChild("NoteFieldContainer"):GetChild("PausedText")
-		if pText then pText:diffusealpha(0) end
-		if ssm and inputCallback then
-			-- If the music was left paused, resume it before exiting
-			if ssm.IsSampleMusicPaused and ssm:IsSampleMusicPaused() then
-				ssm:PauseSampleMusic()
-			end
-			-- Defer removal to the next frame: RemoveInputCallback called from *within*
-			-- the callback itself (via Broadcast) is unreliable — the engine may ignore
-			-- it because the callback is currently on the call stack.  The visibility
-			-- guard at the top of input() keeps stale firings harmless in the meantime.
-			local cbToRemove = inputCallback
-			local ssmRef     = ssm
-			inputCallback = nil  -- clear immediately so the guard triggers on next press
-			self:queuecommand("RemoveOldCallback")
-			self.pendingRemove     = cbToRemove
-			self.pendingRemoveSsm  = ssmRef
+		lastDirection = nil
+		previousRedirection = SCREENMAN:get_input_redirected(PLAYER_1)
+		SCREENMAN:set_input_redirected(PLAYER_1, true)
+		HV.ChartPreviewActive = true
+		self:GetChild("NoteFieldContainer"):GetChild("PausedText"):diffusealpha(0)
+		self:visible(true)
+		MESSAGEMAN:Broadcast("ChartPreviewOn")
+		playNativePreview()
+		reloadPreviewChart(self)
+	end,
+	PreviewInputCommand = function(self, event)
+		input(event)
+	end,
+	CloseChartPreviewCommand = function(self)
+		closePreview(self, true)
+	end,
+	EndCommand = function(self)
+		returnScreen = nil
+		closePreview(self, false)
+	end,
+	CurrentSongChangedMessageCommand = function(self)
+		if HV.ChartPreviewActive and GAMESTATE:GetCurrentSong() ~= song then
+			closePreview(self, true)
 		end
-		self.pendingSeekPos = nil
-		self:stoptweening()
 	end,
-
-	RemoveOldCallbackCommand = function(self)
-		if self.pendingRemoveSsm and self.pendingRemove then
-			pcall(function() self.pendingRemoveSsm:RemoveInputCallback(self.pendingRemove) end)
-		end
-		self.pendingRemove    = nil
-		self.pendingRemoveSsm = nil
+	CurrentStepsChangedMessageCommand = function(self)
+		if HV.ChartPreviewActive then self:queuecommand("ReloadPreviewChart") end
 	end,
-
-	ReloadChartPreviewMessageCommand = function(self) 
-		song = GAMESTATE:GetCurrentSong()
-		steps = GAMESTATE:GetCurrentSteps()
-		if not song or not steps then return end
-		self:RunCommandsOnChildren(function(c) c:playcommand("Reload") end) 
+	CurrentRateChangedMessageCommand = function(self)
+		if HV.ChartPreviewActive then self:queuecommand("ReloadPreviewChart") end
 	end,
-	CurrentRateChangedMessageCommand = function(self) MESSAGEMAN:Broadcast("ReloadChartPreview") end,
+	ReloadPreviewChartCommand = reloadPreviewChart,
 
 	-- Screen Dim & Input Guard
 	Def.Quad { InitCommand = function(self) self:FullScreen():diffuse(color("0,0,0,0.85")) end },
@@ -1227,8 +1123,10 @@ local t = Def.ActorFrame {
 			DrawDistanceBeforeTargetsPixels = 1200, DrawDistanceAfterTargetsPixels = 0,
 			-- Move Y up so receptors (at 0) align near the top border of the box if desired,
 			-- OR just move Y to 0 so receptors are at SCREEN_CENTER_Y - 40.
-			InitCommand = function(self) self:zoom(0.7):y(0) end,
-			OnCommand = function(self) noteFieldRef = self end,
+			InitCommand = function(self)
+				noteField = self
+				self:zoom(0.7):y(0):visible(false)
+			end,
 			ReloadCommand = function(self) if steps then self:LoadNoteData(steps) end end
 		},
 		
