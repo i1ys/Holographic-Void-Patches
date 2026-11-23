@@ -1,6 +1,4 @@
 --- Holographic Void: Playlists Tab
--- Uses SONGMAN:GetPlaylists() with Til Death-matching chart APIs
--- Supports drill-down into individual playlists, chart deletion, song selection
 
 local accentColor = HVColor.Accent
 local dimText = color("0.45,0.45,0.45,1")
@@ -21,192 +19,104 @@ local whee = nil
 -- State
 local allplaylists = {}
 local singleplaylistactive = false
-local allplaylistsactive = true
 local currentPlaylistPage = 1
 local currentChartPage = 1
 
 -- Active playlist data
 local pl = nil
+local activePlaylistName
 local chartlist = {}
+local sortMode
+local playlistStats
 
--- Helper to persist changes to disk (local profile is Player 1)
 local function saveProfile()
-	if PROFILEMAN and PROFILEMAN.SaveProfile then
-		PROFILEMAN:SaveProfile(PLAYER_1 or 0)
+	if not PROFILEMAN:SaveProfile(PLAYER_1) then
+		ms.ok(THEME:GetString("Playlists", "SaveFailed"))
 	end
 end
 
-local function RefreshPlaylistList()
-	allplaylists = {}
-	local ok, playlists = pcall(function() return SONGMAN:GetPlaylists() end)
-	if ok and playlists then
-		for _, playlist in pairs(playlists) do
-			if type(playlist) == "userdata" then
-				table.insert(allplaylists, {name = playlist:GetName(), playlist = playlist})
-			end
-		end
-		table.sort(allplaylists, function(a, b) return (a.name or "") < (b.name or "") end)
+local function clampPage(page, count, pageSize)
+	return math.max(1, math.min(page, math.ceil(count / pageSize)))
+end
+
+local function refreshPlaylistList()
+	allplaylists = SONGMAN:GetPlaylists()
+	table.sort(allplaylists, function(a, b) return a:GetName() < b:GetName() end)
+	currentPlaylistPage = clampPage(currentPlaylistPage, #allplaylists, playlistsPerPage)
+end
+
+local function findPlaylist(name)
+	for _, playlist in ipairs(SONGMAN:GetPlaylists()) do
+		if playlist:GetName() == name then return playlist end
 	end
 end
 
-local function RefreshChartList()
+local function sortChartList()
+	if not sortMode then return end
+	table.sort(chartlist, function(a, b)
+		local first, second = a[sortMode], b[sortMode]
+		if first == second then return a.slot < b.slot end
+		if sortMode == "title" then return first < second end
+		-- Unavailable MSD sorts below any installed chart.
+		return (first or -math.huge) > (second or -math.huge)
+	end)
+end
+
+local function refreshChartList()
 	chartlist = {}
-	if pl then
-		local ok, list = pcall(function() return pl:GetAllSteps() end)
-		local ok2, keys = pcall(function() return pl:GetChartkeys() end)
-		if ok and list and ok2 and keys then
-			for i = 1, #list do
-				table.insert(chartlist, {chart = list[i], key = keys[i]})
-			end
-		end
-	end
-end
-
-local function GetPlaylistStats()
-	local stats = {avgMSD = 0, totalDuration = 0, count = 0}
-	if not pl or not chartlist or #chartlist == 0 then return stats end
-	
-	local totalMSD = 0
-	for _, entry in ipairs(chartlist) do
-		local steps = SONGMAN:GetStepsByChartKey(entry.key)
-		if steps then
-			totalMSD = totalMSD + steps:GetMSD(entry.chart:GetRate(), 1)
-			local song = SONGMAN:GetSongByChartKey(entry.key)
-			if song then
-				stats.totalDuration = stats.totalDuration + (song:GetStepsSeconds() / entry.chart:GetRate())
-			end
-		end
-	end
-	stats.count = #chartlist
-	stats.avgMSD = totalMSD / stats.count
-	return stats
-end
-
-local function SortChartList(mode)
+	playlistStats = {available = 0, totalMSD = 0, totalDuration = 0}
 	if not pl then return end
-	if mode == "title" then
-		table.sort(chartlist, function(a, b) return (a.chart:GetSongTitle() or "") < (b.chart:GetSongTitle() or "") end)
-	elseif mode == "msd" then
-		table.sort(chartlist, function(a, b)
-			local sA = SONGMAN:GetStepsByChartKey(a.key)
-			local sB = SONGMAN:GetStepsByChartKey(b.key)
-			local msA = sA and sA:GetMSD(a.chart:GetRate(), 1) or 0
-			local msB = sB and sB:GetMSD(b.chart:GetRate(), 1) or 0
-			return msA > msB
-		end)
-	elseif mode == "rate" then
-		table.sort(chartlist, function(a, b) return a.chart:GetRate() > b.chart:GetRate() end)
+
+	local keys = pl:GetChartkeys()
+	for i, chart in ipairs(pl:GetAllSteps()) do
+		local entry = {
+			slot = i,
+			key = keys[i],
+			rate = chart:GetRate(),
+			title = chart:GetSongTitle() or "???",
+			difficulty = chart:GetDifficulty(),
+		}
+		local steps = SONGMAN:GetStepsByChartKey(entry.key)
+		if steps and entry.rate > 0 then
+			entry.msd = steps:GetMSD(entry.rate, 1)
+			playlistStats.available = playlistStats.available + 1
+			playlistStats.totalMSD = playlistStats.totalMSD + entry.msd
+			playlistStats.totalDuration = playlistStats.totalDuration
+				+ math.max(0, steps:GetLastSecond() - steps:GetFirstSecond()) / entry.rate
+		end
+		chartlist[#chartlist + 1] = entry
 	end
-	-- Note: SONGMAN doesn't support persistent custom sorting via API easily, 
-	-- we are just sorting the local 'chartlist' for display.
+	sortChartList()
+	currentChartPage = clampPage(currentChartPage, #chartlist, chartsPerPage)
 end
 
--- Manual chart reordering workaround
--- pl:MoveChart is not available in this Etterna version,
--- so we rebuild the playlist by deleting all charts and re-adding them in the new order.
-local function ManualMoveChart(fromIdx, toIdx)
-	if not pl then return false end
-	if fromIdx == toIdx then return false end
-	if fromIdx < 1 or toIdx < 1 then return false end
-
-	-- 1. Snapshot current state (keys + rates)
-	local snapshot = {}
-	local ok, steps = pcall(function() return pl:GetAllSteps() end)
-	local ok2, keys = pcall(function() return pl:GetChartkeys() end)
-	if not ok or not steps or not ok2 or not keys then return false end
-	if fromIdx > #keys or toIdx > #keys then return false end
-
-	for i = 1, #keys do
-		snapshot[i] = { key = keys[i], rate = steps[i]:GetRate() }
-	end
-
-	-- 2. Swap entries in snapshot
-	snapshot[fromIdx], snapshot[toIdx] = snapshot[toIdx], snapshot[fromIdx]
-
-	-- 3. Delete all charts from the end to avoid index shifting
-	for i = #keys, 1, -1 do
-		pcall(function() pl:DeleteChart(i) end)
-	end
-
-	-- 4. Re-add all charts in new order
-	for i = 1, #snapshot do
-		pcall(function() pl:AddChart(snapshot[i].key) end)
-	end
-
-	-- 5. Restore rates (AddChart defaults to 1.0x, so adjust by delta)
-	local ok3, newSteps = pcall(function() return pl:GetAllSteps() end)
-	if ok3 and newSteps then
-		for i = 1, #snapshot do
-			if newSteps[i] then
-				local targetRate = snapshot[i].rate
-				local currentRate = newSteps[i]:GetRate()
-				local delta = targetRate - currentRate
-				if math.abs(delta) > 0.001 then
-					pcall(function() newSteps[i]:ChangeRate(delta) end)
-				end
-			end
-		end
-	end
-	saveProfile()
-	return true
+local function currentChart(entry)
+	local keys = pl:GetChartkeys()
+	if keys[entry.slot] ~= entry.key then return end
+	local chart = pl:GetAllSteps()[entry.slot]
+	if chart and chart:GetRate() == entry.rate then return chart end
 end
 
--- Manual playlist rename workaround
--- SONGMAN:RenamePlaylist is not available in some older Etterna versions
-local function ManualRenamePlaylist(oldName, newName, oldPl)
-	if not oldPl or not oldName or not newName or oldName == newName then return false end
-
-	-- 1. Snapshot current state (keys + rates)
-	local snapshot = {}
-	local ok, steps = pcall(function() return oldPl:GetAllSteps() end)
-	local ok2, keys = pcall(function() return oldPl:GetChartkeys() end)
-	if not ok or not steps or not ok2 or not keys then return false end
-
-	for i = 1, #keys do
-		snapshot[i] = { key = keys[i], rate = steps[i]:GetRate() }
-	end
-
-	-- 2. Create NEW playlist
-	SONGMAN:NewPlaylistNoDialog(newName)
-	
-	-- 3. Find the newly created playlist object
-	local newPl = nil
-	local allPls = SONGMAN:GetPlaylists()
-	for _, p in pairs(allPls) do
-		if p:GetName() == newName then
-			newPl = p
-			break
-		end
-	end
-	
-	if not newPl then return false end
-
-	-- 4. Re-add all charts
-	for i = 1, #snapshot do
-		pcall(function() newPl:AddChart(snapshot[i].key) end)
-	end
-
-	-- 5. Restore rates in new playlist
-	local ok3, newSteps = pcall(function() return newPl:GetAllSteps() end)
-	if ok3 and newSteps then
-		for i = 1, #snapshot do
-			if newSteps[i] then
-				local targetRate = snapshot[i].rate
-				local currentRate = newSteps[i]:GetRate()
-				local delta = targetRate - currentRate
-				if math.abs(delta) > 0.001 then
-					pcall(function() newSteps[i]:ChangeRate(delta) end)
-				end
-			end
-		end
-	end
-
-	-- 6. Delete OLD playlist
-	SONGMAN:DeletePlaylist(oldName)
-	saveProfile()
-	return true
+local function refreshChartView()
+	refreshChartList()
+	playlistsActor:playcommand("RefreshUI")
 end
 
+local function formatRate(rate)
+	return (string.format("%.2f", rate):gsub("0$", "")) .. "x"
+end
+
+local function getChartPB(entry)
+	local rates = SCOREMAN:GetScoresByKey(entry.key)
+	local atRate = rates and rates[formatRate(entry.rate)]
+	if not atRate then return "" end
+	for _, score in ipairs(atRate:GetScores()) do
+		if math.abs(score:GetMusicRate() - entry.rate) < 0.00005 then
+			return string.format("%.2f%%", score:GetWifeScore() * 100)
+		end
+	end
+	return ""
+end
 
 -- Shared input function reference to allow removal/cleanup
 local function SharedInputHandler(event)
@@ -233,9 +143,10 @@ local function SharedInputHandler(event)
 		local headerY = SCREEN_CENTER_Y - overlayH/2 + 65
 		if singleplaylistactive and my >= headerY - 10 and my <= headerY + 10 then
 			local hx = mx - (SCREEN_CENTER_X - overlayW/2 + 25)
-			if hx >= 60 and hx <= 340 then SortChartList("title") end
-			if hx >= overlayW - 190 and hx <= overlayW - 150 then SortChartList("rate") end
-			if hx >= overlayW - 130 and hx <= overlayW - 90 then SortChartList("msd") end
+			if hx >= 60 and hx <= 340 then sortMode = "title" end
+			if hx >= overlayW - 260 and hx <= overlayW - 200 then sortMode = "rate" end
+			if hx >= overlayW - 195 and hx <= overlayW - 135 then sortMode = "msd" end
+			sortChartList()
 			playlistsActor:playcommand("RefreshUI")
 			return true
 		end
@@ -250,7 +161,7 @@ local function SharedInputHandler(event)
 		if singleplaylistactive then
 			if IsMouseOverCentered(SCREEN_CENTER_X + overlayW/2 - 50, SCREEN_CENTER_Y - overlayH/2 + 18, 60, 18) then
 				singleplaylistactive = false
-				allplaylistsactive = true
+
 				currentPlaylistPage = 1
 				playlistsActor:playcommand("RefreshUI")
 				return true
@@ -266,9 +177,7 @@ local function SharedInputHandler(event)
 					if pl then
 						pl:AddChart(ck)
 						ms.ok(string.format(THEME:GetString("Playlists", "ChartAdded"), pl:GetName()))
-						saveProfile()
-						RefreshChartList()
-						playlistsActor:playcommand("RefreshUI")
+						refreshChartView()
 					end
 				end
 				return true
@@ -287,14 +196,15 @@ local function SharedInputHandler(event)
 		if not singleplaylistactive then
 			local ctrlsY = SCREEN_CENTER_Y + overlayH / 2 - 35
 			if IsMouseOverCentered(SCREEN_CENTER_X - 55, ctrlsY, 70, 20) then -- NEW
+				local profile = PROFILEMAN:GetProfile(PLAYER_1)
 				easyInputStringOKCancel(THEME:GetString("Playlists", "PromptNewName"), 32, false, function(name)
-					if name and name ~= "" then
-						SONGMAN:NewPlaylistNoDialog(name)
-						ms.ok(string.format(THEME:GetString("Playlists", "PlaylistCreated"), name))
-						saveProfile()
-						RefreshPlaylistList()
-						playlistsActor:playcommand("RefreshUI")
+					if not name or name == "" then return end
+					if profile ~= PROFILEMAN:GetProfile(PLAYER_1) or not SONGMAN:NewPlaylistNoDialog(name) then
+						ms.ok(THEME:GetString("Playlists", "CreateFailed"))
+						return
 					end
+					ms.ok(string.format(THEME:GetString("Playlists", "PlaylistCreated"), name))
+					saveProfile()
 				end)
 				return true
 			end
@@ -317,45 +227,21 @@ local function SharedInputHandler(event)
 						local entry = chartlist[idx]
 						local hx = mx - rowLeft
 						
-						-- 1. Reorder Column (More generous hitbox: 0 to 45)
-						if hx <= 45 then
-							if my < rowTop + rowH / 2 then -- UP
-								if idx > 1 then
-									if ManualMoveChart(idx, idx - 1) then
-										RefreshChartList()
-										playlistsActor:playcommand("RefreshUI")
-									end
-								end
-							else -- DOWN
-								if idx < #chartlist then
-									if ManualMoveChart(idx, idx + 1) then
-										RefreshChartList()
-										playlistsActor:playcommand("RefreshUI")
-									end
-								end
+						-- View order and the native playlist slot are independent.
+						if hx >= overlayW - 260 and hx <= overlayW - 200 then
+							local chart = currentChart(entry)
+							if chart then
+								chart:ChangeRate(hx <= overlayW - 230 and -0.1 or 0.1)
+								if chart:GetRate() ~= entry.rate then saveProfile() end
 							end
+							refreshChartView()
 							return true
-						
-						-- 2. Rate Adjustment
-						elseif hx >= overlayW - 260 and hx <= overlayW - 200 then
-							local curRate = entry.chart:GetRate()
-							if hx <= overlayW - 230 then -- Left side (-0.1)
-								entry.chart:ChangeRate(-0.1)
-							else -- Right side (+0.1)
-								entry.chart:ChangeRate(0.1)
-							end
-							playlistsActor:playcommand("RefreshUI")
-							return true
-
-						-- 3. Delete button
 						elseif hx >= overlayW - 80 then
-							pcall(function() pl:DeleteChart(idx) end)
-							saveProfile()
-							RefreshChartList()
-							playlistsActor:playcommand("RefreshUI")
+							if currentChart(entry) then pl:DeleteChart(entry.slot) end
+							refreshChartView()
 							return true
 
-						-- 4. Song selection (Center area)
+						-- Song selection
 						else
 							local ck = entry.key
 							if ck then
@@ -371,47 +257,39 @@ local function SharedInputHandler(event)
 				else
 					local idx = (currentPlaylistPage - 1) * playlistsPerPage + ri
 					if idx <= #allplaylists then
-						local plEntry = allplaylists[idx]
-						local name = plEntry.name
+						local playlist = allplaylists[idx]
+						local name = playlist:GetName()
 						local hx = mx - rowLeft
 
-						-- Action: Delete
 						if hx >= overlayW - 75 then
-							if plEntry.playlist then
-								SONGMAN:DeletePlaylist(name)
-								ms.ok(string.format(THEME:GetString("Playlists", "PlaylistDeleted"), name))
-								saveProfile()
-								RefreshPlaylistList()
+							SONGMAN:DeletePlaylist(name)
+							ms.ok(string.format(THEME:GetString("Playlists", "PlaylistDeleted"), name))
+							refreshPlaylistList()
+							playlistsActor:playcommand("RefreshUI")
+						elseif hx >= overlayW - 105 then
+							local profile = PROFILEMAN:GetProfile(PLAYER_1)
+							easyInputStringOKCancel(THEME:GetString("Playlists", "PromptRename"), 32, false, function(newName)
+								if not newName or newName == "" or newName == name then return end
+								if type(SONGMAN.RenamePlaylistNoDialog) ~= "function" then
+									ms.ok(THEME:GetString("Playlists", "RenameUnavailable"))
+									return
+								end
+								if profile ~= PROFILEMAN:GetProfile(PLAYER_1) or findPlaylist(name) ~= playlist
+									or not SONGMAN:RenamePlaylistNoDialog(name, newName) then
+									ms.ok(THEME:GetString("Playlists", "RenameFailed"))
+									return
+								end
+								SONGMAN:SetActivePlaylist(newName)
+								ms.ok(string.format(THEME:GetString("Playlists", "PlaylistRenamed"), name, newName))
 								playlistsActor:playcommand("RefreshUI")
-							end
-							return true
-
-						-- Action: Rename
-						elseif hx >= overlayW - 105 and hx < overlayW - 75 then
-							if plEntry.playlist then
-								easyInputStringOKCancel(THEME:GetString("Playlists", "PromptRename"), 32, false, function(newName)
-									if newName and newName ~= "" then
-										if ManualRenamePlaylist(name, newName, plEntry.playlist) then
-											ms.ok(string.format(THEME:GetString("Playlists", "PlaylistRenamed"), name, newName))
-											RefreshPlaylistList()
-											playlistsActor:playcommand("RefreshUI")
-										else
-											ms.ok(THEME:GetString("Common", "Error"))
-										end
-									end
-								end, nil, name)
-							end
-							return true
-							
-						-- Action: Select Playlist
+							end, nil, name)
 						else
-							pl = plEntry.playlist
+							pl = playlist
+							activePlaylistName = name
 							SONGMAN:SetActivePlaylist(name)
 							singleplaylistactive = true
-							allplaylistsactive = false
-							currentChartPage = 1
-							RefreshChartList()
-							playlistsActor:playcommand("RefreshUI")
+							currentChartPage, sortMode = 1, nil
+							refreshChartView()
 						end
 					end
 					return true
@@ -425,7 +303,7 @@ local function SharedInputHandler(event)
 	if event.button == "Back" or btn == "DeviceButton_escape" then
 		if singleplaylistactive then
 			singleplaylistactive = false
-			allplaylistsactive = true
+
 			playlistsActor:playcommand("RefreshUI")
 		else
 			MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
@@ -454,15 +332,25 @@ local t = Def.ActorFrame {
 			self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
 			HV.ActiveTab = "PLAYLISTS"
 			singleplaylistactive = false
-			allplaylistsactive = true
+			pl, activePlaylistName = nil, nil
 			currentPlaylistPage = 1
 			currentChartPage = 1
-			RefreshPlaylistList()
+			refreshPlaylistList()
 			self:playcommand("RefreshUI")
 		else
 			self:visible(false)
 			if HV.ActiveTab == "PLAYLISTS" then HV.ActiveTab = "" end
 		end
+	end,
+	DisplayAllPlaylistsMessageCommand = function(self)
+		if not self:GetVisible() then return end
+		refreshPlaylistList()
+		if singleplaylistactive then
+			pl = findPlaylist(activePlaylistName)
+			singleplaylistactive = pl ~= nil
+			refreshChartList()
+		end
+		self:playcommand("RefreshUI")
 	end,
 	NextPlaylistPageMessageCommand = function(self)
 		if singleplaylistactive then
@@ -511,11 +399,18 @@ local t = Def.ActorFrame {
 			InitCommand = function(self) self:halign(0):y(20):zoom(0.24):diffuse(subText) end,
 			RefreshUICommand = function(self)
 				if singleplaylistactive and pl then
-					local s = GetPlaylistStats()
-					self:settextf("%s: %.2f  ·  %s: %s  ·  %s: %d", 
-						THEME:GetString("Playlists", "AvgMSD"), s.avgMSD, 
-						THEME:GetString("Playlists", "Duration"), SecondsToMSS(s.totalDuration), 
-						THEME:GetString("Playlists", "Charts"), s.count)
+					local stats = playlistStats
+					local average = stats.available > 0 and string.format("%.2f", stats.totalMSD / stats.available) or "—"
+					local duration = stats.available > 0 and SecondsToMSS(stats.totalDuration) or "—"
+					local missing = #chartlist - stats.available
+					local charts = tostring(#chartlist)
+					if missing > 0 then
+						charts = charts .. " " .. string.format(THEME:GetString("Playlists", "MissingCharts"), missing)
+					end
+					self:settextf("%s: %s  ·  %s: %s  ·  %s: %s",
+						THEME:GetString("Playlists", "AvgMSD"), average,
+						THEME:GetString("Playlists", "Duration"), duration,
+						THEME:GetString("Playlists", "Charts"), charts)
 				else
 					self:settext("")
 				end
@@ -674,24 +569,6 @@ for i = 1, math.max(chartsPerPage, playlistsPerPage) do
 			end,
 		},
 
-		-- Reorder Buttons
-		Def.ActorFrame {
-			Name = "Reorder",
-			InitCommand = function(self) self:visible(false) end,
-			RefreshUICommand = function(self) self:visible(singleplaylistactive) end,
-			
-			Def.Sprite {
-				Name = "Up",
-				Texture = THEME:GetPathG("", "left"),
-				InitCommand = function(self) self:halign(0.5):xy(15, rowH/2 - 6):zoomto(10, 10):rotationz(90):diffuse(accentColor) end
-			},
-			Def.Sprite {
-				Name = "Down",
-				Texture = THEME:GetPathG("", "right"),
-				InitCommand = function(self) self:halign(0.5):xy(15, rowH/2 + 6):zoomto(10, 10):rotationz(90):diffuse(accentColor) end
-			},
-		},
-
 		-- Difficulty text
 		LoadFont("Common Normal") .. {
 			Name = "DiffText",
@@ -767,51 +644,17 @@ for i = 1, math.max(chartsPerPage, playlistsPerPage) do
 				if idx <= #chartlist then
 					self:visible(true)
 					local entry = chartlist[idx]
-					local songTitle = entry.chart:GetSongTitle() or "???"
-					self:GetChild("MainText"):settext(songTitle)
-
-					-- Fetch and set difficulty
-					local diff = entry.chart:GetDifficulty()
+					self:GetChild("MainText"):settext(entry.title)
+						:diffuse(entry.msd and brightText or color("1,0.3,0.3,1"))
+					local diff = entry.difficulty
 					self:GetChild("DiffText"):settext(getShortDifficulty(diff))
-					self:GetChild("DiffText"):diffuse(HVColor.GetDifficultyColor(diff)):visible(true)
-
-					-- Check if song exists
-					local song = SONGMAN:GetSongByChartKey(entry.key)
-					if song then
-						self:GetChild("MainText"):diffuse(brightText)
-					else
-						self:GetChild("MainText"):diffuse(color("1,0.3,0.3,1"))
-					end
-
-					self:GetChild("RateControls"):GetChild("Val"):settextf("%.1fx", entry.chart:GetRate())
-					
-					-- MSD calculation
-					local msd = 0
-					local steps = SONGMAN:GetStepsByChartKey(entry.key)
-					if steps then
-						msd = steps:GetMSD(entry.chart:GetRate(), 1)
-					end
-					self:GetChild("RateText"):settextf("%.2f", msd):visible(true)
-
-					-- Show personal best if available
-					local pb = ""
-					pcall(function()
-						local best = SCOREMAN:GetScoresByKey(entry.key)
-						if best then
-							for _, sl in pairs(best) do
-								local scores = sl:GetScores()
-								if scores and #scores > 0 then
-									pb = string.format("%.2f%%", scores[1]:GetWifeScore() * 100)
-									break
-								end
-							end
-						end
-					end)
-					self:GetChild("SubText"):settext(pb):visible(true)
+						:diffuse(HVColor.GetDifficultyColor(diff)):visible(true)
+					self:GetChild("RateControls"):GetChild("Val"):settext(formatRate(entry.rate))
+					self:GetChild("RateText"):settext(entry.msd and string.format("%.2f", entry.msd) or "—"):visible(true)
+					self:GetChild("SubText"):settext(getChartPB(entry)):visible(true)
 					self:GetChild("DelBtn"):visible(true)
 					self:GetChild("DelBtn"):diffusealpha(0.6)
 					if self:GetChild("RenameBtn") then self:GetChild("RenameBtn"):visible(false) end
-					self:GetChild("Reorder"):playcommand("RefreshUI")
 					self:GetChild("RateControls"):playcommand("RefreshUI")
 				else
 					self:visible(false)
@@ -821,19 +664,19 @@ for i = 1, math.max(chartsPerPage, playlistsPerPage) do
 				local idx = (currentPlaylistPage - 1) * playlistsPerPage + i
 				if idx <= #allplaylists then
 					self:visible(true)
-					local plEntry = allplaylists[idx]
-					self:GetChild("MainText"):settext(plEntry.name)
+					local playlist = allplaylists[idx]
+					local name = playlist:GetName()
+					self:GetChild("MainText"):settext(name)
 					-- Highlight active playlist
 					local activePl = SONGMAN:GetActivePlaylist()
-					if activePl and activePl:GetName() == plEntry.name then
+					if activePl and activePl:GetName() == name then
 						self:GetChild("MainText"):diffuse(accentColor)
 					else
 						self:GetChild("MainText"):diffuse(brightText)
 					end
 					self:GetChild("DiffText"):settext(""):visible(false)
-					local ct = 0
-					pcall(function() ct = plEntry.playlist:GetNumCharts() end)
-					self:GetChild("SubText"):settextf("%d %s", ct, THEME:GetString("Playlists", "Charts"):lower()):visible(true)
+					self:GetChild("RateControls"):visible(false)
+					self:GetChild("SubText"):settextf("%d %s", playlist:GetNumCharts(), THEME:GetString("Playlists", "Charts"):lower()):visible(true)
 					self:GetChild("RateText"):settext(""):visible(false)
 					self:GetChild("DelBtn"):visible(true)
 					self:GetChild("DelBtn"):diffusealpha(1.0)

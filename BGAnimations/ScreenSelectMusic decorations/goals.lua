@@ -16,22 +16,128 @@ local goalsActor = nil
 local whee = nil
 local goaltable = {}
 
-local function GetProfile()
-	return GetPlayerOrMachineProfile(PLAYER_1) or PROFILEMAN:GetProfile(PLAYER_1)
+local function getProfile()
+	return PROFILEMAN:GetProfile(PLAYER_1)
 end
 
-local function RefreshGoals()
-	goaltable = {}
-	local profile = GetProfile()
-	if profile then
-		pcall(function() profile:SetFromAll() end)
-		local ok, gt = pcall(function() return profile:GetGoalTable() end)
-		if ok and gt then goaltable = gt end
+local function refreshGoals()
+	local profile = getProfile()
+	profile:SetFromAll()
+	goaltable = profile:GetGoalTable()
+	ind = math.max(0, math.min(ind, #goaltable - numGoals))
+end
+
+local function refreshGoalView()
+	refreshGoals()
+	goalsActor:playcommand("GoalTableRefresh")
+end
+
+local function goalMessage(key)
+	ms.ok(THEME:GetString("Goals", key))
+end
+
+local function saveGoals()
+	if not PROFILEMAN:SaveProfile(PLAYER_1) then goalMessage("SaveFailed") end
+end
+
+local function addCurrentGoal()
+	local steps = GAMESTATE:GetCurrentSteps()
+	if not steps then return end
+	-- AddGoal returns a boolean and supplies 93%, current rate and priority 1.
+	if getProfile():AddGoal(steps:GetChartKey()) then
+		saveGoals()
+	else
+		goalMessage("DuplicateGoal")
 	end
 end
 
--- Granular score adjustment logic (Benchmarks for display coloring)
-local benchmarks = {0.99, 0.997, 0.99955, 0.999935, 1.0}
+local function editGoal(goal, title, maxLength, initialText, apply)
+	if goal:IsAchieved() then
+		goalMessage("AchievedReadOnly")
+		return
+	end
+	local profile = getProfile()
+	local key, assigned = goal:GetChartKey(), goal:WhenAssigned()
+	local rate, percent = goal:GetRate(), goal:GetPercent()
+
+	easyInputStringOKCancel(THEME:GetString("Goals", title), maxLength, false, function(answer)
+		if profile ~= getProfile() then return end
+		-- ScoreGoal objects are backed by a vector that can change during the prompt.
+		profile:SetFromAll()
+		local selected
+		for _, current in ipairs(profile:GetGoalTable()) do
+			if current:GetChartKey() == key and current:WhenAssigned() == assigned
+				and current:GetRate() == rate and current:GetPercent() == percent then
+				if selected then
+					goalMessage("GoalChanged")
+					refreshGoalView()
+					return
+				end
+				selected = current
+			end
+		end
+		if not selected or selected:IsAchieved() then
+			goalMessage("GoalChanged")
+		elseif apply(selected, answer) then
+			saveGoals()
+		end
+		refreshGoalView()
+	end, nil, initialText)
+end
+
+local function setGoalRate(goal, answer)
+	local rate = tonumber(answer)
+	if not HV.Config.IsFinite(rate) or rate < 0.05 or rate > 3.0 then
+		goalMessage("RateOutOfRange")
+		return
+	end
+	if math.abs(rate * 20 - math.floor(rate * 20 + 0.5)) > 0.0001 then
+		goalMessage("RateIncrement")
+		return
+	end
+	if math.abs(goal:GetRate() - rate) < 0.00001 then return end
+	for _, other in ipairs(getProfile():GetGoalTable()) do
+		if other:GetChartKey() == goal:GetChartKey() and other:GetPercent() == goal:GetPercent()
+			and math.abs(other:GetRate() - rate) < 0.00001 then
+			goalMessage("DuplicateGoal")
+			return
+		end
+	end
+	local previous = goal:GetRate()
+	goal:SetRate(rate)
+	return goal:GetRate() ~= previous
+end
+
+local function setGoalPercent(goal, answer)
+	local percent = answer and tonumber((answer:gsub("%%%s*$", "")))
+	if not HV.Config.IsFinite(percent) or percent < 80 or percent > 100 then
+		goalMessage("TargetOutOfRange")
+		return
+	end
+	local previous = goal:GetPercent()
+	if math.abs(percent / 100 - previous) < 0.00000005 then return end
+	goal:SetPercent(percent / 100)
+	return goal:GetPercent() ~= previous
+end
+
+local function deleteGoal(goal)
+	-- The engine deletes by chart key and assignment second.
+	local key, assigned = goal:GetChartKey(), goal:WhenAssigned()
+	local matches = 0
+	for _, current in ipairs(goaltable) do
+		if current:GetChartKey() == key and current:WhenAssigned() == assigned then
+			matches = matches + 1
+		end
+	end
+	if matches ~= 1 or not SONGMAN:GetStepsByChartKey(key) then
+		goalMessage("DeleteAmbiguous")
+		return
+	end
+	goal:Delete()
+	saveGoals()
+	refreshGoalView()
+	if whee then whee:RebuildWheelItems() end
+end
 
 local function formatGoalPercent(pct)
 	local p = notShit.round(pct * 100, 5)
@@ -65,7 +171,7 @@ local t = Def.ActorFrame {
 				self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
 				HV.ActiveTab = "GOALS"
 				ind = 0
-				RefreshGoals()
+				refreshGoals()
 			else
 				HV.ActiveTab = ""
 			end
@@ -74,6 +180,9 @@ local t = Def.ActorFrame {
 			if HV.ActiveTab == "GOALS" then HV.ActiveTab = "" end
 		end
 		self:playcommand("GoalTableRefresh")
+	end,
+	GoalTableRefreshMessageCommand = function(self)
+		if self:GetVisible() then refreshGoalView() end
 	end,
 	NextGoalPageMessageCommand = function(self)
 		ind = math.max(0, math.min(#goaltable - numGoals, ind + 1 * numGoals))
@@ -329,34 +438,14 @@ t[#t + 1] = Def.ActorFrame {
 			local isRight = btn == "DeviceButton_right mouse button"
 			local mx, my = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
 			
-			if evType == "InputEventType_Release" then return true end
+			if evType ~= "InputEventType_FirstPress" then return true end
 
 			-- Add Goal Button (Top Right)
 			if btn == "DeviceButton_left mouse button" and evType == "InputEventType_FirstPress" then
 				local btnCX = SCREEN_CENTER_X + (overlayW / 2) - 85
 				local btnCY = SCREEN_CENTER_Y - (overlayH / 2) + 28
 				if mx >= btnCX - 55 and mx <= btnCX + 55 and my >= btnCY - 14 and my <= btnCY + 14 then
-					local steps = GAMESTATE:GetCurrentSteps()
-					local profile = GetProfile()
-					if steps and profile then
-						local ck = steps:GetChartKey()
-						if ck then
-							local sg = profile:AddGoal(ck)
-							-- AddGoal might return true or a scoregoal object
-							if not sg or type(sg) == "boolean" then
-								local gt = profile:GetGoalTable()
-								for _, g in ipairs(gt) do if g:GetChartKey() == ck then sg = g; break end end
-							end
-							if sg and type(sg) ~= "boolean" then
-								sg:SetPercent(0.93)
-								sg:SetRate(getCurRateValue() or 1.0)
-								sg:SetPriority(0)
-								pcall(function() profile:SetFromAll() end)
-							end
-							RefreshGoals()
-							goalsActor:playcommand("GoalTableRefresh")
-						end
-					end
+					addCurrentGoal()
 					return true
 				end
 			end
@@ -366,7 +455,6 @@ t[#t + 1] = Def.ActorFrame {
 			-- Row Clicks
 			if btn == "DeviceButton_left mouse button" or btn == "DeviceButton_right mouse button" then
 				if mx < SCREEN_CENTER_X - overlayW/2 or mx > SCREEN_CENTER_X + overlayW/2 or my < SCREEN_CENTER_Y - overlayH/2 or my > SCREEN_CENTER_Y + overlayH/2 then
-					if evType ~= "InputEventType_FirstPress" then return true end
 					MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
 					return true
 				end
@@ -380,94 +468,28 @@ t[#t + 1] = Def.ActorFrame {
 							local sg = goaltable[gIdx]
 							local hx = mx - rowLeft
 
-							-- Delete
 							if hx >= 0 and hx <= 35 then
-								if not isRight then
-									pcall(function() sg:Delete() end)
-									pcall(function() GetProfile():SetFromAll() end)
-									RefreshGoals()
-									if whee then whee:RebuildWheelItems() end
+								if not isRight then deleteGoal(sg) end
+								return true
+							end
+
+							if hx > 35 and hx <= 75 then
+								if not sg:IsAchieved() then
+									local priority = sg:GetPriority()
+									sg:SetPriority(priority + (isRight and -1 or 1))
+									if sg:GetPriority() ~= priority then saveGoals() end
 									goalsActor:playcommand("GoalTableRefresh")
 								end
 								return true
 							end
 
-							-- Priority
-							if hx >= 35 and hx <= 75 then
-								local p = sg:GetPriority()
-								pcall(function() sg:SetPriority(isRight and p - 1 or p + 1) end)
-								goalsActor:playcommand("GoalTableRefresh")
+							if hx >= 360 and hx < 410 then
+								editGoal(sg, "RateLabel", 6, string.format("%.2f", sg:GetRate()), setGoalRate)
 								return true
 							end
 
-							-- Rate (Task 3: Constraints + Infinite spawning fix)
-							if hx >= 360 and hx <= 410 then
-								easyInputStringOKCancel(THEME:GetString("Goals", "RateLabel"), 4, false, function(answer)
-									local r = tonumber(answer)
-									if r then
-										-- Task 3.1: Validation Warnings
-										local invalid = false
-										if r < 0.05 or r > 3.0 then
-											ms.ok("Rate must be between 0.05 and 3.0")
-											invalid = true
-										elseif math.abs(r*20 - math.floor(r*20 + 0.5)) > 0.0001 then
-											ms.ok("Rate must be a multiple of 0.05")
-											invalid = true
-										end
-										
-										if invalid then return end
-
-										local oldRate = sg:GetRate()
-										if math.abs(r - oldRate) > 0.001 then
-											-- FIX: If rate changes, delete old one and create new one to avoid "spawning" duplicates
-											local ck = sg:GetChartKey()
-											local pct = sg:GetPercent()
-											local prio = sg:GetPriority()
-											
-											pcall(function() sg:Delete() end)
-											local profile = GetProfile()
-											if profile then
-												local newSg = profile:AddGoal(ck)
-												-- Handle newSg being a boolean (true) or a scoregoal object
-												if not newSg or type(newSg) == "boolean" then
-													local gt = profile:GetGoalTable()
-													for _, g in ipairs(gt) do
-														if g:GetChartKey() == ck then
-															newSg = g
-															break
-														end
-													end
-												end
-
-												if newSg and type(newSg) ~= "boolean" then
-													newSg:SetRate(r)
-													newSg:SetPercent(pct)
-													newSg:SetPriority(prio)
-												end
-											end
-										else
-											pcall(function() sg:SetRate(r) end)
-										end
-										RefreshGoals()
-										goalsActor:playcommand("GoalTableRefresh")
-									end
-								end)
-								return true
-							end
-
-							-- Target % (The request: Direct overlay entry)
 							if hx >= 410 and hx <= 510 then
-								easyInputStringOKCancel(THEME:GetString("Goals", "TargetLabel"), 10, false, function(answer)
-									local p = tonumber((answer:gsub("%%", "")))
-									if p then
-										-- Fix: Round to 6 decimal places before storing to avoid floating-point truncation issues
-										-- This ensures values like 99.35% don't get corrupted by FP representation errors
-										local clamped = math.max(0, math.min(100.0, p))
-										local rounded = notShit.round(clamped, 6) / 100
-										pcall(function() sg:SetPercent(rounded) end)
-										goalsActor:playcommand("GoalTableRefresh")
-									end
-								end)
+								editGoal(sg, "TargetLabel", 12, formatGoalPercent(sg:GetPercent()), setGoalPercent)
 								return true
 							end
 
