@@ -49,9 +49,7 @@ local function isAutoplayEvaluation()
 	return false
 end
 
--- Keep this state global rather than another closure upvalue.  This file has
--- a large scoreBoard() closure and Etterna's Lua build limits its upvalues.
-scoringVoided = isAutoplayEvaluation()
+local scoringVoided = isAutoplayEvaluation()
 HV.EvaluationScoringVoided = scoringVoided
 
 if scoringVoided then
@@ -72,39 +70,53 @@ if scoringVoided then
 	}
 end
 
-function evaluationWifeScore()
+local isReplay = HV.IsReplayPlayback() or HV.OnlineReplayActive == true
+local openingScore = HV.Score.GetEvaluationOpeningScore(steps, pss, isReplay)
+local curScore = openingScore
+local stageOffsets = {
+	rows = pss:GetNoteRowVector(),
+	tracks = pss:GetTrackVector(),
+	types = pss:GetTapNoteTypeVector(),
+	offsets = pss:GetOffsetVector(),
+	taps = pss:GetTotalTaps(),
+}
+local stageRadar = {}
+for _, kind in ipairs({"Holds", "Rolls", "Lifts", "Mines"}) do
+	local key = "RadarCategory_" .. kind
+	stageRadar[key] = pss:GetRadarActual():GetValue(key)
+end
+
+local function evaluationWifeScore()
 	if scoringVoided then return 0 end
 	if curScore and curScore.GetWifeScore then return curScore:GetWifeScore() or 0 end
 	return pss:GetWifeScore() or 0
 end
-function evaluationGrade()
+local function evaluationGrade()
 	if scoringVoided then return "Grade_None" end
 	if curScore and curScore.GetWifeGrade then return curScore:GetWifeGrade() end
 	return pss:GetWifeGrade()
 end
 
-function evaluationTapCount(name)
+local function evaluationTapCount(name)
 	if scoringVoided then return 0 end
 	if curScore and curScore.GetTapNoteScore then return curScore:GetTapNoteScore(name) or 0 end
 	return pss:GetTapNoteScores(name)
 end
 
-function evaluationHoldCount(name)
+local function evaluationHoldCount(name)
 	if scoringVoided then return 0 end
 	if curScore and curScore.GetHoldNoteScore then return curScore:GetHoldNoteScore(name) or 0 end
 	return pss:GetHoldNoteScores(name)
 end
 
--- State variables (declared early for function visibility)
-local curScore = scoringVoided and nil or pss:GetHighScore()
 local judge = 4
--- The judge used for the play is the fixed baseline for PB comparisons.
--- `judge` may be changed while inspecting the replay.
 local playedJudge = 4
+local inMulti = Var("LoadingScreen") == "ScreenNetEvaluation"
 local judges = HV.EmulateRidiculousEnabled() and {"Ridiculous","TapNoteScore_W1","TapNoteScore_W2","TapNoteScore_W3","TapNoteScore_W4","TapNoteScore_W5","TapNoteScore_Miss"} or {"TapNoteScore_W1","TapNoteScore_W2","TapNoteScore_W3","TapNoteScore_W4","TapNoteScore_W5","TapNoteScore_Miss"}
 
 -- Rescoring/offset plot state
 local nrv, dvt, ctt, ntt, totalTaps
+local offsetStats
 local rescoredPercentage
 local usingCustomWindows = false
 local lastSnapshot = nil
@@ -113,8 +125,10 @@ local maniaRescore = nil
 local refreshEvaluationDisplays
 local clearRatioCache
 
+local openingIsOnline = HV.OnlineEvaluationActive == true or HV.OnlineReplayActive == true
+local selectedOnline = openingIsOnline
 local function isOnlineEvaluation()
-	return HV.OnlineEvaluationActive == true or HV.OnlineReplayActive == true
+	return selectedOnline
 end
 
 -- This is here to make sure that osu!mania state doesn't leak into the normal score display
@@ -126,14 +140,15 @@ end
 
 local function editEvaluationScoreComment()
 	if not curScore or isOnlineEvaluation() then return end
+	local score = curScore
 	easyInputStringOKCancel(
 		THEME:GetString("Scores", "CommentPrompt"), 255, false,
 		function(comment)
-			HV.SetScoreComment(curScore, comment)
+			HV.SetScoreComment(score, comment)
 			MESSAGEMAN:Broadcast("ScoreCommentChanged")
 		end,
 		nil,
-		HV.GetScoreComment(curScore)
+		HV.GetScoreComment(score)
 	)
 end
 
@@ -163,9 +178,9 @@ local function roundTo(value, places)
 end
 
 local function getJudgeForScore(score)
+	if isOnlineEvaluation() then return 4 end
 	local playedJudge = 4
-	local norm = PREFSMAN:GetPreference("SortBySSRNormPercent")
-	if not norm and score and type(score.GetJudgeScale) == "function" then
+	if score and type(score.GetJudgeScale) == "function" then
 		local scale = score:GetJudgeScale()
 		if scale then
 			scale = roundTo(scale, 2)
@@ -261,6 +276,11 @@ local function getFilteredDvt()
 	return dvt -- no type vector: return as-is (PSS path, already clean)
 end
 
+local function getEvaluationRescoreElements()
+	if curScore then return getRescoreElements(nil, curScore) end
+	return getRescoreElements(pss)
+end
+
 local function refreshRescoredPercentage()
 	if scoringVoided then
 		maniaRescore = nil
@@ -273,12 +293,17 @@ local function refreshRescoredPercentage()
 		return
 	end
 	maniaRescore = nil
-	local rst = getRescoreElements(pss, curScore)
+	local offsets = getFilteredDvt()
+	if judge == playedJudge or #offsets == 0 then
+		rescoredPercentage = nil
+		return
+	end
+	local rst = getEvaluationRescoreElements()
 	if not rst then
 		rescoredPercentage = nil
 		return
 	end
-	rst.dvt = getFilteredDvt()
+	rst.dvt = offsets
 	rescoredPercentage = getRescoredWife3Judge(3, judge, rst)
 end
 
@@ -373,6 +398,7 @@ end
 local function updateVectors()
 	if scoringVoided then
 		nrv, dvt, ctt, ntt, totalTaps = {}, {}, {}, {}, 0
+		offsetStats = {}
 		return
 	end
 	local replay = curScore and curScore:GetReplay() or nil
@@ -391,12 +417,10 @@ local function updateVectors()
 				end
 			end
 		end
+	elseif curScore == openingScore then
+		nrv, ctt, ntt, dvt, totalTaps = stageOffsets.rows, stageOffsets.tracks, stageOffsets.types, stageOffsets.offsets, stageOffsets.taps
 	else
-		nrv = pss:GetNoteRowVector()
-		ctt = pss:GetTrackVector()
-		ntt = pss:GetTapNoteTypeVector()
-		dvt = pss:GetOffsetVector()
-		totalTaps = pss:GetTotalTaps()
+		nrv, ctt, ntt, dvt, totalTaps = {}, {}, {}, {}, 0
 	end
 	if HV.ManiaState and HV.ManiaState.enabled and curScore and curScore.GetReplay then
 		local orderedOffsets, _, orderedTaps = HV.GetOrderedReplayTapOffsets(curScore, true)
@@ -410,7 +434,7 @@ local function updateVectors()
 			end
 		end
 	end
-	songTotalNotes = steps:GetRadarValues(pn):GetValue("RadarCategory_Notes")
+	offsetStats = HV.Judgment.GetEvaluationOffsetStats(dvt, ntt)
 end
 
 refreshEvaluationDisplays = function()
@@ -419,33 +443,6 @@ refreshEvaluationDisplays = function()
 	refreshRescoredPercentage()
 	MESSAGEMAN:Broadcast("RefreshJudgeDisplay")
 	MESSAGEMAN:Broadcast("ManiaModeChanged")
-end
-
--- Direct entry point for the local score leaderboard.  Some Etterna builds
--- do not deliver a theme-broadcast ScoreChanged command back to this actor
--- while ScreenEvaluation is active.
-HV.SelectEvaluationScore = function(selected)
-	if scoringVoided or not selected then return false end
-	curScore = selected
-	judge = getJudgeForScore(curScore)
-	playedJudge = judge
-	local screen = SCREENMAN:GetTopScreen()
-	if curScore.GetReplay and curScore:GetReplay() and screen then
-		pcall(function()
-			local tso = tst[judge] or 1
-			if screen.SetPlayerStageStatsFromReplayData then
-				screen:SetPlayerStageStatsFromReplayData(pss, tso, curScore)
-			elseif screen.RescoreReplay then
-				screen:RescoreReplay(pss, tso, curScore, false)
-			end
-		end)
-	end
-	updateVectors()
-	clearRatioCache()
-	refreshRescoredPercentage()
-	MESSAGEMAN:Broadcast("RefreshJudgeDisplay")
-	MESSAGEMAN:Broadcast("ScoreChanged")
-	return true
 end
 
 local function formatEvaluationPercent(pct)
@@ -467,8 +464,8 @@ local function getOsuManiaLongScore()
 	end
 	local totalNotes = math.max(1, totalTaps + holds)
 	local w1, w2, w3, w4, w5, miss = counts[1] or 0, counts[2] or 0, counts[3] or 0, counts[4] or 0, counts[5] or 0, counts[6] or 0
-	local helds = pss and pss:GetHoldNoteScores("HoldNoteScore_Held") or 0
-	local letGos = pss and pss:GetHoldNoteScores("HoldNoteScore_LetGo") or 0
+	local helds = evaluationHoldCount("HoldNoteScore_Held")
+	local letGos = evaluationHoldCount("HoldNoteScore_LetGo")
 	local baseValue = w1 * 320 + w2 * 300 + w3 * 200 + w4 * 100 + w5 * 50 + helds * 320
 	local baseScore = (maxScore * 0.5 / totalNotes) * (baseValue / 320)
 	local bonusValue, combo = 0, 100
@@ -611,15 +608,6 @@ local function calculateRatios(score)
 end
 
 local hjudges = {"HoldNoteScore_Held","HoldNoteScore_LetGo","HoldNoteScore_MissedHold"}
-local rate = getCurRate()
-if curScore and type(curScore.GetMusicRate) == "function" then
-	local ok, scoreRate = pcall(curScore.GetMusicRate, curScore)
-	if ok and tonumber(scoreRate) then
-		local formattedRate = string.format("%.2f", tonumber(scoreRate)):gsub("%.?0+$", "") .. "x"
-		rate = formattedRate == "1x" and "1.0x" or (formattedRate == "2x" and "2.0x" or formattedRate)
-	end
-end
-
 -- Cache for RA/LA ratios to avoid repeated replay loading
 local cachedRatios = nil
 clearRatioCache = function() cachedRatios = nil end
@@ -631,18 +619,13 @@ local function getRatios()
 	return unpack(cachedRatios)
 end
 
--- a helper to get the radar value for a score and fall back to playerstagestats if that fails
-local function gatherRadarValue(radar, score)
-	if scoringVoided then return 0 end
-    local n = score:GetRadarValues():GetValue(radar)
-    if n == -1 then
-        return pss:GetRadarActual():GetValue(radar)
-    end
-    return n
-end
-
 local songTotalNotes = steps:GetRadarValues(pn):GetValue("RadarCategory_Notes")
 local songMaxPoints = songTotalNotes * 2
+
+local function evaluationWifePoints()
+	if isOnlineEvaluation() or usingCustomWindows or rescoredPercentage then return end
+	return HV.Score.GetEvaluationWifePoints(curScore, songMaxPoints)
+end
 
 local function getRunningWife(wife, judged)
 	if judged == 0 then return 0 end
@@ -655,25 +638,7 @@ local function clampJudge()
 end
 clampJudge()
 
-local hsTable = getScoreTable(pn, rate)
-local scoreIndex = 0
-if hsTable and curScore then
-	scoreIndex = getHighScoreIndex(hsTable, curScore)
-end
-local recScore = scoringVoided and nil or getBestScore(pn, scoreIndex, rate, true)
-
-function getComparisonWifePercent(score, currentPss, currentJudge)
-	if not score then return nil end
-	-- Do not rescore the current PSS here: that compares the current play
-	-- against itself and can incorrectly produce a zero differential.
-	if score.GetRescoredWifeScore then
-		local ok, value = pcall(score.GetRescoredWifeScore, score, playedJudge)
-		if ok and tonumber(value) then return tonumber(value) * 100 end
-	end
-	return score.GetWifeScore and score:GetWifeScore() * 100 or nil
-end
-
-function nearestGradeComparison(percent)
+local function nearestGradeComparison(percent)
 	if not percent or isManiaModeEnabled() then return "" end
 	local baseTiers = {
 		"Grade_Tier01", "Grade_Tier04", "Grade_Tier07", "Grade_Tier10",
@@ -699,8 +664,6 @@ function nearestGradeComparison(percent)
 end
 local clearType = scoringVoided and nil or getClearType(pn, steps, curScore)
 
-local tracks = scoringVoided and {} or pss:GetTrackVector()
-local devianceTable = scoringVoided and {} or pss:GetOffsetVector()
 local cbl, cbr, cbm = 0, 0, 0
 local tst = ms.JudgeScalers
 local ncol = steps and steps:GetNumColumns() or 4
@@ -749,14 +712,14 @@ local judgmentColors = {
 }
 if not HV.EmulateRidiculousEnabled() then table.remove(judgmentColors, 1) end
 
-local ridiculousCount = nil
-if HV.EmulateRidiculousEnabled() and not scoringVoided then
-	local ok, offsets = pcall(function() return pss:GetOffsetVector() end)
-	ridiculousCount = ok and HV.GetRidiculousCountFromOffsets(offsets, ms.JudgeScalers[getJudgeForScore(curScore)] or 1) or nil
+local function getRidiculousCount()
+	if not HV.EmulateRidiculousEnabled() then return nil end
+	return HV.GetRidiculousCountFromOffsets(getFilteredDvt(), tst[playedJudge] or 1)
 end
 
 local function getEvaluationJudgeCount(judgeName, judgeIndex)
 	if scoringVoided then return 0 end
+	local ridiculousCount = getRidiculousCount()
 	if judgeName == "Ridiculous" then return ridiculousCount or 0 end
 	if judgeName == "TapNoteScore_W1" and ridiculousCount then return evaluationTapCount(judgeName) - ridiculousCount end
 	return evaluationTapCount(judgeName)
@@ -764,7 +727,11 @@ end
 
 local function getEvaluationRescoredJudgeCount(offsetVector, judgeScale, judgeName, judgeIndex)
 	if scoringVoided then return 0 end
+	if usingCustomWindows and lastSnapshot then
+		return lastSnapshot.counts[judgeName:gsub("TapNoteScore_", "")] or 0
+	end
 	if maniaRescore then return maniaRescore.counts[judgeIndex] or 0 end
+	if not rescoredPercentage then return getEvaluationJudgeCount(judgeName, judgeIndex) end
 	local ridiculousScale = ms.JudgeScalers[judgeScale] or judgeScale
 	if judgeName == "Ridiculous" then return HV.GetRidiculousCountFromOffsets(offsetVector, ridiculousScale) end
 	local index = HV.EmulateRidiculousEnabled() and judgeIndex - 1 or judgeIndex
@@ -901,6 +868,47 @@ end
 
 local showGraphs = false
 
+local function selectEvaluationScore(score, online, refreshReplay)
+	if scoringVoided then return false end
+	if not score or not steps or score:GetChartKey() ~= steps:GetChartKey() or score:GetScoreKey() == "" then return false end
+	local sameScore = curScore and score:GetScoreKey() == curScore:GetScoreKey()
+	if refreshReplay then
+		if not sameScore or not selectedOnline then return false end
+		curScore = score
+		updateVectors()
+		clearRatioCache()
+		refreshRescoredPercentage()
+		recountCBs()
+		MESSAGEMAN:Broadcast("ScoreChanged", {score = score, judge = judge})
+		return true
+	end
+	if sameScore then return true end
+
+	local hadCustomWindows = usingCustomWindows
+	usingCustomWindows, lastSnapshot = false, nil
+	if hadCustomWindows then unloadCustomWindowConfig() end
+
+	if openingScore and score:GetScoreKey() == openingScore:GetScoreKey() then
+		curScore, selectedOnline = openingScore, openingIsOnline
+	else
+		curScore, selectedOnline = score, online == true
+	end
+	judge = getJudgeForScore(curScore)
+	playedJudge = judge
+	clearType = getClearType(pn, steps, curScore)
+	updateVectors()
+	clearRatioCache()
+	refreshRescoredPercentage()
+	recountCBs()
+
+	if hadCustomWindows then
+		MESSAGEMAN:Broadcast("UnloadedCustomWindow")
+		MESSAGEMAN:Broadcast("CustomWindowStateChanged")
+	end
+	MESSAGEMAN:Broadcast("ScoreChanged", {score = curScore, judge = judge})
+	return true
+end
+
 local t = Def.ActorFrame {
 	Name = "EvalDecorations",
 	OnCommand = function(self)
@@ -913,7 +921,10 @@ local t = Def.ActorFrame {
 		end
 		self:sleep(0):queuecommand("RefreshJudgeDisplay")
 	end,
-	OffCommand = function(self) HV.ResetManiaMode() end,
+	OffCommand = function(self)
+		if usingCustomWindows then unloadCustomWindowConfig() end
+		HV.ResetManiaMode()
+	end,
 	LoadFont("Common Normal") .. {
 		Name = "OnlineReplayWatermark",
 		InitCommand = function(self)
@@ -922,8 +933,9 @@ local t = Def.ActorFrame {
 			self:settext("ONLINE REPLAY")
 		end,
 		OnCommand = function(self)
-			self:visible(HV.OnlineReplayActive == true)
-		end
+			self:visible(openingIsOnline and curScore == openingScore)
+		end,
+		ScoreChangedMessageCommand = function(self) self:visible(openingIsOnline and curScore == openingScore) end,
 	},
 
 	RefreshJudgeDisplayCommand = function(self)
@@ -961,47 +973,7 @@ local t = Def.ActorFrame {
 			HV.GameplaySessionValid = false
 		end
 	},
-	ScoreChangedMessageCommand = function(self)
-		if scoringVoided then return end
-		pss = STATSMAN:GetCurStageStats():GetPlayerStageStats()
-		
-		local selectedScore = HV.SelectedEvaluationScore
-		local mss = selectedScore or SCOREMAN:GetMostRecentScore()
-		if selectedScore or (mss and mss:GetScore() > 0) then
-			curScore = mss
-		else
-			curScore = pss:GetHighScore()
-		end
-		judge = getJudgeForScore(curScore)
-		playedJudge = judge
-		-- Historical score cards keep a different HighScore object, but the
-		-- evaluation widgets read judgment data from PlayerStageStats. Rebuild
-		-- those stats from the selected score's replay before refreshing them.
-		if curScore and curScore.GetReplay and curScore:GetReplay() then
-			pcall(function()
-				local screen = SCREENMAN:GetTopScreen()
-				local tso = tst[judge] or 1
-				if screen and screen.SetPlayerStageStatsFromReplayData then
-					screen:SetPlayerStageStatsFromReplayData(pss, tso, curScore)
-				elseif screen and screen.RescoreReplay then
-					screen:RescoreReplay(pss, tso, curScore, false)
-				end
-			end)
-		end
-		hsTable = getScoreTable(pn, rate)
-		scoreIndex = 0
-		if hsTable then
-			scoreIndex = getHighScoreIndex(hsTable, curScore)
-		end
-		recScore = getBestScore(pn, scoreIndex, rate, true)
-		clearType = getClearType(pn, steps, curScore)
 
-		updateVectors()
-		clearRatioCache()
-		refreshRescoredPercentage()
-		self:RunCommandsOnChildren(function(self) self:playcommand("SetJudge") end)
-		self:RunCommandsOnChildren(function(self) self:playcommand("On") end)
-	end
 }
 
 -- Rescore data + rescore delegate to the corrected global functions in 08 EtternaUtils.lua.
@@ -1009,16 +981,44 @@ local t = Def.ActorFrame {
 ------------------------------------------------------------
 -- LEFT PANEL: SCORE CARD
 ------------------------------------------------------------
-local function scoreBoard(pn)
+local function loadEvaluationCustomWindow()
+	lastSnapshot = nil
+	if not curScore or not curScore:HasReplayData() then return false end
+	local ok, snapshot = pcall(function()
+		loadCurrentCustomWindowConfig()
+		local screen = SCREENMAN:GetTopScreen()
+		if not screen:RescoreReplay(pss, 1, curScore, customWindowUsesOldestNoteFirst()) then return end
+		local replay = REPLAYS:GetActiveReplay()
+		if not replay or replay:GetScoreKey() ~= curScore:GetScoreKey()
+			or replay:GetChartKey() ~= curScore:GetChartKey() then return end
+		local result = replay:GetLastReplaySnapshot()
+		local possible, earned = result:GetMaxWifeScore(), result:GetCurWifeScore()
+		if possible > 0 and possible < math.huge and earned == earned and math.abs(earned) < math.huge then
+			local counts = result:GetJudgments()
+			local taps = 0
+			for _, name in ipairs({"W1", "W2", "W3", "W4", "W5", "Miss"}) do taps = taps + (counts[name] or 0) end
+			return {percent = 100 * earned / possible, counts = counts, totalTaps = taps}
+		end
+	end)
+	unloadCustomWindowConfig()
+	if not ok or not snapshot then return false end
+	lastSnapshot = snapshot
+	return true
+end
+
+local function createScoreBoard(pn, frameW, pad)
 	local frameX = 10
 	local frameY = 10
-	local frameW = SCREEN_CENTER_X - 20
 	local frameH = SCREEN_HEIGHT - 20
-	local pad = 12
 	local modIconsY = 8
 	local topHeaderY = pad + 10
 
 	local board = Def.ActorFrame {
+		Name = "EvaluationSummary",
+		ScoreChangedMessageCommand = function(self)
+			self:RunCommandsOnChildren(function(child) child:playcommand("On") end)
+			self:RunCommandsOnChildren(function(child) child:playcommand("SetJudge") end)
+		end,
 		InitCommand = function(self)
 			self:xy(frameX - 55, frameY):diffusealpha(0)
 		end,
@@ -1040,90 +1040,52 @@ local function scoreBoard(pn)
 				return
 			end
 
-			if params.Name == "PrevJudge" and judge > 1 then
+			if params.Name == "PrevJudge" then
 				judge = judge - 1
-				clampJudge()
-				refreshRescoredPercentage()
-			elseif params.Name == "NextJudge" and judge < 9 then
+			elseif params.Name == "NextJudge" then
 				judge = judge + 1
-				clampJudge()
-				refreshRescoredPercentage()
+			elseif params.Name == "ResetJudge" then
+				judge = playedJudge
+			else
+				return
 			end
-			if params.Name == "ResetJudge" then
-				judge = getJudgeForScore(curScore)
-				clampJudge()
-				refreshRescoredPercentage()
-				self:RunCommandsOnChildren(function(self) self:playcommand("ResetJudge") end)
-				self:RunCommandsOnChildren(function(self) self:playcommand("SetJudge") end)
-			elseif params.Name ~= "ToggleHands" then
-				refreshRescoredPercentage()
-				self:RunCommandsOnChildren(function(self) self:playcommand("SetJudge") end)
-			end
+			clampJudge()
+			refreshRescoredPercentage()
 			recountCBs()
-			pcall(function()
-				local tso = tst[judge]
-				if tso then
-					local screen = SCREENMAN:GetTopScreen()
-					if screen and screen.GetStageStats then
-						local stats = screen:GetStageStats()
-						if stats and stats.GetPlayerStageStats then
-							local ppss = stats:GetPlayerStageStats()
-							if ppss and screen.SetPlayerStageStatsFromReplayData then
-								screen:SetPlayerStageStatsFromReplayData(ppss, tso, pss:GetHighScore())
-							end
-						end
-					end
-				end
-			end)
+			if params.Name == "ResetJudge" then
+				self:RunCommandsOnChildren(function(child) child:playcommand("ResetJudge") end)
+			end
+			self:RunCommandsOnChildren(function(child) child:playcommand("SetJudge") end)
+			MESSAGEMAN:Broadcast("EvaluationJudgeChanged")
 		end,
 		ToggleCustomWindowsMessageCommand = function(self)
-			if inMulti then return end
-			usingCustomWindows = not usingCustomWindows
-
-			if not usingCustomWindows then
-				unloadCustomWindowConfig()
+			if inMulti or not curScore then return end
+			if usingCustomWindows then
+				usingCustomWindows, lastSnapshot = false, nil
 				MESSAGEMAN:Broadcast("UnloadedCustomWindow")
-				self:RunCommandsOnChildren(function(self) self:playcommand("SetJudge") end)
-				pcall(function()
-					local tso = tst[judge]
-					local screen = SCREENMAN:GetTopScreen()
-					screen:RescoreReplay(pss, tso, curScore or pss:GetHighScore(), false)
-					updateVectors()
-				end)
 			else
-				loadCurrentCustomWindowConfig()
-				pcall(function()
-					local tso = tst[judge]
-					local screen = SCREENMAN:GetTopScreen()
-					local success = screen:RescoreReplay(pss, tso, curScore or pss:GetHighScore(), customWindowUsesOldestNoteFirst())
-					if success then
-						lastSnapshot = REPLAYS:GetActiveReplay():GetLastReplaySnapshot()
-						updateVectors()
-					end
-				end)
-				if lastSnapshot then
+				usingCustomWindows = loadEvaluationCustomWindow()
+				if usingCustomWindows then
 					MESSAGEMAN:Broadcast("LoadedCustomWindow")
+				else
+					SCREENMAN:SystemMessage("Custom windows unavailable for this replay")
 				end
 			end
 			MESSAGEMAN:Broadcast("CustomWindowStateChanged")
-			self:RunCommandsOnChildren(function(self) self:playcommand("UpdateCustomWindowVisibility") end)
+			self:RunCommandsOnChildren(function(child) child:playcommand("UpdateCustomWindowVisibility") end)
 		end,
 		MoveCustomWindowIndexMessageCommand = function(self, params)
 			if not usingCustomWindows then return end
 			moveCustomWindowConfigIndex(params.direction)
-			loadCurrentCustomWindowConfig()
-			pcall(function()
-				local tso = tst[judge]
-				local screen = SCREENMAN:GetTopScreen()
-					local success = screen:RescoreReplay(pss, tso, curScore or pss:GetHighScore(), customWindowUsesOldestNoteFirst())
-				if success then
-					lastSnapshot = REPLAYS:GetActiveReplay():GetLastReplaySnapshot()
-					updateVectors()
-				end
-			end)
-			if lastSnapshot then
+			usingCustomWindows = loadEvaluationCustomWindow()
+			if usingCustomWindows then
 				MESSAGEMAN:Broadcast("LoadedCustomWindow")
+			else
+				MESSAGEMAN:Broadcast("UnloadedCustomWindow")
+				SCREENMAN:SystemMessage("Custom windows unavailable for this replay")
 			end
+			MESSAGEMAN:Broadcast("CustomWindowStateChanged")
+			self:RunCommandsOnChildren(function(child) child:playcommand("UpdateCustomWindowVisibility") end)
 		end,
 		ResetJudgeMessageCommand = function(self) recountCBs() end,
 		SetJudgeMessageCommand = function(self) recountCBs() end,
@@ -1279,18 +1241,17 @@ local function scoreBoard(pn)
 						self.showOnline = true
 						self.transitionDuration = 0.25
 						self.displayDuration = 3
+						self.localOnlineName = DLMAN:IsLoggedIn() and DLMAN:GetUsername() or nil
 						if isOnlineEvaluation() then
-							self.onlineName = HV.OnlineEvaluationName or HV.OnlineReplayName
-						else
-							self.onlineName = DLMAN:IsLoggedIn() and DLMAN:GetUsername() or nil
+							self.replayName = HV.OnlineEvaluationName or HV.OnlineReplayName
 						end
-						if isOnlineEvaluation() and curScore and not self.onlineName then
+						if isOnlineEvaluation() and curScore and not self.replayName then
 							local getter = curScore.GetDisplayName or curScore.GetName
 							if getter then
 								local ok, replayName = pcall(getter, curScore)
 								local placeholder = { ["Player 1"] = true, ["Player 2"] = true, ["Replay"] = true, ["Unknown"] = true, ["???"] = true }
 								if ok and replayName and replayName ~= "" and not placeholder[tostring(replayName)] then
-									self.onlineName = tostring(replayName)
+									self.replayName = tostring(replayName)
 								end
 							end
 						end
@@ -1298,9 +1259,12 @@ local function scoreBoard(pn)
 						if self.offlineName == "" then self.offlineName = nil end
 					end,
 					OnCommand = function(self)
+						self.onlineName = self.localOnlineName
 						if isOnlineEvaluation() then
 							self.showOnline = true
-							self:settext(self.onlineName or "Online Player")
+							local name = curScore and curScore.GetDisplayName and curScore:GetDisplayName()
+							if curScore == openingScore and self.replayName then name = self.replayName end
+							self:settext(name and name ~= "" and name or "Online Player")
 							self:stoptweening():diffusealpha(1)
 							return
 						elseif not self.onlineName then
@@ -1346,7 +1310,8 @@ local function scoreBoard(pn)
 								local timeDiff = os.time() - (HV.LastGameplayTime or 0)
 								local pc = GAMESTATE:GetPlayerState(PLAYER_1):GetPlayerController()
 								local isHuman = (pc == "PlayerController_Human")
-								local isRealPlay = HV.GameplaySessionValid and timeDiff >= 0 and timeDiff < 86400 and isHuman and not GAMESTATE:IsPracticeMode()
+								local isRealPlay = curScore == openingScore and not isReplay and HV.GameplaySessionValid
+									and timeDiff >= 0 and timeDiff < 86400 and isHuman and not GAMESTATE:IsPracticeMode()
 								
 								if isRealPlay and gain > 0 then
 									xpNew = xpOld + gain
@@ -1564,7 +1529,7 @@ local function scoreBoard(pn)
 				end,
 				OnCommand = function(self)
 					if steps then
-						local msd = steps:GetMSD(getCurRateValue(), 1)
+						local msd = steps:GetMSD(curScore and curScore:GetMusicRate() or getCurRateValue(), 1)
 						if HV.ShowMSD() and msd > 0 then
 							self:settextf("%.2f", msd)
 							self:diffuse(HVColor.GetMSDRatingColor(msd))
@@ -1583,7 +1548,7 @@ local function scoreBoard(pn)
 				self:halign(1):valign(0):xy(frameW - pad + 10, pad + 100):zoom(0.65):diffuse(brightText):diffusealpha(0)
 			end,
 			OnCommand = function(self) 
-				self:settext(rate)
+				self:settext(curScore and formatEvalRateValue(curScore:GetMusicRate()) or getCurRate())
 				self:sleep(0.25):linear(0.25):xy(frameW - pad, pad + 100):diffusealpha(1)
 			end
 		},
@@ -1689,11 +1654,11 @@ local function scoreBoard(pn)
 			InitCommand = function(self) self:halign(0):valign(0):xy(1, 25):zoom(0.38):diffuse(subText):diffusealpha(0) end,
 			OnCommand = function(self)
 				self:visible(not usingCustomWindows and not isManiaModeEnabled())
-				self:settext(nearestGradeComparison(rescoredPercentage)):sleep(0.3):linear(0.2):diffusealpha(1)
+				self:settext(nearestGradeComparison(rescoredPercentage or evaluationWifeScore() * 100)):sleep(0.3):linear(0.2):diffusealpha(1)
 			end,
 			SetJudgeCommand = function(self)
 				self:visible(not usingCustomWindows and not isManiaModeEnabled())
-				self:settext(nearestGradeComparison(rescoredPercentage))
+				self:settext(nearestGradeComparison(rescoredPercentage or evaluationWifeScore() * 100))
 			end,
 			ToggleCustomWindowsMessageCommand = function(self) self:playcommand("SetJudge") end,
 			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
@@ -1706,7 +1671,7 @@ local function scoreBoard(pn)
 			InitCommand = function(self) self:halign(0):valign(0):xy(10, 45):zoom(1.05):diffuse(subText):diffusealpha(0) end,
 			OnCommand = function(self)
 				if HV.ShowMSD() then
-					local ssr = scoringVoided and 0 or curScore:GetSkillsetSSR("Overall")
+					local ssr = curScore and curScore:GetSkillsetSSR("Overall") or 0
 					self:settextf("%.2f", ssr)
 					self:diffuse(HVColor.GetMSDRatingColor(ssr))
 					self:sleep(0.4):linear(0.2):diffusealpha(1)
@@ -1782,7 +1747,7 @@ local function scoreBoard(pn)
 					local playedJudge = getJudgeForScore(curScore)
 
 					if playedJudge > 4 then
-						local rst = getRescoreElements(pss, curScore)
+						local rst = getEvaluationRescoreElements()
 						local j4Pct = nil
 						if rst then
 							rst.dvt = getFilteredDvt()
@@ -1805,53 +1770,22 @@ local function scoreBoard(pn)
 				InitCommand = function(self) self:halign(0):valign(0):xy(0,-3):zoom(0.72):diffuse(mainText):diffusealpha(0) end,
 				SetJudgeCommand = function(self)
 					if usingCustomWindows then return end
-					if rescoredPercentage then
-						self:settext(formatEvaluationPercent(rescoredPercentage))
-					end
+					self:settext(formatEvaluationPercent(rescoredPercentage or evaluationWifeScore() * 100))
 				end,
 				ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 				LoadedCustomWindowMessageCommand = function(self)
 					if not lastSnapshot then return end
-					local wife = lastSnapshot:GetWifePercent() * 100
+					local wife = lastSnapshot.percent
 					self:settext(formatWifePercent(wife))
 				end,
 			},
-			LoadFont("Common Normal") .. {
-				Name = "WifeComparison",
-				InitCommand = function(self) self:halign(0):valign(0):xy(0, 20):zoom(0.5):diffuse(subText):diffusealpha(0) end,
-				OnCommand = function(self)
-					local failed = curScore and curScore.GetWifeGrade and curScore:GetWifeGrade() == "Grade_Failed"
-					self:visible(not usingCustomWindows and not isManiaModeEnabled() and not failed)
-					if failed then return end
-					-- Keep both sides on the judge used for the play. The displayed
-					-- judge may change, but it must not move this differential.
-					local current = getComparisonWifePercent(curScore, pss, playedJudge)
-						or rescoredPercentage or (evaluationWifeScore() * 100)
-					local best = getComparisonWifePercent(recScore, pss, playedJudge)
-					if best then
-						local diff = current - best
-						-- Keep small but real Wife% differences visible instead of
-						-- rounding them away to 0.00%.
-						local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
-						self:settextf("%+.3f%%%s", diff, judgeLabel)
-					else self:settext("New!") end
-					self:sleep(0.35):linear(0.15):diffusealpha(1)
-				end,
-				SetJudgeCommand = function(self) self:playcommand("On") end,
-				ToggleCustomWindowsMessageCommand = function(self) self:playcommand("On") end,
-				LoadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
-				UnloadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
-				CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
-				ManiaModeChangedMessageCommand = function(self) self:playcommand("On") end
-			},
-
 			-- CC indicator below Wife%
 			LoadFont("Common Normal") .. {
 				Name = "CCBelowWife",
 				InitCommand = function(self) self:halign(0):valign(0):xy(0, 24):zoom(0.35):diffuse(color("#FF0000")):settext("Chord Cohesion ON"):visible(false) end,
 				OnCommand = function(self)
 					if not isManiaModeEnabled() and curScore and curScore:GetChordCohesion() then
-						self:visible(true)
+						self:visible(true):settext("Chord Cohesion ON")
 					else
 						self:visible(false):settext("")
 					end
@@ -1934,6 +1868,7 @@ local function scoreBoard(pn)
 			InitCommand = function(self) self:xy(110, 29):visible(false) end,
 			OnCommand = function(self)
 				local grade = evaluationGrade()
+				self:visible(grade == "Grade_Failed")
 				if grade == "Grade_Failed" then
 					local totalNotes = songTotalNotes or steps:GetRadarValues(pn):GetValue("RadarCategory_Notes")
 					local encounteredNotes = 0
@@ -1983,14 +1918,15 @@ local function scoreBoard(pn)
 				self:visible(true)
 				local wholePart = self:GetChild("WholeDP")
 				local decimalPart = self:GetChild("DecimalDP")
-				local customDP
-				if usingCustomWindows then
-					local customRst = getRescoreElements(pss, curScore)
-					if customRst then customRst.dvt = getFilteredDvt(); customDP = getCurrentCustomWindowDisplayPercentage(customRst) end
-				end
 				local displayPct = rescoredPercentage or (evaluationWifeScore() * 100)
-				local dp = isManiaModeEnabled() and getOsuManiaLongScore() or customDP or ((displayPct / 100) * songMaxPoints)
-				local targetDP = dp
+				local targetDP = isManiaModeEnabled() and getOsuManiaLongScore() or evaluationWifePoints()
+				if not targetDP then
+					self:SetUpdateFunction(nil)
+					wholePart:settext("—")
+					decimalPart:settext("")
+					self:stoptweening():sleep(0.4):linear(0.15):diffusealpha(1)
+					return
+				end
 				
 				local duration = 0.2
 				local curTime = 0
@@ -2010,7 +1946,7 @@ local function scoreBoard(pn)
 				end)
 			end,
 			SetJudgeCommand = function(self)
-				if HV.ManiaState and HV.ManiaState.enabled then self:playcommand("On") end
+				self:playcommand("On")
 			end,
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
 			LoadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
@@ -2024,15 +1960,6 @@ local function scoreBoard(pn)
 			LoadFont("Common Normal") .. {
 				Name = "WholeDP",
 				InitCommand = function(self) self:halign(0):valign(1):xy(0, 5):zoom(0.8):diffuse(accentColor) end,
-				SetJudgeCommand = function(self)
-					self:GetParent():SetUpdateFunction(nil)
-					if rescoredPercentage then
-						local dp = isManiaModeEnabled() and getOsuManiaLongScore() or ((rescoredPercentage / 100) * songMaxPoints)
-						local decimalPart = self:GetParent():GetChild("DecimalDP")
-						if isManiaModeEnabled() then self:settext(formatOsuManiaLongScore(dp)); decimalPart:settext("")
-						else setDPTextActors(self, decimalPart, dp, (rescoredPercentage >= 99) and 4 or 2) end
-					end
-				end,
 			},
 			-- Decimal part
 			LoadFont("Common Normal") .. {
@@ -2052,62 +1979,13 @@ local function scoreBoard(pn)
 			Name = "DPTotal",
 			InitCommand = function(self) self:halign(0):valign(0):xy(110, 52):zoom(0.35):diffuse(subText) end,
 			OnCommand = function(self)
-				self:visible(not isManiaModeEnabled() and not usingCustomWindows)
-				self:settextf("/ %s", string.format("%.2f", songMaxPoints))
+				local _, possible = evaluationWifePoints()
+				self:visible(possible ~= nil and not isManiaModeEnabled())
+				if possible then self:settextf("/ %.2f", possible) end
 			end,
-			ManiaModeChangedMessageCommand = function(self)
-				self:visible(not isManiaModeEnabled() and not usingCustomWindows)
-				self:settextf("/ %s", string.format("%.2f", songMaxPoints))
-			end,
-			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
-		},
-		-- Personal Best / Record Comparison (Pacemaker Text)
-		LoadFont("Common Normal") .. {
-			Name = "EvaluationPBDisplay",
-			InitCommand = function(self) self:halign(0):valign(0):xy(110, 63):zoom(0.38):diffuse(subText):diffusealpha(0) end,
+			SetJudgeCommand = function(self) self:playcommand("On") end,
 			ManiaModeChangedMessageCommand = function(self) self:playcommand("On") end,
-			ToggleCustomWindowsMessageCommand = function(self) self:playcommand("On") end,
-			LoadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
-			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("On") end,
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("On") end,
-			OnCommand = function(self)
-				if isOnlineEvaluation() or usingCustomWindows or isManiaModeEnabled() then self:settext(""):visible(false); return end
-				self:visible(true)
-				if recScore then
-					local pbPercent = getComparisonWifePercent(recScore, pss, playedJudge)
-					local currentPercent = getComparisonWifePercent(curScore, pss, playedJudge)
-					local pbDp = pbPercent and (pbPercent / 100) * songMaxPoints
-						or (recScore.GetWifePoints and recScore:GetWifePoints() or (recScore:GetWifeScore() * songMaxPoints))
-					local curDp = currentPercent and (currentPercent / 100) * songMaxPoints
-						or (evaluationWifeScore() * songMaxPoints)
-					local diff = curDp - pbDp
-					local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
-
-					self:settextf("%+.2f%s", diff, judgeLabel)
-				else
-					self:settext("New!"):diffuse(accentColor)
-				end
-				self:stoptweening():sleep(0.5):linear(0.2):diffusealpha(1)
-			end
-		},
-
-		-- CC Indicator for Best Score
-		LoadFont("Common Normal") .. {
-			Name = "BestScoreCC",
-			InitCommand = function(self) self:halign(0):valign(0):xy(110, 84):zoom(0.35):diffuse(color("#FF0000")):settext("Beat with Chord Cohesion ON"):visible(false) end,
-			ManiaModeChangedMessageCommand = function(self)
-				local active = not isManiaModeEnabled() and not isOnlineEvaluation() and recScore and recScore:GetChordCohesion()
-				self:visible(active == true)
-				if not active then self:settext("") end
-			end,
-			OnCommand = function(self)
-				if isOnlineEvaluation() then self:visible(false); return end
-				if not isManiaModeEnabled() and recScore and recScore:GetChordCohesion() then
-					self:visible(true)
-				else
-					self:visible(false):settext("")
-				end
-			end
 		},
 		LoadFont("Common Normal") .. {
 			Name = "ScoreComment",
@@ -2139,7 +2017,7 @@ local function scoreBoard(pn)
 		},
 
 		-- MF (Manip Factor)
-		LoadActor("manipfactor") .. {
+		LoadActor("manipfactor", curScore, steps) .. {
 			InitCommand = function(self) self:xy(280, 10) end
 		},
 
@@ -2160,31 +2038,12 @@ local function scoreBoard(pn)
 					self:settext(getClearTypeText(currentCT)):diffuse(getClearTypeColor(currentCT))
 				end
 			},
-			-- Best Clear Type Comparison (Below)
-		Def.ActorFrame {
-			Name = "BestClearType",
-				InitCommand = function(self) self:xy(0, 15) end,
-				
-				LoadFont("Common Normal") .. {
-					Name = "BestLabel",
-					InitCommand = function(self) self:halign(0):valign(0):zoom(0.4) end,
-					OnCommand = function(self)
-						if isOnlineEvaluation() then self:visible(false); return end
-						if hsTable then
-							local recCT = getHighestClearType(pn, steps, hsTable, scoreIndex) or "Clear"
-							self:settextf("Best: %s", getClearTypeText(recCT))
-							self:diffuse(getClearTypeColor(recCT)):diffusealpha(0.6)
-						end
-					end
-				},
-			}
 		},
 	}
+	return board
+end
 
-
-	-- ============================================================
-	-- TWO-COLUMN STATS AREA
-	-- ============================================================
+local function addScoreBoardStats(board, pn, frameW, pad)
 	local statsStartY = pad + 230
 	local col1X = pad
 	local col2X = (frameW / 2) + 5
@@ -2337,7 +2196,7 @@ local function scoreBoard(pn)
 			LoadedCustomWindowMessageCommand = function(self)
 				if lastSnapshot then
 					local jName = v:gsub("TapNoteScore_", "")
-					self:settext(lastSnapshot:GetJudgments()[jName] or 0)
+					self:settext(lastSnapshot.counts[jName] or 0)
 				end
 			end,
 			ResetJudgeMessageCommand = function(self) self:playcommand("On") end
@@ -2354,9 +2213,13 @@ local function scoreBoard(pn)
 				self:settextf("%.1f%%", pct * 100)
 			end,
 			SetJudgeCommand = function(self)
-				if totalTaps > 0 then
+				local total = usingCustomWindows and lastSnapshot and lastSnapshot.totalTaps
+					or (maniaRescore and totalTaps or songTotalNotes)
+				if total > 0 then
 					local count = getEvaluationRescoredJudgeCount(dvt, judge, v, k)
-					self:settextf("%.1f%%", count / totalTaps * 100)
+					self:settextf("%.1f%%", count / total * 100)
+				else
+					self:settext("—")
 				end
 			end,
 			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
@@ -2482,7 +2345,7 @@ local function scoreBoard(pn)
 			InitCommand = function(self) self:halign(1):xy(frameW - pad, hy):zoom(0.45):diffuse(mainText):diffusealpha(0) end,
 			OnCommand = function(self)
 				if i == 1 then self:settext(evaluationHoldCount("HoldNoteScore_Held"))
-				elseif i == 2 then self:settext(evaluationHoldCount("HoldNoteScore_LetGo"))
+				elseif i == 2 then self:settext(evaluationHoldCount("HoldNoteScore_LetGo") + evaluationHoldCount("HoldNoteScore_MissedHold"))
 				elseif i == 3 then self:settext(evaluationTapCount("TapNoteScore_HitMine")) end
 				self:stoptweening():sleep(0.65 + i * 0.05):linear(0.2):diffusealpha(1)
 			end
@@ -2503,17 +2366,13 @@ local function scoreBoard(pn)
 		board[#board + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(1):xy(frameW - pad, ty):zoom(0.45):diffuse(mainText):diffusealpha(0) end,
 			OnCommand = function(self)
-				if i == 1 then self:settextf("%.2fms", wifeMean(dvt))
-				elseif i == 2 then self:settextf("%.2fms", wifeSd(dvt))
-				elseif i == 3 then self:settextf("%.2fms", wifeMax(dvt)) end
+				self:playcommand("UpdateText")
 				self:stoptweening():sleep(0.75 + i * 0.05):linear(0.2):diffusealpha(1)
 			end,
 			SetJudgeCommand = function(self) self:playcommand("UpdateText") end,
 			UpdateTextCommand = function(self)
-				if scoringVoided then self:settext("0.00ms")
-				elseif i == 1 then self:settextf("%.2fms", wifeMean(dvt))
-				elseif i == 2 then self:settextf("%.2fms", wifeSd(dvt))
-				elseif i == 3 then self:settextf("%.2fms", wifeMax(dvt)) end
+				local value = offsetStats[i]
+				self:settext(value and string.format("%.2fms", value) or "—")
 			end
 		}
 	end
@@ -2535,23 +2394,32 @@ local function scoreBoard(pn)
 			OnCommand = function(self)
 				if steps then
 					local possible = steps:GetRadarValues(pn):GetValue(noteTypeRadars[ni])
-					local actual = scoringVoided and 0 or pss:GetRadarActual():GetValue(noteTypeRadars[ni])
-					self:settextf("%d/%d", actual, possible)
+					local radar = noteTypeRadars[ni]
+					local actual = curScore and curScore:GetRadarValues():GetValue(radar) or -1
+					if actual < 0 and curScore == openingScore then actual = stageRadar[radar] end
+					if actual >= 0 then
+						self:settextf("%d/%d", actual, possible)
+					else
+						self:settextf("—/%d", possible)
+					end
 				end
 				self:sleep(0.8 + ni * 0.03):linear(0.15):diffusealpha(1)
 			end
 		}
 	end
-
-	return board
 end
 
-t[#t + 1] = scoreBoard(PLAYER_1)
+do
+	local frameW = SCREEN_CENTER_X - 20
+	local pad = 12
+	local board = createScoreBoard(PLAYER_1, frameW, pad)
+	addScoreBoardStats(board, PLAYER_1, frameW, pad)
+	t[#t + 1] = board
+end
 
 ------------------------------------------------------------
 -- RIGHT PANEL: OFFSET PLOT + SCOREBOARD
 ------------------------------------------------------------
-local inMulti = Var("LoadingScreen") == "ScreenNetEvaluation"
 local rightX = SCREEN_CENTER_X + 10
 local rightW = SCREEN_CENTER_X - 20
 local offsetPlotHeight = 160
@@ -2561,7 +2429,6 @@ t[#t + 1] = Def.ActorFrame {
 	InitCommand = function(self) self:x(rightX + 50):diffusealpha(0) end,
 	OnCommand = function(self)
 		self:sleep(0.25):linear(0.4):x(rightX):diffusealpha(1)
-		SCREENMAN:GetTopScreen():AddInputCallback(scroller)
 		SCREENMAN:GetTopScreen():AddInputCallback(function(event)
 			if event.DeviceInput and event.type == "InputEventType_FirstPress" then
 				if event.DeviceInput.button == "DeviceButton_left mouse button" then
@@ -2647,6 +2514,7 @@ t[#t + 1] = Def.ActorFrame {
 		InitCommand = function(self)
 			self:xy(rightW, 22):zoomto(110, 24):halign(1):diffuse(accentColor):diffusealpha(0.2)
 		end,
+		ScoreChangedMessageCommand = function(self) self:visible(curScore == openingScore) end,
 		UpdateToggleMessageCommand = function(self)
 			self:diffusealpha(showGraphs and 0.4 or 0.2)
 		end,
@@ -2661,7 +2529,8 @@ t[#t + 1] = Def.ActorFrame {
 	LoadFont("Common Normal") .. {
 		InitCommand = function(self)
 			self:xy(rightW - 55, 22):zoom(0.42):settext("Toggle Graphs"):diffuse(brightText)
-		end
+		end,
+		ScoreChangedMessageCommand = function(self) self:visible(curScore == openingScore) end,
 	},
 
 	-- ============================================================
@@ -2670,7 +2539,8 @@ t[#t + 1] = Def.ActorFrame {
 	Def.ActorFrame {
 		Name = "Graphs",
 		InitCommand = function(self) self:xy(0, 40) self:visible(showGraphs) end,
-		ToggleGraphsMessageCommand = function(self) self:visible(showGraphs) end,
+		ToggleGraphsMessageCommand = function(self) self:visible(showGraphs and curScore == openingScore) end,
+		ScoreChangedMessageCommand = function(self) self:visible(showGraphs and curScore == openingScore) end,
 
 		-- Graph Area Label
 		LoadFont("Common Normal") .. {
@@ -2816,19 +2686,23 @@ t[#t + 1] = Def.ActorFrame {
 	Def.ActorFrame {
 		Name = "OffsetPlotWrapper",
 		InitCommand = function(self) self:xy(0, 50) self:visible(not showGraphs) end,
-		ToggleGraphsMessageCommand = function(self) self:visible(not showGraphs) end,
+		ToggleGraphsMessageCommand = function(self) self:visible(not showGraphs or curScore ~= openingScore) end,
+		ScoreChangedMessageCommand = function(self) self:visible(not showGraphs or curScore ~= openingScore) end,
 		
 		LoadActor(THEME:GetPathG("", "OffsetGraph")) .. {
 			InitCommand = function(self)
 				self:xy(10, 20)
 			end,
-			OnCommand = function(self)
+			OnCommand = function(self) self:playcommand("SetJudge") end,
+			SetJudgeCommand = function(self)
 				self:RunCommandsOnChildren(function(child)
 					child:playcommand("Update", {
 						width = rightW - 20,
 						height = 100,
 						song = song,
 						steps = steps,
+						judge = judge,
+						scoreKey = curScore and curScore:GetScoreKey() or "",
 						nrv = nrv,
 						dvt = dvt,
 						ctt = ctt,
@@ -2842,26 +2716,8 @@ t[#t + 1] = Def.ActorFrame {
 					})
 				end)
 			end,
-			SetJudgeMessageCommand = function(self, params)
-				self:RunCommandsOnChildren(function(child)
-					child:playcommand("Update", {
-						width = rightW - 20,
-						height = 100,
-						song = song,
-						steps = steps,
-						nrv = nrv,
-						dvt = dvt,
-						ctt = ctt,
-						ntt = ntt,
-						chordCohesion = curScore and curScore.GetChordCohesion and curScore:GetChordCohesion() or false,
-						columns = steps and steps:GetNumColumns() or 4,
-						cbl = cbl,
-						cbr = cbr,
-						cbm = cbm,
-						showMiddle = showMiddle
-					})
-				end)
-			end,
+			EvaluationJudgeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
+			ScoreChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
 			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
@@ -2887,7 +2743,7 @@ local scoreboardFrame = Def.ActorFrame {
 if inMulti then
 	scoreboardFrame[#scoreboardFrame + 1] = LoadActor("MPscoreboard")
 else
-	scoreboardFrame[#scoreboardFrame + 1] = LoadActor("online_leaderboard")
+	scoreboardFrame[#scoreboardFrame + 1] = LoadActor("online_leaderboard", selectEvaluationScore, openingScore)
 end
 
 t[#t + 1] = scoreboardFrame
@@ -2918,7 +2774,7 @@ t[#t + 1] = Def.ActorFrame {
 	ScoreChangedMessageCommand = function(self) self:playcommand("UpdateScores") end,
 	UpdateScoresCommand = function(self)
 		if self:GetDiffuseAlpha() == 0 then return end
-		local rst = getRescoreElements(pss, curScore)
+		local rst = getEvaluationRescoreElements()
 		if rst then rst.dvt = getFilteredDvt() end
 		
 		local numCustoms = customWindowsConfig and #customWindowsConfig:get_data().customWindowOrder or 0

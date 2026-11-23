@@ -34,6 +34,7 @@ local onlineScores = {}
 local displayedScores = {}
 local onlineLoading = false
 local onlineRequestToken = 0
+local replayRequestToken = 0
 local filterCurrentRate = true
 local showInvalidScores = false
 local displayAsJ4 = PREFSMAN:GetPreference("SortBySSRNormPercent")
@@ -208,18 +209,13 @@ end
 local function ViewScore(score)
 	if not score then return end
 	local ss = score.score or score
-	HV.OnlineEvaluationActive = (currentView == VIEW_ONLINE)
-	HV.OnlineEvaluationName = HV.OnlineEvaluationActive and GetScoreDisplayName(ss) or nil
 	local screen = SCREENMAN:GetTopScreen()
-	-- ShowEvalScreenForScore is a standard Etterna ScreenSelectMusic method for viewing historical scores
 	if screen and screen.ShowEvalScreenForScore then
+		HV.OnlineReplayActive = false
+		HV.OnlineReplayName = nil
+		HV.OnlineEvaluationActive = nil
+		HV.OnlineEvaluationName = nil
 		screen:ShowEvalScreenForScore(ss)
-	else
-		-- Fallback if engine method behaves unexpectedly
-		if STATSMAN:GetCurStageStats() then
-			STATSMAN:GetCurStageStats():GetPlayerStageStats():SetHighScore(ss)
-			SCREENMAN:SetNewScreen("ScreenEvaluation")
-		end
 	end
 end
 
@@ -235,6 +231,23 @@ local function GetOnlineScoreID(score)
 	return nil
 end
 
+local function requestSelectedOnlineReplay(score, onReady)
+	local screen = SCREENMAN:GetTopScreen()
+	replayRequestToken = replayRequestToken + 1
+	local token = replayRequestToken
+	DLMAN:RequestOnlineScoreReplayData(score, function()
+		if token ~= replayRequestToken or SCREENMAN:GetTopScreen() ~= screen or screen:IsTransitioning()
+			or currentView ~= VIEW_ONLINE or not scoresActor or not scoresActor:GetVisible() then return end
+		local steps = GAMESTATE:GetCurrentSteps()
+		if not steps or steps:GetChartKey() ~= score:GetChartKey() then return end
+		if not score:HasReplayData() then
+			ms.ok("Replay not available")
+			return
+		end
+		onReady(screen)
+	end)
+end
+
 local function ShowScoreOffsetPlot(score)
 	-- Keep this compatible with the offset-plot screen provided by Etterna/Til Death.
 	-- The score is intentionally stored before changing screens because the plot
@@ -245,7 +258,7 @@ local function ShowScoreOffsetPlot(score)
 			SCREENMAN:AddNewScreenToTop("ScreenScoreTabOffsetPlot")
 		end
 		if currentView == VIEW_ONLINE and type(DLMAN.RequestOnlineScoreReplayData) == "function" then
-			DLMAN:RequestOnlineScoreReplayData(score, open)
+			requestSelectedOnlineReplay(score, open)
 		else
 			open()
 		end
@@ -336,6 +349,7 @@ local t = Def.ActorFrame {
 		if screen and screen.GetMusicWheel then whee = screen:GetMusicWheel() end
 	end,
 	SelectMusicTabChangedMessageCommand = function(self, params)
+		replayRequestToken = replayRequestToken + 1
 		if params.Tab == "SCORES" then
 			self:visible(not self:GetVisible())
 			if self:GetVisible() then
@@ -362,6 +376,7 @@ local t = Def.ActorFrame {
 		end
 	end,
 	CurrentStepsChangedMessageCommand = function(self)
+		replayRequestToken = replayRequestToken + 1
 		if self:GetVisible() then
 			currentPage = 1
 			if currentView == VIEW_LOCAL then
@@ -846,9 +861,11 @@ t[#t + 1] = Def.ActorFrame {
 				-- Mode toggle
 				if IsMouseOverCentered(SCREEN_CENTER_X + overlayW/2 - 55, SCREEN_CENTER_Y - overlayH/2 + 18, 100, 18) then
 					if currentView == VIEW_LOCAL then
+						replayRequestToken = replayRequestToken + 1
 						currentView = VIEW_ONLINE
 						FetchOnlineScores()
 					else
+						replayRequestToken = replayRequestToken + 1
 						currentView = VIEW_LOCAL
 						GetLocalScores()
 					end
@@ -918,22 +935,16 @@ t[#t + 1] = Def.ActorFrame {
 								end
 							else
 								-- Online Replay: Request data first, then play
-								HV.OnlineReplayActive = true
-								-- Keep the leaderboard author's name alongside the replay. The
-								-- engine may not preserve online score metadata on the replay
-								-- score object after PlayReplay switches screens.
-								HV.OnlineReplayName = GetScoreDisplayName(ss)
-								HV.OnlineEvaluationName = HV.OnlineReplayName
-								DLMAN:RequestOnlineScoreReplayData(
-									ss,
-									function()
-										if ss:GetReplay():HasReplayData() then
-											SCREENMAN:GetTopScreen():PlayReplay(ss)
-										else
-											ms.ok("Replay not available")
-										end
+								requestSelectedOnlineReplay(ss, function(owner)
+									HV.OnlineReplayActive = true
+									HV.OnlineReplayName = GetScoreDisplayName(ss)
+									HV.OnlineEvaluationName = HV.OnlineReplayName
+									if not owner:PlayReplay(ss) then
+										HV.OnlineReplayActive = false
+										HV.OnlineReplayName = nil
+										HV.OnlineEvaluationName = nil
 									end
-								)
+								end)
 							end
 						end
 						return true
@@ -950,7 +961,7 @@ t[#t + 1] = Def.ActorFrame {
 							-- Online name and Wife% cells link to EO. If score metadata
 							-- is incomplete, retain the normal evaluation behavior.
 							if currentView == VIEW_ONLINE and localX >= 30 and localX < 180 then
-								if not OpenOnlinePlayer(ss) then ViewScore(s) end
+								if not OpenOnlinePlayer(ss) and not ShowScoreOffsetPlot(ss) then ms.ok("Replay not available") end
 							elseif currentView == VIEW_ONLINE and localX >= 180 and localX < 280 then
 								-- GetScoreid is the Etterna online-score API method.
 								if not OpenOnlineScore(ss) then ms.ok("Online score page unavailable") end
@@ -958,7 +969,7 @@ t[#t + 1] = Def.ActorFrame {
 								if currentView == VIEW_LOCAL then
 									ViewScore(s)
 								elseif not ShowScoreOffsetPlot(ss) then
-									ViewScore(s)
+									ms.ok("Replay not available")
 								end
 							end
 						end

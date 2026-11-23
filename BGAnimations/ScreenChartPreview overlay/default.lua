@@ -35,7 +35,9 @@ end
 -- References for sync
 local progressRef = nil
 local cdgFrameRef = nil
-local noteField
+local noteCanvas
+local noteSprite
+local hasNoteFrame = false
 local rootRef = nil
 local cdgInfoTimeRef = nil
 local cdgInfoBPMRef  = nil
@@ -94,7 +96,6 @@ local function playFrom(position)
 	audioPath = path
 	requestedPosition = start
 	requestedAt = GetTimeSinceStart()
-	if noteField then noteField:visible(false) end
 	-- Queue an offset in the new play request so it never refers to the old sound.
 	SOUND:PlayMusicPart(path, start, limit - start, 0, 0, true, true, false)
 end
@@ -109,7 +110,6 @@ local function playNativePreview()
 	requestedPosition = start
 	requestedAt = GetTimeSinceStart()
 	previewPosition = start
-	if noteField then noteField:visible(false) end
 	-- Force a reload if the same file is already playing as a short wheel sample.
 	SOUND:StopMusic()
 	ssm:PlayCurrentSongSampleMusic(true, true)
@@ -139,6 +139,12 @@ local footerHeight = 100
 local innerPadding = 10
 local frameWidth = SCREEN_WIDTH - (sidePanelWidth * 2) - (innerPadding * 4)
 local frameHeight = SCREEN_HEIGHT - headerHeight - footerHeight - (innerPadding * 4)
+
+local function updateNoteDisplay()
+	local drawing = not isPaused and not requestedPosition
+	noteCanvas:visible(drawing)
+	noteSprite:visible(hasNoteFrame)
+end
 
 -- Helper: Steps identification
 local stepsTable = {}
@@ -210,14 +216,14 @@ local function updateSync()
 
 	if not isPaused and audioPath and SOUND:GetMusicPath() == audioPath then
 		local position = ssm:GetSampleMusicPosition()
-		local expected = not requestedPosition or math.abs(position - requestedPosition)
-			<= 0.5 + (GetTimeSinceStart() - requestedAt) * getCurRateValue()
+		local expected = not requestedPosition or (position >= requestedPosition
+			and position - requestedPosition <= 0.5 + (GetTimeSinceStart() - requestedAt) * getCurRateValue())
 		if expected then
 			previewPosition = math.max(0, math.min(position, musicLength))
 			requestedPosition = nil
 		end
 	end
-	if noteField then noteField:visible(not isPaused and not requestedPosition) end
+	updateNoteDisplay()
 	local pos = previewPosition
 	applyPreviewPosition(pos)
 
@@ -385,6 +391,7 @@ local function input(event)
 					previewPosition = pos
 				else
 					playFrom(pos)
+					updateNoteDisplay()
 				end
 				applyPreviewPosition(previewPosition)
 				return true
@@ -395,13 +402,16 @@ local function input(event)
 	if btn == "DeviceButton_right mouse button" then
 		isPaused = not isPaused
 		if isPaused then
+			if audioPath and not requestedPosition and SOUND:GetMusicPath() == audioPath then
+				previewPosition = math.max(0, math.min(ssm:GetSampleMusicPosition(), musicLength))
+			end
 			audioPath = nil
 			requestedPosition = nil
 			SOUND:StopMusic()
 		else
 			playFrom(previewPosition)
 		end
-		if noteField then noteField:visible(false) end
+		updateNoteDisplay()
 		local text = rootRef:GetChild("NoteFieldContainer"):GetChild("PausedText")
 		text:diffusealpha(isPaused and 1 or 0)
 	end
@@ -987,6 +997,7 @@ local function reloadPreviewChart(self)
 	end
 	local rate = getCurRateValue()
 	if selected == steps and loadedRate == rate then return end
+	if selected ~= steps then hasNoteFrame = false end
 	steps, loadedRate = selected, rate
 	local path = steps:GetPreviewMusicPath()
 	if path ~= chartPreviewPath then
@@ -1003,6 +1014,7 @@ local function reloadPreviewChart(self)
 		densityVectors = steps:GetCDGraphVectors(rate)
 	end
 	self:RunCommandsOnChildren(function(child) child:playcommand("Reload") end)
+	updateNoteDisplay()
 end
 
 local t = Def.ActorFrame {
@@ -1054,6 +1066,7 @@ local t = Def.ActorFrame {
 		returnScreen = nil
 		loadedRate = nil
 		isPaused = false
+		hasNoteFrame = false
 		lastDirection = nil
 		previousRedirection = SCREENMAN:get_input_redirected(PLAYER_1)
 		SCREENMAN:set_input_redirected(PLAYER_1, true)
@@ -1103,32 +1116,39 @@ local t = Def.ActorFrame {
 
 	densityGraphComp(),
 
-	-- Center NoteField Container
 	Def.ActorFrame {
 		Name = "NoteFieldContainer",
-		-- USER: match receptor up to match bottom line of middle area
-		-- We move the container slightly up or shift the receptors.
-		-- Receptors are at "0" in the NoteFieldPreview.
-		-- If container is at SCREEN_CENTER_Y - 20, receptors are also there.
-		-- Middle area bottom line is likely the top of the Chord Density Graph?
-		-- Or maybe the user means the top border of the NoteFieldContainer.
 		InitCommand = function(self) self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y - 40) end,
 		ReloadCommand = function(self) self:RunCommandsOnChildren(function(c) c:playcommand("Reload") end) end,
 		Def.Quad { InitCommand = function(self) self:zoomto(frameWidth, frameHeight):diffuse(bgDark):diffusealpha(0.5) end },
+		Def.ActorFrameTexture {
+			Name = "NoteFieldCanvas",
+			InitCommand = function(self)
+				noteCanvas = self
+				self:setsize(frameWidth, frameHeight):EnableAlphaBuffer(true):EnableDepthBuffer(true):Create():visible(false)
+				self:SetDrawFunction(function(canvas)
+					canvas:GetChild("NoteField"):Draw()
+					hasNoteFrame = true
+					if noteSprite then noteSprite:visible(true) end
+				end)
+			end,
+			Def.NoteFieldPreview {
+				Name = "NoteField",
+				DrawDistanceBeforeTargetsPixels = 1200, DrawDistanceAfterTargetsPixels = 0,
+				InitCommand = function(self) self:xy(frameWidth / 2, frameHeight / 2):zoom(0.7) end,
+				ReloadCommand = function(self) if steps then self:LoadNoteData(steps) end end,
+			},
+		},
+		Def.Sprite {
+			Name = "NoteFieldImage",
+			InitCommand = function(self)
+				noteSprite = self
+				self:visible(false)
+			end,
+			OnCommand = function(self) self:SetTexture(noteCanvas:GetTexture()):zoomto(frameWidth, frameHeight) end,
+		},
 		Def.Quad { InitCommand = function(self) self:zoomto(frameWidth, 1):y(-frameHeight/2):diffuse(accentColor):diffusealpha(0.3) end },
 		Def.Quad { InitCommand = function(self) self:zoomto(frameWidth, 1):y(frameHeight/2):diffuse(accentColor):diffusealpha(0.3) end },
-		
-		Def.NoteFieldPreview {
-			Name = "NoteField",
-			DrawDistanceBeforeTargetsPixels = 1200, DrawDistanceAfterTargetsPixels = 0,
-			-- Move Y up so receptors (at 0) align near the top border of the box if desired,
-			-- OR just move Y to 0 so receptors are at SCREEN_CENTER_Y - 40.
-			InitCommand = function(self)
-				noteField = self
-				self:zoom(0.7):y(0):visible(false)
-			end,
-			ReloadCommand = function(self) if steps then self:LoadNoteData(steps) end end
-		},
 		
 		LoadFont("Common Large") .. {
 			Name = "PausedText",

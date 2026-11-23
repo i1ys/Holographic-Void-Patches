@@ -3,6 +3,7 @@
 -- Features: SSR, Judgment tally (no labels), ClearType lamp, sort by SSR.
 -- NEW: Clickable score cards to view different score data
 
+local selectEvaluationScore = ...
 local lines = 4
 local pn = GAMESTATE:GetEnabledPlayers()[1]
 local pss = STATSMAN:GetCurStageStats():GetPlayerStageStats()
@@ -73,15 +74,9 @@ end
 
 -- Function to select a score when clicked
 local function selectScore(idx)
-	if not hsTable[idx] then return end
+	if not hsTable[idx] or not selectEvaluationScore or not selectEvaluationScore(hsTable[idx]) then return end
 	selectedScoreIndex = idx
-	-- Set the score for viewing in the main eval screen
-	if hsTable[idx] then
-		HV.SelectedEvaluationScore = hsTable[idx]
-		if HV.SelectEvaluationScore then HV.SelectEvaluationScore(hsTable[idx]) end
-		MESSAGEMAN:Broadcast("ScoreChanged")
-		MESSAGEMAN:Broadcast("UpdateLocalScoreboard")
-	end
+	MESSAGEMAN:Broadcast("UpdateLocalScoreboard")
 end
 
 -- HV Color palette

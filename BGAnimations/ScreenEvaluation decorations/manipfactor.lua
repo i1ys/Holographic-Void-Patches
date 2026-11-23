@@ -5,10 +5,7 @@ local t = Def.ActorFrame {}
 -- Do not expose replay-derived analysis for CPU/autoplay evaluations.
 if HV.EvaluationScoringVoided then return t end
 
-local score = SCOREMAN:GetMostRecentScore()
-if not score then
-    score = SCOREMAN:GetTempReplayScore()
-end
+local score, steps = ...
 
 local aspectRatio = GetScreenAspectRatio()
 
@@ -328,6 +325,7 @@ t[#t + 1] = Def.ActorFrame {
             self:diffuse(HVColor.TextSub)
         end,
         MouseOverCommand = function(self)
+            if not mf[1] then return end
             local mfd = self:GetParent():GetChild("ManipFactor")
             if aspectRatio < 1.6 then
                 mfd:settextf("(L: %2.1f%% R: %2.1f%%) %2.1f%%", mf[2] * 100, mf[3] * 100, mf[1] * 100)
@@ -336,6 +334,7 @@ t[#t + 1] = Def.ActorFrame {
             end
         end,
         MouseOutCommand = function(self)
+            if not mf[1] then return end
             self:GetParent():GetChild("ManipFactor"):settextf("%2.1f%%", mf[1] * 100)
         end
     },
@@ -349,26 +348,25 @@ t[#t + 1] = Def.ActorFrame {
             self:maxwidth(480)
             self:queuecommand("Set")
         end,
-        GetScoreMessageCommand = function(self, params)
-            if params.score then
-                score = params.score
-            end
-            self:queuecommand("Set")
+        ScoreChangedMessageCommand = function(self, params)
+            score = params.score
+            self:playcommand("Set")
         end,
         SetCommand = function(self)
-            -- Get replay data
-            local replay
-            if score["GetReplay"] == nil then -- for better compatibility
-                replay = score
-            else
-                replay = score:GetReplay()
-            end
-            local rate = SCREENMAN:GetTopScreen():GetReplayRate()
-            td = GAMESTATE:GetCurrentSteps():GetTimingData()
+            mf = {}
+            key0Data, key1Data, key2Data, key3Data = false, false, false, false
+            self:settext("—"):diffuse(HVColor.TextSub)
+            if not score or not steps or steps:GetNumColumns() ~= 4 then return end
+            local replay = score:GetReplay()
+            local rate = score:GetMusicRate()
+            if not replay or not replay:LoadAllData() or rate <= 0 then return end
+            td = steps:GetTimingData()
             dvt = replay:GetOffsetVector()
             ctt = replay:GetTrackVector()
             nrt = replay:GetNoteRowVector()
             ntt = replay:GetTapNoteTypeVector()
+            if #dvt == 0 or #ctt ~= #dvt or #nrt ~= #dvt or #ntt ~= #dvt then return end
+            wuab = {}
             -- Convert noterows to timing in ms
             for i = 1, #nrt do
                 wuab[i] = td:GetElapsedTimeFromNoteRow(nrt[i]) / rate * 1000
@@ -381,6 +379,7 @@ t[#t + 1] = Def.ActorFrame {
             self:settextf("%2.1f%%", mf[1] * 100)
         end,
         MouseOverCommand = function(self)
+            if not mf[1] then return end
             if aspectRatio < 1.6 then
                 self:settextf("(L: %2.1f%% R: %2.1f%%) %2.1f%%", mf[2] * 100, mf[3] * 100, mf[1] * 100)
             else
@@ -388,6 +387,7 @@ t[#t + 1] = Def.ActorFrame {
             end
         end,
         MouseOutCommand = function(self)
+            if not mf[1] then return end
             self:settextf("%2.1f%%", mf[1] * 100)
         end
     }

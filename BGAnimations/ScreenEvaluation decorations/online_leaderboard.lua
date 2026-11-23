@@ -4,68 +4,36 @@
 -- All Rates: all rates, sorted by SSR.
 -- maybe merge this with MPscoreboard.lua?
 
-local pn = GAMESTATE:GetEnabledPlayers()[1]
+local selectEvaluationScore, score = ...
 local steps = GAMESTATE:GetCurrentSteps()
-local profile = PROFILEMAN:GetProfile(pn)
-local pss = STATSMAN:GetCurStageStats():GetPlayerStageStats()
-local score = pss:GetHighScore()
-
-local hsTable = getScoreTable(pn, getCurRate()) or {}
-
--- HV Color palette
+local chartKey = steps and steps:GetChartKey()
+local viewedRate = score and score:GetMusicRate() or getCurRateValue()
 local accentColor = HVColor.Accent
 local brightText = color("1,1,1,1")
 local dimText = brightText
 local subText = brightText
 local mainText = brightText
-local bgCard = color("0.06,0.06,0.06,0.7")
+local selectedScoreKey = score and score:GetScoreKey()
 
-local offsetScoreID
-
-local lbActor
+local owner, lbActor
 local isLocal = true
-local currentCountry = "Global"
+local allLocalRates, allOnlineRates = false, false
+local localScores, onlineScores = {}, nil
+local leaderboardState = "idle"
+local replayRequest = 0
+local leaderboardRequest = 0
 local scoresPerPage = 4
-local maxPages = math.max(1, math.ceil(#hsTable / scoresPerPage))
-local curPage = 1
-local alreadyPulled = false
-local scoreList = hsTable
-local showAllRates = false
+local maxPages, curPage = 1, 1
+local scoreList = {}
 local showInvalidScores = false
 
-local function isOnlineScoreInvalid(s)
-	if not s then return false end
-	if type(s.GetEtternaValid) == "function" then
-		local ok, valid = pcall(s.GetEtternaValid, s)
-		if ok and valid == false then return true end
-	end
-	return IsScoreInvalid(s)
+local function showAllRates()
+	if isLocal then return allLocalRates end
+	return allOnlineRates
 end
 
-local function getViewedRateValue()
-	if score and score.GetMusicRate then
-		local viewedRate = score:GetMusicRate()
-		if type(viewedRate) == "number" and viewedRate > 0 then
-			return viewedRate
-		end
-	end
-	return getCurRateValue and getCurRateValue() or 1.0
-end
-
-local function getViewedRateString()
-	return string.format("%.2fx", getViewedRateValue())
-end
-
-local function isSameRateValue(a, b)
-	return math.abs((a or 0) - (b or 0)) < 0.001
-end
-
-local function isSameRateScore(s, targetRateValue, targetRateString)
-	if not s then return false end
-	if s.GetMusicRate and isSameRateValue(s:GetMusicRate(), targetRateValue) then
-		return true
-	end
-	return getRate and getRate(s) == targetRateString
+local function isOnlineScoreInvalid(score)
+	return not score:GetEtternaValid() or score:GetChordCohesion()
 end
 
 local function getJudge(score)
@@ -80,162 +48,84 @@ local function getJudge(score)
 	return "J4"
 end
 
-local function updateLeaderBoardForCurrentChart()
-	alreadyPulled = true
-	if steps then
-		DLMAN:RequestChartLeaderBoardFromOnline(
-			steps:GetChartKey(),
-			function(leaderboard)
-				if lbActor then
-					lbActor:queuecommand("SetFromLeaderboard", leaderboard)
-				end
+local function refreshScores(preferredKey)
+	scoreList = HV.Score.BuildEvaluationLeaderboard(
+		isLocal and localScores or (onlineScores or {}), viewedRate, showAllRates(),
+		not isLocal, showInvalidScores
+	)
+	maxPages = math.max(1, math.ceil(#scoreList / scoresPerPage))
+	curPage = 1
+	if preferredKey then
+		for i, entry in ipairs(scoreList) do
+			if entry.key == preferredKey then
+				curPage = math.ceil(i / scoresPerPage)
+				break
 			end
-		)
-	else
-		if lbActor then
-			lbActor:queuecommand("SetFromLeaderboard", {})
 		end
 	end
-end
-
-local function syncOnlineRateFilter()
-	if not DLMAN then return end
-	if DLMAN.SetRateFilter then
-		-- DLMAN's boolean semantics are inverted relative to the original theme-side assumption:
-		-- `true` returns all rates, `false` keeps the current-rate filter active.
-		pcall(function() DLMAN:SetRateFilter(showAllRates) end)
-	elseif DLMAN.ToggleRateFilter then
-		pcall(function() DLMAN:ToggleRateFilter() end)
-	end
+	if lbActor then lbActor:playcommand("RefreshUI") end
 end
 
 local function movePage(n)
-	if maxPages <= 1 then return end
-	if n > 0 then
-		curPage = ((curPage + n - 1) % maxPages) + 1
-	else
-		curPage = ((curPage + n + maxPages - 1) % maxPages) + 1
-	end
+	if maxPages <= 1 then return false end
+	curPage = ((curPage + n - 1) % maxPages) + 1
 	MESSAGEMAN:Broadcast("UpdateOnlineList")
+	return true
 end
 
-local function selectLocalScore(index)
-	local selected = scoreList and scoreList[index]
-	if not isLocal or not selected then return end
-	-- Keep the selected score in theme state; this Etterna build exposes no
-	-- SCOREMAN setter for replacing the stage's most-recent score.
-	HV.SelectedEvaluationScore = selected
-	if HV.SelectEvaluationScore then HV.SelectEvaluationScore(selected) end
-	MESSAGEMAN:Broadcast("ScoreChanged")
-end
-
-local function selectLocalScoreAtMouse(self)
-	if not isLocal then return false end
-	local mx, my = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
+local function getHoveredRow(self)
 	for i = 1, scoresPerPage do
 		local row = self:GetChild("OnlineRow" .. i)
-		if row and row:GetVisible() then
-			local x, y = row:GetTrueX(), row:GetTrueY()
-			local w, h = SCREEN_CENTER_X - 40, 42
-			if mx >= x and mx <= x + w and my >= y and my <= y + h then
-			selectLocalScore((curPage - 1) * scoresPerPage + i)
-			return true
-			end
+		local bg = row and row:GetChild("RowBackground")
+		if row and row:IsVisible() and bg and isOver(bg) then
+			return scoreList[(curPage - 1) * scoresPerPage + i]
 		end
 	end
-	return false
 end
 
-local function refreshScores(self)
-	local targetRateValue = getViewedRateValue()
-	local targetRate = getViewedRateString()
-	if isLocal then
-		scoreList = {}
-		local ck = (steps and steps.GetChartKey) and steps:GetChartKey() or ""
-		local scoresByKey = (ck ~= "") and SCOREMAN:GetScoresByKey(ck) or nil
+local function isCurrentRequest(screen)
+	return lbActor and owner == screen and SCREENMAN:GetTopScreen() == screen
+		and not screen:IsTransitioning() and not isLocal
+end
 
-		if scoresByKey then
-			for rateStr, rateScores in pairs(scoresByKey) do
-				-- If showing all rates, add everything. 
-				-- Otherwise, only add scores for the current rate.
-				if showAllRates or rateStr == targetRate then
-					local scores = rateScores:GetScores()
-					for j = 1, #scores do
-						scoreList[#scoreList + 1] = scores[j]
-					end
-				end
-			end
-		end
-
-		-- Exact-rate fallback only. Do not leak nearby-rate scores into Current Rate.
-		if #scoreList == 0 and not showAllRates and hsTable then
-			for i = 1, #hsTable do
-				if isSameRateScore(hsTable[i], targetRateValue, targetRate) then
-					scoreList[#scoreList + 1] = hsTable[i]
-				end
-			end
-		end
-
-		-- Local sorting:
-		-- Current Rate -> J4/Wife%-first within the current rate only.
-		-- All Rates -> SSR-first across every available rate.
-		table.sort(scoreList, function(a, b)
-			if showAllRates then
-				local sa = a:GetSkillsetSSR("Overall") or 0
-				local sb = b:GetSkillsetSSR("Overall") or 0
-				if math.abs(sa - sb) > 0.0001 then return sa > sb end
-				return (getJ4NormalizedPercentage(a) or 0) > (getJ4NormalizedPercentage(b) or 0)
-			else
-				local wa = getJ4NormalizedPercentage(a) or 0
-				local wb = getJ4NormalizedPercentage(b) or 0
-				if math.abs(wa - wb) > 0.000001 then return wa > wb end
-				return (a:GetSkillsetSSR("Overall") or 0) > (b:GetSkillsetSSR("Overall") or 0)
+local function selectRow(entry)
+	if not entry then return false end
+	if not selectEvaluationScore(entry.score, not isLocal) then return false end
+	replayRequest = replayRequest + 1
+	if not isLocal and entry.score:HasReplayData() then
+		local token, screen = replayRequest, owner
+		DLMAN:RequestOnlineScoreReplayData(entry.score, function(replayScore)
+			if not isCurrentRequest(screen) or token ~= replayRequest or selectedScoreKey ~= entry.key then return end
+			if replayScore and replayScore:GetChartKey() == chartKey and replayScore:GetScoreKey() == entry.key then
+				selectEvaluationScore(replayScore, true, true)
 			end
 		end)
-	else
-		local rawOnlineScores = DLMAN:GetChartLeaderBoard(steps:GetChartKey(), currentCountry)
-		scoreList = {}
-		if rawOnlineScores then
-			for i = 1, #rawOnlineScores do
-				local s = rawOnlineScores[i]
-				if (showInvalidScores or not isOnlineScoreInvalid(s)) and (showAllRates or isSameRateScore(s, targetRateValue, targetRate)) then
-					scoreList[#scoreList + 1] = s
-				end
-			end
-		end
-		if scoreList ~= nil and #scoreList == 0 and not alreadyPulled then
-			updateLeaderBoardForCurrentChart()
-		end
-		if scoreList then
-			-- Online sorting:
-			-- Current Rate -> Wife%-first within the current rate only.
-			-- All Rates -> SSR-first across every available rate.
-			table.sort(scoreList, function(a, b)
-				if showAllRates then
-					local sa = a:GetSkillsetSSR("Overall") or 0
-					local sb = b:GetSkillsetSSR("Overall") or 0
-					if math.abs(sa - sb) > 0.0001 then return sa > sb end
-					return (a:GetWifeScore() or 0) > (b:GetWifeScore() or 0)
-				else
-					local wa = a:GetWifeScore() or 0
-					local wb = b:GetWifeScore() or 0
-					if math.abs(wa - wb) > 0.000001 then return wa > wb end
-					return (a:GetSkillsetSSR("Overall") or 0) > (b:GetSkillsetSSR("Overall") or 0)
-				end
-			end)
-		end
 	end
-	curPage = 1
-	if scoreList ~= nil then
-		maxPages = math.max(1, math.ceil(#scoreList / scoresPerPage))
-	else
-		maxPages = 1
-		scoreList = {}
-	end
+	return true
+end
+
+local function loadOnlineScores()
+	if leaderboardState == "loading" or leaderboardState == "ready" or not chartKey then return end
+	leaderboardState = "loading"
+	leaderboardRequest = leaderboardRequest + 1
+	local token, screen = leaderboardRequest, owner
+	lbActor:GetChild("LeaderboardRequestTimer"):stoptweening():sleep(12):queuecommand("Expire")
+	DLMAN:RequestChartLeaderBoardFromOnline(chartKey, function(scores)
+		if token ~= leaderboardRequest or not lbActor or owner ~= screen
+			or SCREENMAN:GetTopScreen() ~= screen or screen:IsTransitioning() then return end
+		lbActor:GetChild("LeaderboardRequestTimer"):stoptweening()
+		onlineScores = scores
+		leaderboardState = type(scores) == "table" and "ready" or "unavailable"
+		if not isLocal then refreshScores(selectedScoreKey) end
+	end)
+end
+
+local function setAllRates(allRates)
+	if isLocal then allLocalRates = allRates else allOnlineRates = allRates end
+	refreshScores(selectedScoreKey)
 end
 
 local function scoreItem(i)
-	local rowIndex = 0
 	return Def.ActorFrame {
 		Name = "OnlineRow" .. i,
 		InitCommand = function(self) self:y((i - 1) * 46):diffusealpha(0) end,
@@ -244,7 +134,6 @@ local function scoreItem(i)
 		RefreshOnlineScoreboardMessageCommand = function(self) self:playcommand("UpdateRow") end,
 		UpdateRowCommand = function(self)
 			local idx = (curPage - 1) * scoresPerPage + i
-			rowIndex = idx
 			if scoreList and scoreList[idx] then
 				self:visible(true)
 				self:stoptweening():diffusealpha(0):sleep(i * 0.05):linear(0.15):diffusealpha(1)
@@ -254,34 +143,22 @@ local function scoreItem(i)
 			end
 		end,
 
-		-- The visible card spans the entire leaderboard width.  Keep the hitbox
-		-- on the row itself so clicking any part of a local card opens its stats.
-		Def.Quad {
-			Name = "ClickArea",
-			InitCommand = function(self)
-				self:halign(0):valign(0):zoomto(SCREEN_CENTER_X - 40, 42):diffusealpha(0)
-			end,
-			MouseDownCommand = function(self)
-				if isOver(self) then selectLocalScore(rowIndex) end
-			end,
-			-- ScreenEvaluation's shared mouse callback broadcasts this message
-			-- for every left click; use the theme-wide hit test here.
-			MouseLeftClickMessageCommand = function(self)
-				if isOver(self) then selectLocalScore(rowIndex) end
-			end
-		},
-
 		-- Row BG
 		Def.Quad {
+			Name = "RowBackground",
 			InitCommand = function(self)
 				self:halign(0):valign(0):zoomto(SCREEN_CENTER_X - 40, 42):diffuse(color("0,0,0,0.4"))
 			end,
 			SetScoreCommand = function(self, params)
-				local s = scoreList[params.index]
-				self:diffuse(not isLocal and isOnlineScoreInvalid(s) and color("#7A1018") or color("0,0,0,0.4"))
+				local s = scoreList[params.index].score
+				if not isLocal and isOnlineScoreInvalid(s) then
+					self:diffuse(color("#7A1018"))
+				elseif scoreList[params.index].key == selectedScoreKey then
+					self:diffuse({accentColor[1], accentColor[2], accentColor[3], 0.26})
+				else
+					self:diffuse(color("0,0,0,0.4"))
+				end
 			end,
-			WheelUpSlowMessageCommand = function(self) if isOver(self) then movePage(-1) end end,
-			WheelDownSlowMessageCommand = function(self) if isOver(self) then movePage(1) end end
 		},
 
 		-- Rank #
@@ -296,7 +173,7 @@ local function scoreItem(i)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:xy(220, 8):zoom(0.32):halign(0):diffuse(subText) end,
 			SetScoreCommand = function(self, params)
-				local s = scoreList[params.index]
+				local s = scoreList[params.index].score
 				local ct = (not isLocal and isOnlineScoreInvalid(s)) and "Invalid" or getDetailedClearType(s)
 				self:settext(ct):diffuse(HVColor.GetClearTypeColor(ct))
 			end
@@ -306,7 +183,7 @@ local function scoreItem(i)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:xy(40, 8):zoom(0.4):halign(0):diffuse(brightText) end,
 			SetScoreCommand = function(self, params)
-				local s = scoreList[params.index]
+				local s = scoreList[params.index].score
 				if isLocal then
 					local judgeStr = ""
 					if not PREFSMAN:GetPreference("SortBySSRNormPercent") then
@@ -328,7 +205,7 @@ local function scoreItem(i)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:xy(40, 26):zoom(0.5):halign(0) end,
 			SetScoreCommand = function(self, params)
-				local s = scoreList[params.index]
+				local s = scoreList[params.index].score
 				local grade = s:GetWifeGrade()
 				self:settext(HV.GetGradeName(ToEnumShortString(grade)))
 				self:diffuse(HVColor.GetGradeColor(ToEnumShortString(grade)))
@@ -339,7 +216,7 @@ local function scoreItem(i)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:xy(90, 26):zoom(0.5):halign(0):diffuse(mainText) end,
 			SetScoreCommand = function(self, params)
-				local ws = scoreList[params.index]:GetWifeScore()
+				local ws = scoreList[params.index].wife
 				if ws >= 0.99 then
 					self:settextf("%.4f%%", math.floor(ws * 1000000) / 10000)
 				else
@@ -356,7 +233,7 @@ local function scoreItem(i)
 					self:settext("")
 					return
 				end
-				local ssr = scoreList[params.index]:GetSkillsetSSR("Overall")
+				local ssr = scoreList[params.index].ssr
 				if ssr > 0 then
 					self:settextf("%.2f", ssr)
 					self:diffuse(HVColor.GetMSDRatingColor(ssr))
@@ -370,7 +247,7 @@ local function scoreItem(i)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:xy(SCREEN_CENTER_X - 50, 26):zoom(0.35):halign(1):diffuse(subText) end,
 			SetScoreCommand = function(self, params)
-				local s = scoreList[params.index]
+				local s = scoreList[params.index].score
 				self:settext(HV.GetRidiculousTallyString(s))
 			end
 		},
@@ -379,8 +256,8 @@ local function scoreItem(i)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:xy(135, 24):zoom(0.3):halign(0):diffuse(mainText) end,
 			SetScoreCommand = function(self, params)
-				if showAllRates then
-					local s = scoreList[params.index]
+				if showAllRates() then
+					local s = scoreList[params.index].score
 					self:settextf("%.2fx", s:GetMusicRate()):visible(true)
 				else
 					self:visible(false)
@@ -388,37 +265,63 @@ local function scoreItem(i)
 			end
 		},
 
-
-		MouseDownCommand = function(self, params)
-			self:RunCommandsOnChildren(function(child) child:playcommand("MouseDown", params) end)
-		end,
 	}
 end
 
 local t = Def.ActorFrame {
 	Name = "OnlineLeaderboard",
-	InitCommand = function(self) lbActor = self self:diffusealpha(0) end,
+	InitCommand = function(self) self:diffusealpha(0) end,
 	OnCommand = function(self)
+		lbActor, owner = self, SCREENMAN:GetTopScreen()
 		self:sleep(0.6):linear(0.2):diffusealpha(1)
-		refreshScores(self)
-		self:playcommand("RefreshUI")
-		SCREENMAN:GetTopScreen():AddInputCallback(function(event)
-			if not self:GetVisible() then return end
-			if event.type == "InputEventType_FirstPress" then
-				if event.button == "MenuLeft" or event.DeviceInput.button == "DeviceButton_left" or event.button == "Left" then movePage(-1)
-				elseif event.button == "MenuRight" or event.DeviceInput.button == "DeviceButton_right" or event.button == "Right" then movePage(1) end
-				
-				if event.DeviceInput.button == "DeviceButton_left mouse button" then
-					if selectLocalScoreAtMouse(self) then return true end
-					self:RunCommandsOnChildren(function(child) child:playcommand("MouseDown", {event = event}) end)
+		if chartKey then
+			for _, bucket in pairs(SCOREMAN:GetScoresByKey(chartKey) or {}) do
+				for _, localScore in ipairs(bucket:GetScores()) do
+					localScores[#localScores + 1] = localScore
 				end
 			end
+		end
+		refreshScores(selectedScoreKey)
+		owner:AddInputCallback(function(event)
+			if SCREENMAN:GetTopScreen() ~= owner or not self:IsVisible() or not event.DeviceInput
+				or event.type ~= "InputEventType_FirstPress" then return false end
+			local button = event.DeviceInput.button
+			if event.button == "MenuLeft" or button == "DeviceButton_left" or event.button == "Left" then return movePage(-1) end
+			if event.button == "MenuRight" or button == "DeviceButton_right" or event.button == "Right" then return movePage(1) end
+			if button == "DeviceButton_mousewheel up" or button == "DeviceButton_mousewheel down" then
+				return getHoveredRow(self) and movePage(button == "DeviceButton_mousewheel up" and -1 or 1) or false
+			end
+			if button == "DeviceButton_left mouse button" then
+				if selectRow(getHoveredRow(self)) then return true end
+				for _, tab in ipairs({"LocalTab", "OnlineTab", "CurrentRateTab", "AllRatesTab", "InvalidToggle"}) do
+					local target = self:GetChild(tab)
+					if target:IsVisible() and isOver(target) then
+						target:playcommand("MouseDown")
+						return true
+					end
+				end
+			end
+			return false
 		end)
 	end,
-	SetFromLeaderboardCommand = function(self, leaderboard)
-		refreshScores(self)
+	OffCommand = function(self)
+		lbActor, owner = nil, nil
+		replayRequest = replayRequest + 1
+		leaderboardRequest = leaderboardRequest + 1
+	end,
+	ScoreChangedMessageCommand = function(self, params)
+		selectedScoreKey = params.score:GetScoreKey()
 		self:playcommand("RefreshUI")
 	end,
+	Def.Actor {
+		Name = "LeaderboardRequestTimer",
+		ExpireCommand = function()
+			if leaderboardState ~= "loading" then return end
+			leaderboardRequest = leaderboardRequest + 1
+			leaderboardState = "unavailable"
+			if not isLocal then refreshScores() end
+		end,
+	},
 	RefreshUICommand = function(self)
 		MESSAGEMAN:Broadcast("RefreshOnlineScoreboard")
 	end,
@@ -438,8 +341,8 @@ local t = Def.ActorFrame {
 		MouseDownCommand = function(self)
 			if isOver(self) and not isLocal then
 				isLocal = true
-				refreshScores(self:GetParent())
-				self:GetParent():playcommand("RefreshUI")
+				replayRequest = replayRequest + 1
+				refreshScores(selectedScoreKey)
 			end
 		end
 	},
@@ -457,13 +360,10 @@ local t = Def.ActorFrame {
 			self:diffusealpha(not isLocal and 0.4 or 0.1)
 		end,
 		MouseDownCommand = function(self)
-			if isOver(self) and isLocal and DLMAN:IsLoggedIn() then
+			if isOver(self) and DLMAN:IsLoggedIn() and chartKey then
 				isLocal = false
-				syncOnlineRateFilter()
-				alreadyPulled = false
-				updateLeaderBoardForCurrentChart()
-				refreshScores(self:GetParent())
-				self:GetParent():playcommand("RefreshUI")
+				loadOnlineScores()
+				refreshScores(selectedScoreKey)
 			end
 		end
 	},
@@ -478,52 +378,30 @@ local t = Def.ActorFrame {
 		Name = "CurrentRateTab",
 		InitCommand = function(self)
 			self:xy(160, -38):zoomto(70, 16):halign(0):valign(0)
-			-- Flipped back as per user request
-			self:diffuse(color("#555555")):diffusealpha(not showAllRates and 0.4 or 0.1)
+			self:diffuse(color("#555555"))
 		end,
 		RefreshOnlineScoreboardMessageCommand = function(self)
-			self:diffusealpha(isLocal and 0 or (not showAllRates and 0.4 or 0.1))
+			self:diffusealpha(not showAllRates() and 0.4 or 0.1)
 		end,
-		MouseDownCommand = function(self)
-			if isOver(self) and not isLocal and showAllRates then
-				showAllRates = false
-				syncOnlineRateFilter()
-				alreadyPulled = false
-				updateLeaderBoardForCurrentChart()
-				refreshScores(self:GetParent())
-				self:GetParent():playcommand("RefreshUI")
-			end
-		end
+		MouseDownCommand = function(self) setAllRates(false) end,
 	},
 	LoadFont("Common Normal") .. {
-		InitCommand = function(self) self:xy(195, -30):zoom(0.3):diffuse(brightText):settext("Current") end,
-		RefreshOnlineScoreboardMessageCommand = function(self) self:visible(not isLocal) end
+		InitCommand = function(self) self:xy(195, -30):zoom(0.3):diffuse(brightText):settext("Current") end
 	},
 
 	Def.Quad {
 		Name = "AllRatesTab",
 		InitCommand = function(self)
 			self:xy(234, -38):zoomto(60, 16):halign(0):valign(0)
-			-- Flipped back as per user request
-			self:diffuse(color("#555555")):diffusealpha(isLocal and 0 or (showAllRates and 0.4 or 0.1))
+			self:diffuse(color("#555555"))
 		end,
 		RefreshOnlineScoreboardMessageCommand = function(self)
-			self:diffusealpha(isLocal and 0 or (showAllRates and 0.4 or 0.1))
+			self:diffusealpha(showAllRates() and 0.4 or 0.1)
 		end,
-		MouseDownCommand = function(self)
-			if isOver(self) and not isLocal and not showAllRates then
-				showAllRates = true
-				syncOnlineRateFilter()
-				alreadyPulled = false
-				updateLeaderBoardForCurrentChart()
-				refreshScores(self:GetParent())
-				self:GetParent():playcommand("RefreshUI")
-			end
-		end
+		MouseDownCommand = function(self) setAllRates(true) end,
 	},
 	LoadFont("Common Normal") .. {
-		InitCommand = function(self) self:xy(264, -30):zoom(0.3):diffuse(brightText):settext("All") end,
-		RefreshOnlineScoreboardMessageCommand = function(self) self:visible(not isLocal) end
+		InitCommand = function(self) self:xy(264, -30):zoom(0.3):diffuse(brightText):settext("All") end
 	},
 
 	-- Invalid score visibility
@@ -534,13 +412,12 @@ local t = Def.ActorFrame {
 			self:diffusealpha(0)
 		end,
 		RefreshOnlineScoreboardMessageCommand = function(self)
-			self:diffusealpha(not isLocal and (showInvalidScores and 0.65 or 0.2) or 0)
+			self:visible(not isLocal):diffusealpha(showInvalidScores and 0.65 or 0.2)
 		end,
 		MouseDownCommand = function(self)
 			if isOver(self) and not isLocal then
 				showInvalidScores = not showInvalidScores
-				refreshScores(self:GetParent())
-				self:GetParent():playcommand("RefreshUI")
+				refreshScores(selectedScoreKey)
 			end
 		end
 	},
@@ -561,8 +438,12 @@ local t = Def.ActorFrame {
 		UpdateTextCommand = function(self)
 			if scoreList and #scoreList > 0 then
 				local src = isLocal and "Local" or "Online"
-				local rateLabel = showAllRates and "All Rates" or "Current Rate"
+				local rateLabel = showAllRates() and "All Rates" or "Current Rate"
 				self:settextf("%s (%s) - Page %d/%d - %d scores", src, rateLabel, curPage, maxPages, #scoreList)
+			elseif not isLocal and leaderboardState == "loading" then
+				self:settext("Loading scores…")
+			elseif not isLocal and leaderboardState == "unavailable" then
+				self:settext("Leaderboard unavailable")
 			else
 				self:settext("No scores")
 			end

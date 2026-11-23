@@ -64,6 +64,7 @@ local setWidth = 0
 local setHeight = 0
 local setSong
 local setSteps
+local setScoreKey
 
 local usingCustomWindows = false
 
@@ -525,6 +526,7 @@ local t = Def.ActorFrame{
 		end)
 	end,
 	OffsetPlotModificationMessageCommand = function(self, params)
+		if setScoreKey and (params.Name == "PrevJudge" or params.Name == "NextJudge" or params.Name == "ResetJudge") then return end
 		if params.Name == "PrevJudge" and judge > 1 then
 			judge = judge - 1
 			clampJudge()
@@ -570,9 +572,6 @@ local t = Def.ActorFrame{
 		updateMaxOffset()
 		MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 	end,
-	ScoreChangedMessageCommand = function(self)
-		self:queuecommand("Update")
-	end,
 	LoadedCustomWindowMessageCommand = function(self)
 		usingCustomWindows = true
 		self:queuecommand("Update")
@@ -600,6 +599,15 @@ t[#t+1] = Def.Quad{
 	end,
 	UpdateCommand = function(self, params)
 		params = checkParams(params)
+		if params.scoreKey and params.scoreKey ~= setScoreKey then
+			setScoreKey = params.scoreKey
+			selectedSliceX1, selectedSliceX2, selectedSliceStats = nil, nil, nil
+		end
+		if params.judge then
+			judge = params.judge
+			tso = tst[judge]
+			updateMaxOffset()
+		end
 		setWidth = params.width
 		setHeight = params.height
 		setSong = params.song
@@ -621,6 +629,7 @@ t[#t+1] = Def.Quad{
 		end
 		if params.steps and params.nrv then
 			local stepsTD = params.steps:GetTimingData()
+			wuab = {}
 			for i = 1, #params.nrv do
 				wuab[i] = stepsTD:GetElapsedTimeFromNoteRow(params.nrv[i])
 			end
