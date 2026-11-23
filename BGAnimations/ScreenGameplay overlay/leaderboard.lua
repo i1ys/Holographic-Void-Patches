@@ -335,22 +335,11 @@ t[#t + 1] = Def.ActorFrame {
 	-- Live Stats
 	LoadFont("Common Normal") .. {
 		Name = "LiveWife",
-		InitCommand = function(self) self:halign(0):valign(0):xy(6, 19):zoom(0.32):settext("100.00%") end,
-		JudgmentMessageCommand = function(self)
-			local pss = STATSMAN:GetCurStageStats():GetPlayerStageStats(PLAYER_1)
-			if not pss then return end
-			local wife = pss:GetWifeScore() * 100
-			
-			local notesPassed = pss:GetTapNoteScores("TapNoteScore_W1") +
-							   pss:GetTapNoteScores("TapNoteScore_W2") +
-							   pss:GetTapNoteScores("TapNoteScore_W3") +
-							   pss:GetTapNoteScores("TapNoteScore_W4") +
-							   pss:GetTapNoteScores("TapNoteScore_W5") +
-							   pss:GetTapNoteScores("TapNoteScore_Miss")
-			if notesPassed == 0 then
-				wife = 100.0000
-			end
-			
+		InitCommand = function(self) self:halign(0):valign(0):xy(6, 19):zoom(0.32):settext("--") end,
+		JudgmentMessageCommand = function(self, params)
+			local wife = HV.Score.GetLiveWifePercent(params, PLAYER_1)
+			if not wife then return end
+
 			if wife >= 99.7 then self:settextf("%.4f%%", wife)
 			else self:settextf("%.2f%%", wife) end
 			local g = GetGradeStr(wife)

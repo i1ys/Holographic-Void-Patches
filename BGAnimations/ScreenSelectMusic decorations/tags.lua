@@ -85,6 +85,7 @@ local function RefreshData()
 			-- Selection might change, so re-refresh
 			local ssong = GAMESTATE:GetCurrentSong()
 			if ssong then whee:SelectSong(ssong) end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch(true) end
 		end
 		filterChanged = false
 	end

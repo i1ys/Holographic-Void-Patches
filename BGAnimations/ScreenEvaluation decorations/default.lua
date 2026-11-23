@@ -673,10 +673,6 @@ function getComparisonWifePercent(score, currentPss, currentJudge)
 	return score.GetWifeScore and score:GetWifeScore() * 100 or nil
 end
 
-function comparisonArrow(diff)
-	return diff >= 0 and "▲" or "▼"
-end
-
 function nearestGradeComparison(percent)
 	if not percent or isManiaModeEnabled() then return "" end
 	local baseTiers = {
@@ -1181,26 +1177,8 @@ local function scoreBoard(pn)
 
 				self:GetChild("Speed"):settext(formatEvalSpeedMode(mode, speed)):diffuse(accent)
 				self:GetChild("Rate"):settext(formatEvalRateValue(rate)):diffuse(accent)
-				local mainBPM = getMainBPM(song, steps)
-				self:GetChild("BPM"):settext(mainBPM > 0 and string.format("[%d]", math.round(mainBPM * rate)) or "[???]")
 
-				local lifeKey = "L7"
-				if life <= 1 then
-					lifeKey = "L1"
-				elseif life == 2 then
-					lifeKey = "L2"
-				elseif life == 3 then
-					lifeKey = "L3"
-				elseif life == 4 then
-					lifeKey = "L4"
-				elseif life == 5 then
-					lifeKey = "L5"
-				elseif life == 6 then
-					lifeKey = "L6"
-				end
-				local lifeColor = (HVColor and HVColor.GetLifeBarColor and HVColor.GetLifeBarColor(lifeKey))
-					or color("#FFFFFF")
-				self:GetChild("Life"):settext(string.format("L%d", life)):diffuse(lifeColor)
+				self:GetChild("Life"):settext(string.format("L%d", life)):diffuse(accent)
 				self:GetChild("Judge"):settext(string.format("J%d", playedJudge)):diffuse(accent)
 
 				local failText = "F:IMM"
@@ -1240,8 +1218,7 @@ local function scoreBoard(pn)
 				self:finishtweening():sleep(0):queuecommand("Update")
 			end,
 			LoadFont("Common Normal") .. { Name = "Speed", InitCommand = function(self) self:zoom(0.4):halign(0) end },
-			LoadFont("Common Normal") .. { Name = "Rate", InitCommand = function(self) self:x(42):y(-4):zoom(0.4):halign(0) end },
-			LoadFont("Common Normal") .. { Name = "BPM", InitCommand = function(self) self:x(42):y(6):zoom(0.4):halign(0):diffuse(accentColor or (HVColor and HVColor.Accent) or color("#5ABAFF")) end },
+			LoadFont("Common Normal") .. { Name = "Rate", InitCommand = function(self) self:x(42):zoom(0.4):halign(0) end },
 			LoadFont("Common Normal") .. { Name = "Life", InitCommand = function(self) self:x(82):zoom(0.4):halign(0) end },
 			LoadFont("Common Normal") .. { Name = "Judge", InitCommand = function(self) self:x(110):zoom(0.4):halign(0):diffuse(accentColor or (HVColor and HVColor.Accent) or color("#5ABAFF")) end },
 			LoadFont("Common Normal") .. { Name = "Fail", InitCommand = function(self) self:x(138):zoom(0.4):halign(0):diffuse(color("#CF9898")) end },
@@ -1856,8 +1833,8 @@ local function scoreBoard(pn)
 						-- Keep small but real Wife% differences visible instead of
 						-- rounding them away to 0.00%.
 						local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
-						self:settextf("%s %+.3f%%%s", comparisonArrow(diff), diff, judgeLabel)
-					else self:settext("▲ New!") end
+						self:settextf("%+.3f%%%s", diff, judgeLabel)
+					else self:settext("New!") end
 					self:sleep(0.35):linear(0.15):diffusealpha(1)
 				end,
 				SetJudgeCommand = function(self) self:playcommand("On") end,
@@ -2106,9 +2083,9 @@ local function scoreBoard(pn)
 					local diff = curDp - pbDp
 					local judgeLabel = judge ~= playedJudge and string.format(" (J%d)", playedJudge) or ""
 
-					self:settextf("%s %+.2f%s", comparisonArrow(diff), diff, judgeLabel)
+					self:settextf("%+.2f%s", diff, judgeLabel)
 				else
-					self:settext("▲ New!"):diffuse(accentColor)
+					self:settext("New!"):diffuse(accentColor)
 				end
 				self:stoptweening():sleep(0.5):linear(0.2):diffusealpha(1)
 			end
@@ -2195,37 +2172,11 @@ local function scoreBoard(pn)
 						if isOnlineEvaluation() then self:visible(false); return end
 						if hsTable then
 							local recCT = getHighestClearType(pn, steps, hsTable, scoreIndex) or "Clear"
-							local currentCT = clearType or (scoringVoided and "Noplay" or "Clear")
-							local diff
-							local currentIsNoPlay = currentCT == "ClearType_Noplay" or currentCT == "Noplay"
-							local recordIsNoPlay = recCT == "ClearType_Noplay" or recCT == "Noplay"
-							local function comparisonLevel(ct, isNoPlay)
-								if isNoPlay or ct == "ClearType_Noplay" or ct == "Noplay" then return 21 end
-								-- Failed is below every other result except No Play.
-								if ct == "ClearType_Failed" or ct == "Failed" then return 20 end
-								if ct == "ClearType_Invalid" or ct == "Invalid" then return 19 end
-								return getClearTypeLevel(ct)
-							end
-							if currentIsNoPlay and not recordIsNoPlay then
-								diff = -1
-							elseif not currentIsNoPlay and recordIsNoPlay then
-								diff = 1
-							else
-								diff = comparisonLevel(currentCT, currentIsNoPlay) - comparisonLevel(recCT, recordIsNoPlay)
-							end
-							local arrow = diff == 0 and "" or comparisonArrow(diff)
-							self:settextf("Best: %s%s", getClearTypeText(recCT), arrow == "" and "" or " " .. arrow)
+							self:settextf("Best: %s", getClearTypeText(recCT))
 							self:diffuse(getClearTypeColor(recCT)):diffusealpha(0.6)
 						end
 					end
 				},
-				LoadFont("Common Normal") .. {
-					Name = "BestArrow",
-					InitCommand = function(self) self:halign(0):valign(0):zoom(0.4):visible(false) end,
-					OnCommand = function(self)
-						self:settext("")
-					end
-				}
 			}
 		},
 	}

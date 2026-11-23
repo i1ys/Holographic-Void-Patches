@@ -28,7 +28,7 @@ return Def.ActorFrame {
 		Name = "ComboNumber",
 		InitCommand = function(self)
 			self:zoom(0.75):diffuse(brightText):y(-4)
-			self:settext("0"):shadowlength(1.5):shadowcolor(color("0,0,0,1"))
+			self:settext("0"):shadowlength(0)
 		end
 	},
 

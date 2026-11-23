@@ -12,7 +12,6 @@ local bgCard = color("0.04,0.04,0.04,0.97")
 local overlayW = 680
 local overlayH = 400
 local filtersActor = nil
-local whee = nil
 local active = false
 
 local hoverAlpha = 0.6
@@ -93,7 +92,7 @@ local function FilterInput(event)
 				num = tonumber(SSQuery[activebound][ActiveSS])
 			end
 			FILTERMAN:SetSSFilter(num, ActiveSS, activebound)
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 		end
 	end
@@ -113,12 +112,6 @@ local t = Def.ActorFrame {
 	InitCommand = function(self)
 		filtersActor = self
 		self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):visible(false)
-	end,
-	BeginCommand = function(self)
-		local screen = SCREENMAN:GetTopScreen()
-		if screen then
-			whee = screen:GetMusicWheel()
-		end
 	end,
 	SelectMusicTabChangedMessageCommand = function(self, params)
 		if params.Tab == "FILTERS" then
@@ -414,11 +407,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 		if params.event == "DeviceButton_left mouse button" and active then
 			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() + 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		elseif params.event == "DeviceButton_right mouse button" and active then
 			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() - 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		end
 	end,
 }
@@ -446,11 +439,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 		if params.event == "DeviceButton_left mouse button" and active then
 			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() + 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		elseif params.event == "DeviceButton_right mouse button" and active then
 			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() - 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		end
 	end,
 }
@@ -487,7 +480,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			FILTERMAN:ToggleFilterMode()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		end
 	end,
 }
@@ -533,7 +526,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			FILTERMAN:ToggleHighestSkillsetsOnly()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		end
 	end,
 }
@@ -579,7 +572,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			FILTERMAN:ToggleHighestDifficultyOnly()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		end
 	end,
 }
@@ -633,7 +626,7 @@ t[#t + 1] = UIElements.TextButton(1, 1, "Common Normal") .. {
 			MESSAGEMAN:Broadcast("HV_NumericInputEnded")
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			releaseFilterInputRedirection()
-			if whee then whee:SongSearch("") end
+			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
 		end
 	end,
 }

@@ -9,6 +9,9 @@ local ebW = baseEBW * gameplaySize("ErrorBarScale")
 local ebH = 2
 local ebCenterY = SCREEN_CENTER_Y + SCREEN_HEIGHT * 0.15 - 40
 local maxOffset = 180 -- ms
+local judgmentPalette = HV.Color.GetJudgmentPalette()
+local showRidiculous = HV.EmulateRidiculousEnabled()
+local j4Windows = ThemePrefs.Get("HV_ErrorBarColoringMode") == "J4" and HV.Judgment.GetWindows(1, showRidiculous)
 local dotLife = 2.0  -- seconds
 
 -- EWMA state
@@ -61,30 +64,20 @@ local showStandard = (ebMode == "Standard" or ebMode == "Both")
 			local ebMode = ThemePrefs.Get("HV_ErrorBarMode") or "Standard"
 			local isVisible = params and (params.button == "DeviceButton_6") and (ebMode ~= "Off")
 			self:visible(isVisible or false)
+			if isVisible then self:playcommand("UpdateChildrenEBWidth", {width = ebW}) end
 		end,
 		(function()
 			local g = Def.ActorFrame{}
-			local windows = {180, 135, 90, 45, 22.5}
-			local colors = {
-				HVColor.GetJudgmentColor("W5"),
-				HVColor.GetJudgmentColor("W4"),
-				HVColor.GetJudgmentColor("W3"),
-				HVColor.GetJudgmentColor("W2"),
-				HVColor.GetJudgmentColor("W1")
-			}
-			if HV.EmulateRidiculousEnabled() then
-				table.insert(windows, 11.25 * (tonumber(gameplay.judgeScale) or 1))
-				table.insert(colors, HVColor.GetJudgmentColor("Ridiculous"))
-			end
-			for i=1, #windows do
+			local keys = {"W5", "W4", "W3", "W2", "W1"}
+			if showRidiculous then keys[#keys + 1] = "Ridiculous" end
+			for _, key in ipairs(keys) do
 				g[#g+1] = Def.Quad {
 					InitCommand = function(self)
-						local w = (windows[i] / maxOffset) * ebW
-						self:zoomto(w, ebH + 16):diffuse(colors[i]):diffusealpha(0.35)
+						self:zoomto(0, ebH + 16):diffuse(judgmentPalette[key]):diffusealpha(0.35)
 					end,
 					UpdateChildrenEBWidthCommand = function(self, params)
-						local w = (windows[i] / maxOffset) * params.width
-						self:zoomto(w, ebH + 16)
+						local windows = j4Windows or HV.Judgment.GetWindows(gameplay.judgeScale, showRidiculous)
+						self:zoomto(windows[key] / maxOffset * params.width, ebH + 16)
 					end
 				}
 			end
@@ -136,17 +129,11 @@ local showStandard = (ebMode == "Standard" or ebMode == "Both")
 
 	JudgmentMessageCommand = function(self, params)
 		if params.Player ~= PLAYER_1 then return end
-		if not params.TapNoteScore then return end
-		if params.HoldNoteScore then return end -- Skip holds
+		local judge = params.TapNoteScore and params.TapNoteScore:match("^TapNoteScore_(W[1-5])$")
+		if not judge or params.HoldNoteScore then return end
 
-		local offset = params.TapNoteOffset
-		if not offset then return end
-
-		-- Exclude misses from EWMA
-		if params.TapNoteScore == "TapNoteScore_Miss" then return end
-
-		-- Clamp for visualization
-		local visualOffset = offset * 1000 -- to ms
+		local visualOffset = params.Offset or (params.TapNoteOffset and params.TapNoteOffset * 1000)
+		if type(visualOffset) ~= "number" then return end
 
 		-- Update EWMA marker if enabled
 		if showEWMA then
@@ -154,16 +141,15 @@ local showStandard = (ebMode == "Standard" or ebMode == "Both")
 		end
 
 		if not showStandard then return end
-		if math.abs(visualOffset) > maxOffset then return end
+		visualOffset = math.max(-maxOffset, math.min(visualOffset, maxOffset))
 
-		local ebColoring = ThemePrefs.Get("HV_ErrorBarColoringMode") or "Current"
-		local jScale = 1
-		if ebColoring == "Current" then
-			jScale = PREFSMAN:GetPreference("TimingWindowScale")
+		if j4Windows then
+			judge = HV.Judgment.ClassifyOffset(visualOffset, j4Windows)
+		elseif showRidiculous and judge == "W1" and math.abs(visualOffset) <= 11.25 * (gameplay.judgeScale or 1) then
+			judge = "Ridiculous"
 		end
-
 		local xPos = (visualOffset / maxOffset) * (ebW / 2)
-		local jColor = offsetToJudgeColor(visualOffset, jScale)
+		local jColor = judgmentPalette[judge]
 
 		-- Pooling system: Cycle through child actors
 		local pool = self:GetChild("Pool")

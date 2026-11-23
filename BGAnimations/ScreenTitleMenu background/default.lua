@@ -3,9 +3,7 @@ local ThemePrefs = HV.LegacyPrefs
 -- Global State Initialization
 HV.TitleState = HV.TitleState or {}
 HV.TitleState.player = HV.TitleState.player or { song = nil, paused = true, offset = 0, lastStart = 0, duration = 0, history = {}, lastToggleAt = 0 }
-HV.TitleState.mouse = HV.TitleState.mouse or { lastHovered = nil }
 HV.TitleState.selectedProfile = HV.TitleState.selectedProfile or 0
-HV.TitleState.showEffectsPopup = HV.TitleState.showEffectsPopup or false
 HV.TitleState.showAlarmPopup = HV.TitleState.showAlarmPopup or false
 
 local accentColor = HVColor.Accent
@@ -13,22 +11,10 @@ local dimText = color("0.45,0.45,0.45,1")
 local subText = color("0.65,0.65,0.65,1")
 local brightText = color("1,1,1,1")
 
--- Preferences and Effects Logic
 local PREF_DEFS = {
-	HV_BGAnimIntensity = { Values = {"0", "1", "2"}, Choices = {"Off", "Subtle", "Full"} },
-	HV_BackgroundEffect = { Values = {"Grid", "Hex", "Scanlines", "Flow", "Rays", "None"}, Choices = {"Grid", "Hex", "Scanlines", "Flow", "Rays", "None"} },
-	HV_EnableGlow = { Values = {"false", "true"}, Choices = {"Off", "On"} },
-	HV_Particles = { Values = {"false", "true"}, Choices = {"Off", "On"} },
 	HV_AlarmActive = { Values = {"false", "true"}, Choices = {"Off", "On"} },
 	HV_AlarmType = { Values = {"Time", "Timer"}, Choices = {"Time", "Timer"} },
 	HV_AlarmShowInGameplay = { Values = {"false", "true"}, Choices = {"Off", "On"} },
-}
-
-local rows = {
-	{ Name = "Animations", Pref = "HV_BGAnimIntensity" },
-	{ Name = "Style", Pref = "HV_BackgroundEffect" },
-	{ Name = "Glow", Pref = "HV_EnableGlow" },
-	{ Name = "Particles", Pref = "HV_Particles" },
 }
 
 local alarmRows = {
@@ -71,23 +57,7 @@ local function cyclePref(name)
 	end
 end
 
--- Visual Elements State
-local intensityMode = ThemePrefs.Get("HV_BGAnimIntensity")
-local bgEffect = ThemePrefs.Get("HV_BackgroundEffect")
 local isGlowEnabled = tostring(ThemePrefs.Get("HV_EnableGlow")) == "true"
-
-local function getIntensityAlpha(base)
-	local mode = tostring(intensityMode)
-	if mode == "0" then return base * 0.3 end -- Static but visible
-	if mode == "1" then return base * 0.6 end
-	return base
-end
-
-local function getIntensitySpeed(base)
-	if intensityMode == "0" then return 0 end
-	if intensityMode == "1" then return base * 0.4 end
-	return base
-end
 
 local function getSelectedGamemodeLabel()
 	local game = GAMESTATE:GetCurrentGame()
@@ -162,32 +132,6 @@ local t = Def.ActorFrame {
 				end
 			end
 
-			-- Title Menu Hover (5 items)
-			local hovered = nil
-			local choiceNames = {"Start", "Multi", "ColorTheme", "PackDownloader", "Options", "Quit"}
-			for i = 1, #choiceNames do
-				local static_iy = SCREEN_CENTER_Y + 40 * (i - ((#choiceNames + 1) / 2))
-				if virtualX >= SCREEN_CENTER_X-150 and virtualX <= SCREEN_CENTER_X+150 
-				   and virtualY >= static_iy-20 and virtualY <= static_iy+20 then
-					hovered = i break
-				end
-			end
-
-			-- Selection Glow
-			local selGlow = af:GetChild("SelectionGlow")
-			if selGlow then
-				if hovered then
-					local selY = SCREEN_CENTER_Y + 40 * (hovered - ((#choiceNames + 1) / 2))
-					selGlow:stoptweening():linear(0.05):y(selY):diffusealpha(isGlowEnabled and 0.4 or 0)
-				else
-					selGlow:stoptweening():linear(0.1):diffusealpha(0)
-				end
-			end
-
-			if hovered ~= HV.TitleState.mouse.lastHovered then
-				HV.TitleState.mouse.lastHovered = hovered
-			end
-
 			-- Always derive visual highlight from actual scroller/engine selection.
 			local selectedIndex = HV.TitleState.keyboardIndex or 1
 			local screen = SCREENMAN:GetTopScreen()
@@ -222,6 +166,7 @@ local t = Def.ActorFrame {
 		end)
 	end,
 	ThemePrefChangedMessageCommand = function(self)
+		isGlowEnabled = tostring(ThemePrefs.Get("HV_EnableGlow")) == "true"
 		self:playcommand("Refresh")
 	end,
 	-- ... (rest of the system commands)
@@ -394,55 +339,6 @@ local function jukeboxToggle()
 	end
 end
 
--- Visual Elements
--- Background Effects (Controlled by HV_BackgroundEffect and HV_BGAnimIntensity)
-local baseAlpha = 0.03
-
-local bgEffectsFrame = Def.ActorFrame {
-	Name = "BGEffects",
-	ThemePrefChangedMessageCommand = function(self, params)
-		local name = (type(params) == "table") and params.Name or params
-		if name == "HV_BGAnimIntensity" or name == "HV_BackgroundEffect" or name == "HV_EnableGlow" then
-			self:playcommand("Refresh")
-		end
-	end,
-	OnCommand = function(self)
-		self:playcommand("Refresh")
-	end,
-	RefreshCommand = function(self)
-		-- Sync local variables for children to use
-		intensityMode = ThemePrefs.Get("HV_BGAnimIntensity")
-		bgEffect = ThemePrefs.Get("HV_BackgroundEffect")
-		isGlowEnabled = tostring(ThemePrefs.Get("HV_EnableGlow")) == "true"
-
-		self:GetChild("Grid"):visible(bgEffect == "Grid")
-		self:GetChild("Hex"):visible(bgEffect == "Hex")
-		self:GetChild("Scanlines"):visible(bgEffect == "Scanlines")
-		self:GetChild("Flow"):visible(bgEffect == "Flow")
-		self:GetChild("Rays"):visible(bgEffect == "Rays")
-		
-		local alpha = 1
-		if bgEffect == "None" then alpha = 0 end
-		self:finishtweening():diffusealpha(alpha)
-		
-		local selGlow = self:GetChild("SelectionGlow")
-		if selGlow then
-			selGlow:glow(accentColor):diffuse(accentColor)
-		end
-
-		self:playcommand("UpdateAlpha")
-		self:playcommand("UpdateSpeed")
-	end,
-	UpdateAlphaCommand = function(self)
-		-- Alpha is handled by parent AF and individual children
-	end,
-}
-
-t[#t + 1] = Def.Quad {
-	Name = "SelectionGlow",
-	InitCommand = function(self) self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):zoomto(300, 40):diffusealpha(0):fadetop(0.2):fadebottom(0.2) end
-}
-
 --- Title Menu Text Labels (Custom rendering to bypass engine scroller text issues)
 local choiceLabels = {"START", "MULTI", "COLOR THEME", "PACK DOWNLOADER", "OPTIONS", "EXIT"}
 local choiceKeys = {"Start", "Multi", "ColorTheme", "PackDownloader", "Options", "Quit"}
@@ -456,145 +352,6 @@ for i, label in ipairs(choiceLabels) do
 		end
 	}
 end
-
--- GRID EFFECT
-local grid = Def.ActorFrame { 
-	Name = "Grid", 
-	InitCommand = function(self) 
-		self:visible(bgEffect == "Grid") 
-		self:SetUpdateFunction(function(af, dt)
-			local speed = getIntensitySpeed(20)
-			if speed <= 0 then return end
-			for i=1, 12 do
-				local child = af:GetChild("HLine"..i)
-				if child then
-					local newY = child:GetY() + speed * dt * 2
-					if newY > SCREEN_BOTTOM + 40 then newY = SCREEN_TOP - 40 end
-					child:y(newY)
-				end
-			end
-		end)
-	end
-}
--- Horizontal lines (Scrolling)
-local spaceY = SCREEN_HEIGHT / 10
-for i = 1, 12 do 
-	grid[#grid + 1] = Def.Quad { 
-		Name = "HLine"..i,
-		InitCommand=function(self) self:xy(SCREEN_CENTER_X, (spaceY * (i-1)) - 40):zoomto(SCREEN_WIDTH, 1) end, 
-		UpdateAlphaCommand=function(self) self:diffusealpha(getIntensityAlpha(0.04)) end 
-	} 
-end
--- Vertical lines (Static)
-local spaceX = SCREEN_WIDTH / 16
-for i = 1, 15 do 
-	grid[#grid + 1] = Def.Quad { 
-		InitCommand=function(self) self:xy(spaceX * i, SCREEN_CENTER_Y):zoomto(1, SCREEN_HEIGHT) end, 
-		UpdateAlphaCommand=function(self) self:diffusealpha(getIntensityAlpha(0.04)) end 
-	} 
-end
-bgEffectsFrame[#bgEffectsFrame + 1] = grid
-
--- HEX EFFECT
-local hex = Def.ActorFrame { Name = "Hex", InitCommand = function(self) self:visible(bgEffect == "Hex") end }
-local hexSize = 60
-for y = 0, SCREEN_HEIGHT, hexSize * 1.5 do
-	for x = 0, SCREEN_WIDTH + hexSize, hexSize * 1.5 do
-		hex[#hex + 1] = Def.ActorFrame {
-			InitCommand = function(self) self:xy(x, y) end,
-			Def.ActorFrame {
-				Name = "Spinner",
-				InitCommand = function(self) self:playcommand("UpdateSpeed") end,
-				UpdateSpeedCommand = function(self)
-					self:stopeffect():spin():effectmagnitude(0, 0, getIntensitySpeed(20))
-				end,
-				Def.Quad {
-					InitCommand = function(self) self:zoomto(hexSize/2.5, hexSize/2.5):rotationz(45) end,
-					UpdateAlphaCommand = function(self) self:diffusealpha(getIntensityAlpha(0.04)) end,
-				}
-			}
-		}
-	end
-end
-bgEffectsFrame[#bgEffectsFrame + 1] = hex
-
--- SCANLINES EFFECT (Redesigned as rolling highlights)
-local scanlines = Def.ActorFrame { Name = "Scanlines", InitCommand = function(self) self:visible(bgEffect == "Scanlines") end }
-for i = 1, 3 do
-	scanlines[#scanlines + 1] = Def.Quad {
-		InitCommand = function(self)
-			self:xy(SCREEN_CENTER_X, -200):zoomto(SCREEN_WIDTH, 120):diffuse(accentColor)
-		end,
-		UpdateAlphaCommand = function(self) self:diffusealpha(getIntensityAlpha(0.08)) end,
-		OnCommand = function(self) self:playcommand("Scroll") end,
-		ScrollCommand = function(self)
-			local speed = getIntensitySpeed(1)
-			if speed <= 0 then 
-				self:stoptweening():y(SCREEN_CENTER_Y + (i-2)*200)
-				return 
-			end
-			self:stoptweening():y(SCREEN_TOP - 100):sleep(i * 1.5):linear(4 / speed):y(SCREEN_BOTTOM + 100):sleep(math.random(1, 3)):queuecommand("Scroll")
-		end
-	}
-end
-scanlines.RefreshCommand = function(self) self:playcommand("Scroll") end
-bgEffectsFrame[#bgEffectsFrame + 1] = scanlines
-
--- FLOW EFFECT (Redesigned with thicker digital streaks)
-local flow = Def.ActorFrame { Name = "Flow", InitCommand = function(self) self:visible(bgEffect == "Flow") end }
-for i = 1, 15 do
-	local baseSpeed = math.random(400, 1000)
-	flow[#flow + 1] = Def.Quad {
-		InitCommand = function(self)
-			self:xy(math.random(SCREEN_WIDTH), math.random(SCREEN_HEIGHT))
-				:zoomto(math.random(150, 500), math.random(2, 4)):diffuse(accentColor)
-		end,
-		UpdateAlphaCommand = function(self) self:diffusealpha(getIntensityAlpha(0.18)) end,
-		OnCommand = function(self) self:queuecommand("Move") end,
-		RefreshCommand = function(self) self:stoptweening():queuecommand("Move") end,
-		MoveCommand = function(self)
-			local speed = getIntensitySpeed(baseSpeed)
-			if speed <= 0 then 
-				self:stoptweening():x(math.random(SCREEN_WIDTH))
-				return 
-			end
-			self:stoptweening():x(SCREEN_RIGHT + 300):linear(SCREEN_WIDTH/speed):x(SCREEN_LEFT - 300):sleep(math.random(0, 5)/10):queuecommand("Move")
-		end
-	}
-end
-bgEffectsFrame[#bgEffectsFrame + 1] = flow
-
--- RAYS EFFECT (Renamed from 4DCube)
-local rays = Def.ActorFrame { 
-	Name = "Rays", 
-	InitCommand = function(self) self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):visible(bgEffect == "Rays") end 
-}
-for i = 1, 2 do
-	rays[#rays + 1] = Def.ActorFrame {
-		InitCommand = function(self) self:playcommand("UpdateSpeed") end,
-		UpdateSpeedCommand = function(self)
-			self:stopeffect():spin():effectmagnitude(getIntensitySpeed(20), getIntensitySpeed(15), getIntensitySpeed(10))
-		end,
-		Def.ActorFrame {
-			Name = "Inner",
-			InitCommand = function(self) self:playcommand("UpdateSpeed") end,
-			UpdateSpeedCommand = function(self)
-				self:stopeffect():spin():effectmagnitude(getIntensitySpeed(10), getIntensitySpeed(-8), getIntensitySpeed(5))
-			end,
-			Def.Quad { 
-				InitCommand=function(self) self:zoomto(400, 2) end,
-				UpdateAlphaCommand=function(self) self:diffuse(accentColor):diffusealpha(getIntensityAlpha(0.15)) end
-			},
-			Def.Quad { 
-				InitCommand=function(self) self:zoomto(2, 400) end,
-				UpdateAlphaCommand=function(self) self:diffuse(accentColor):diffusealpha(getIntensityAlpha(0.15)) end
-			},
-		}
-	}
-end
-bgEffectsFrame[#bgEffectsFrame + 1] = rays
-
-t[#t + 1] = bgEffectsFrame
 
 -- Read Author from ThemeInfo.ini
 local themeAuthor = "Unknown"
@@ -615,26 +372,6 @@ for _, path in ipairs(paths) do
 		break
 	end
 end
-
-t[#t + 1] = Def.Quad { 
-	Name = "TopBar",
-	InitCommand=function(self) self:xy(SCREEN_CENTER_X, SCREEN_TOP+2):zoomto(SCREEN_WIDTH*0.6, 2):diffuse(accentColor):diffusealpha(0.6) end, 
-	ThemePrefChangedMessageCommand=function(self, params) 
-		if params.Name == "HV_BGAnimIntensity" or params.Name == "HV_EnableGlow" then 
-			self:playcommand("Refresh") 
-		end 
-	end, 
-	RefreshCommand=function(self)
-		local alpha = 0.6
-		if tostring(ThemePrefs.Get("HV_BGAnimIntensity")) == "0" then alpha = 0 end
-		self:finishtweening():diffusealpha(alpha)
-		
-		local glow = color("0,0,0,0")
-		if tostring(ThemePrefs.Get("HV_EnableGlow")) == "true" then glow = accentColor end
-		self:glow(glow)
-	end,
-	OnCommand=function(self) self:playcommand("Refresh") end
-}
 
 t[#t + 1] = Def.ActorFrame {
 	Name = "LogoContainer",
@@ -657,22 +394,6 @@ t[#t + 1] = Def.ActorFrame {
 		SetCommand = function(self)
 			self:settext(getSelectedGamemodeLabel())
 		end
-	},
-	-- Persistent Glow Layer
-	LoadFont("Common Large") .. { 
-		Text="HOLOGRAPHIC VOID", 
-		InitCommand=function(self) self:zoom(0.75):diffuse(accentColor):diffusealpha(0) end,
-		RefreshCommand=function(self)
-			self:stopeffect():stoptweening()
-			if tostring(ThemePrefs.Get("HV_EnableGlow")) == "true" then
-				self:diffusealpha(0.4):glow(accentColor)
-				self:thump():effectmagnitude(1.02, 1.02, 1.02):effectperiod(2)
-			else
-				self:diffusealpha(0)
-			end
-		end,
-		OnCommand=function(self) self:playcommand("Refresh") end,
-		ThemePrefChangedMessageCommand=function(self, params) if params.Name == "HV_EnableGlow" then self:playcommand("Refresh") end end
 	},
 	-- Main Text
 	LoadFont("Common Large") .. {
@@ -1154,118 +875,6 @@ t[#t + 1] = Def.ActorFrame {
 			self:xy(SCREEN_RIGHT - 16, mpBtnY):halign(1):zoom(0.3)
 			self:diffuse(dimText)
 		end
-	}
-}
-
-t[#t + 1] = Def.ActorFrame { Name="CB", OnCommand=function(self) self:diffusealpha(0.2) end,
-	Def.ActorFrame { InitCommand=function(self) self:xy(SCREEN_LEFT+20, SCREEN_TOP+20) end, Def.Quad { InitCommand=function(self) self:halign(0):valign(0):zoomto(40,1):diffuse(accentColor) end }, Def.Quad { InitCommand=function(self) self:halign(0):valign(0):zoomto(1,40):diffuse(accentColor) end } },
-	Def.ActorFrame { InitCommand=function(self) self:xy(SCREEN_RIGHT-20, SCREEN_BOTTOM-20) end, Def.Quad { InitCommand=function(self) self:halign(1):valign(1):zoomto(40,1):diffuse(accentColor) end }, Def.Quad { InitCommand=function(self) self:halign(1):valign(1):zoomto(1,40):diffuse(accentColor) end } }
-}
-
--- Standalone Effects Button (Bottom Right)
-t[#t + 1] = Def.ActorFrame {
-	Name = "EffectsButton",
-	InitCommand = function(self) self:xy(SCREEN_RIGHT - 20, SCREEN_BOTTOM - 60) end,
-	
-	-- Toggleable Panel
-	Def.ActorFrame {
-		Name = "PopupPanel",
-		InitCommand = function(self) self:y(-100):visible(false):diffusealpha(0) end,
-		ShowEffectsPopupMessageCommand = function(self)
-			if self:GetVisible() then
-				self:playcommand("Hide")
-			else
-				self:visible(true):stoptweening():decelerate(0.2):diffusealpha(1):y(-110)
-			end
-		end,
-		HideEffectsPopupMessageCommand = function(self) self:playcommand("Hide") end,
-		HideCommand = function(self)
-			self:stoptweening():accelerate(0.2):diffusealpha(0):y(-100):sleep(0):queuecommand("Off")
-		end,
-		OffCommand = function(self) self:visible(false) end,
-		
-		-- Panel BG
-		Def.Quad {
-			InitCommand = function(self) 
-				self:halign(1):zoomto(220, 150):diffuse(color("0.05,0.05,0.05,0.98")):diffusebottomedge(color("0,0,0,1"))
-			end
-		},
-		-- Header
-		LoadFont("Common Normal") .. {
-			Text = "VISUAL EFFECTS",
-			InitCommand = function(self) self:xy(-110, -60):zoom(0.4):diffuse(accentColor):playcommand("RefreshGlow") end,
-			ThemePrefChangedMessageCommand = function(self) self:playcommand("RefreshGlow") end,
-			RefreshGlowCommand = function(self)
-				if isGlowEnabled then self:glow(accentColor) else self:glow(color("0,0,0,0")) end
-			end
-		},
-		-- Option Rows
-		(function()
-			local r = Def.ActorFrame { InitCommand = function(self) self:y(-10) end }
-			for i, row in ipairs(rows) do
-				local ry = (i - 2.5) * 26
-				r[#r+1] = Def.ActorFrame {
-					InitCommand = function(self) self:y(ry) end,
-					-- Row Label
-					LoadFont("Common Normal") .. {
-						Text = row.Name,
-						InitCommand = function(self) self:x(-205):halign(0):zoom(0.35):diffuse(color("0.6,0.6,0.6,1")) end
-					},
-					-- Row Value
-					LoadFont("Common Normal") .. {
-						Name = "Val",
-						InitCommand = function(self) self:x(-15):halign(1):zoom(0.35) end,
-						ThemePrefChangedMessageCommand = function(self, params) if params.Name == row.Pref then self:playcommand("Refresh") end end,
-						RefreshCommand = function(self)
-							local val = tostring(ThemePrefs.Get(row.Pref))
-							local def = PREF_DEFS[row.Pref]
-							local display = val
-							for j, v in ipairs(def.Values) do if tostring(v) == val then display = def.Choices[j] break end end
-							self:settext(display:upper())
-						end,
-						OnCommand = function(self) self:playcommand("Refresh") end
-					},
-					-- Invisible Row Button
-					UIElements.QuadButton(1) .. {
-						InitCommand = function(self) self:x(-110):zoomto(210, 24):diffusealpha(0) end,
-						MouseDownCommand = function(self, params)
-							if params.event == "DeviceButton_left mouse button" then
-								cyclePref(row.Pref)
-								SOUND:PlayOnce(THEME:GetPathS("Common", "value"))
-							end
-						end
-					}
-				}
-			end
-			return r
-		end)()
-	},
-
-	-- Interactive Toggle Button
-	UIElements.QuadButton(1) .. {
-		InitCommand = function(self) self:zoomto(100, 30):halign(1):diffusealpha(0) end,
-		MouseDownCommand = function(self, params)
-			if params.event == "DeviceButton_left mouse button" then
-				MESSAGEMAN:Broadcast("ShowEffectsPopup")
-				SOUND:PlayOnce(THEME:GetPathS("Common", "value"))
-			end
-		end,
-		MouseOverCommand = function(self) 
-			local txt = self:GetParent():GetChild("BtnText")
-			if txt then 
-				txt:stoptweening():linear(0.1):diffuse(accentColor)
-				if isGlowEnabled then txt:glow(accentColor) end
-			end
-		end,
-		MouseOutCommand = function(self) 
-			local txt = self:GetParent():GetChild("BtnText")
-			if txt then txt:stoptweening():linear(0.1):diffuse(subText):glow(color("0,0,0,0")) end
-		end
-	},
-	LoadFont("Common Normal") .. {
-		Name = "BtnText",
-		Text = "EFFECTS",
-		InitCommand = function(self) self:halign(1):zoom(0.4):diffuse(subText) end
 	}
 }
 

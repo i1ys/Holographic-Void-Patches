@@ -364,14 +364,14 @@ o[#o + 1] = Def.Quad {
 		self:zoomto(plotWidth + plotMargin, 1):diffuse(byJudgment("TapNoteScore_W1")):diffusealpha(baralpha)
 	end
 }
-local fantabars = {22.5, 45, 90, 135}
+local thresholdKeys = {"W1", "W2", "W3", "W4"}
 local bantafars = {"TapNoteScore_W2", "TapNoteScore_W3", "TapNoteScore_W4", "TapNoteScore_W5"}
 local santabarf = {"TapNoteScore_W1", "TapNoteScore_W2", "TapNoteScore_W3", "TapNoteScore_W4"} -- ugh
-for i = 1, #fantabars do
+for i, key in ipairs(thresholdKeys) do
 	o[#o + 1] = Def.Quad {
 		JudgeDisplayChangedMessageCommand = function(self)
 			self:zoomto(plotWidth + plotMargin, 1):diffuse(byJudgment(bantafars[i])):diffusealpha(baralpha)
-			local fit = tso * fantabars[i]
+			local fit = HV.Judgment.GetWindows(tso)[key]
 			if usingCustomWindows then
 				fit = getCustomWindowConfigJudgmentWindow(santabarf[i])
 			end
@@ -383,7 +383,7 @@ for i = 1, #fantabars do
 	o[#o + 1] = Def.Quad {
 		JudgeDisplayChangedMessageCommand = function(self)
 			self:zoomto(plotWidth + plotMargin, 1):diffuse(byJudgment(bantafars[i])):diffusealpha(baralpha)
-			local fit = tso * fantabars[i]
+			local fit = HV.Judgment.GetWindows(tso)[key]
 			if usingCustomWindows then
 				fit = getCustomWindowConfigJudgmentWindow(santabarf[i])
 			end
@@ -416,17 +416,18 @@ end
 o[#o + 1] = Def.ActorMultiVertex {
 	JudgeDisplayChangedMessageCommand = function(self)
 		local verts = {}
+		local judgmentPalette = HV.Color.GetJudgmentPalette()
+		local windows = HV.Judgment.GetWindows(tso, HV.EmulateRidiculousEnabled())
+		local customWindows = usingCustomWindows and getCurrentCustomWindowConfigJudgmentWindowTable()
 		for i = 1, #dvt do
 			local x = fitX(wuab[i])
 			local y = fitY(dvt[i])
 			local fit = math.max(183, 183 * tso)
 
 			-- get the color for the tap
-			local cullur = offsetToJudgeColor(dvt[i], tst[judge])
-			if usingCustomWindows then
-				cullur = customOffsetToJudgeColor(dvt[i], getCurrentCustomWindowConfigJudgmentWindowTable())
-			end
-			cullur[4] = 1
+			local c = customWindows and customOffsetToJudgeColor(dvt[i], customWindows)
+				or judgmentPalette[HV.Judgment.ClassifyOffset(dvt[i], windows)]
+			local cullur = {c[1], c[2], c[3], 1}
 			local cullurFaded = {}
 
 			if math.abs(y) > plotHeight / 2 then

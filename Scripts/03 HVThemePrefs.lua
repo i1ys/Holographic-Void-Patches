@@ -301,13 +301,6 @@ local HVPrefs = {
 		Values = {"Custom"}
 	},
 
-	-- Visual: Background Effect Style
-	HV_BackgroundEffect = {
-		Default = "Grid",
-		Choices = {"Grid", "Hex", "Scanlines", "Flow", "Rays", "None"},
-		Values = {"Grid", "Hex", "Scanlines", "Flow", "Rays", "None"}
-	},
-
 	-- Visual: Show scrolling quotes/tips on Title Screen
 	HV_QuotesMode = {
 		Default = "Quotes",

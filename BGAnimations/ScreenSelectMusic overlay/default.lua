@@ -43,6 +43,8 @@ local globalTooltipActor = nil
 local previewActive = false
 local inputDebugActor = nil
 local searchString = ""
+local appliedSearch = ""
+local searchHasMatches = true
 
 -- SCOREMAN's ranked lists are shared by all local profiles.  Keep the
 -- Profile tab scoped to the profile that is currently selected in PLAYER_1.
@@ -113,18 +115,67 @@ local function getLocalProfileScores(endIndex, isRecent, skillset)
 	return scores
 end
 
--- Shared entry point for decorations that apply a search without opening
--- the search tab (for example, clicking a chart's CDTitle author).
-local function SetMusicSearchQuery(query)
-	searchString = tostring(query or "")
-	local screen = SCREENMAN:GetTopScreen()
-	local whee = screen and screen.GetMusicWheel and screen:GetMusicWheel()
-	if whee then whee:SongSearch(searchString) end
-	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = true})
+local searchFields = {
+	title = "GetDisplayMainTitle",
+	subtitle = "GetDisplaySubTitle",
+	artist = "GetDisplayArtist",
+	author = "GetOrTryAtLeastToGetSimfileAuthor",
+	pack = "GetGroupName",
+}
+
+local function wheelSearchQuery(query)
+	query = query:match("^%s*(.-)%s*$")
+	if query == "" then return "" end
+	local field, value = query:match("^(%a+)=(.*)$")
+	field = field and field:lower()
+	if field == "p" or field == "group" then
+		field = "pack"
+	elseif field == "charter" or field == "stepper" then
+		field = "author"
+	elseif not searchFields[field] and field ~= "ck" then
+		field, value = "title", query
+	end
+	value = value:match("^%s*(.-)%s*$")
+	if value == "" then return "" end
+	if field == "ck" or value:find(";%s*%a+=") then
+		return field .. "=" .. value
+	end
+	return field .. "=" .. value, searchFields[field], value:lower()
 end
 
-HV.SetMusicSearchQuery = SetMusicSearchQuery
+local function refreshMusicSearch()
+	local screen = SCREENMAN:GetTopScreen()
+	local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+	if not wheel then return end
+	local query, getter, term = wheelSearchQuery(appliedSearch)
+	wheel:SongSearch(query)
+	searchHasMatches = true
+	if getter and wheel.GetSongs then
+		-- The native wheel keeps the previous results when its search finds none.
+		local first = wheel:GetSongs()[1]
+		searchHasMatches = first ~= nil and first[getter]
+			and (first[getter](first) or ""):lower():find(term, 1, true) ~= nil
+	end
+end
+
+local function setSearchText(query, apply)
+	searchString = query
+	if apply then
+		appliedSearch = query
+		refreshMusicSearch()
+	end
+	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = apply})
+end
+
+HV.SetMusicSearchQuery = function(query)
+	setSearchText(tostring(query or ""), true)
+end
 HV.GetMusicSearchQuery = function() return searchString end
+HV.RefreshMusicSearch = function(onlyIfActive)
+	if onlyIfActive and appliedSearch == "" then return end
+	refreshMusicSearch()
+	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = true})
+end
 
 -- Mouse wheel locking to prevent double-moves
 local lastWheelMove = 0
@@ -819,99 +870,62 @@ main_af[#main_af + 1] = Def.ActorFrame {
 
 			
 
-			-- --- SEARCH INPUT HANDLING ---
 			if HV.ActiveTab == "SEARCH" then
-				local whee = top.GetMusicWheel and top:GetMusicWheel() or (HV.SSM and HV.SSM.GetMusicWheel and HV.SSM:GetMusicWheel())
+				local button = btn:lower()
+				local editing = evType == "InputEventType_FirstPress" or evType == "InputEventType_Repeat"
 				local instant = HV.InstantSearch()
 
-				-- Handle Backspace
-				if btn:lower() == "devicebutton_backspace" then
-					if evType ~= "InputEventType_Release" then
-						if #searchString > 0 then
-							searchString = searchString:sub(1, -2)
-							if instant and whee then whee:SongSearch(searchString) end
-							MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
-						else
-							-- Backspace on empty search closes (sc-wh behavior)
+				if button == "devicebutton_backspace" then
+					if editing then
+						if searchString == "" then
 							MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
+						else
+							setSearchText(searchString:gsub("[^\128-\191][\128-\191]*$", ""), instant)
 						end
 					end
 					return true
 				end
-
-				-- Handle Delete
-				if btn:lower() == "devicebutton_delete" then
-					if evType ~= "InputEventType_Release" then
-						searchString = ""
-						if instant and whee then whee:SongSearch("") end
-						MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
-					end
+				if button == "devicebutton_delete" then
+					if editing then setSearchText("", instant) end
 					return true
 				end
 
-				-- Handle Enter / Escape (Deactivate)
-				local isEscape = (event.button == "Back" or btn:lower() == "devicebutton_escape")
-				
 				if isEnter then
 					if evType == "InputEventType_FirstPress" then
-						-- Filter now if not instant
-						if not instant and whee then whee:SongSearch(searchString) end
-						-- CLOSE SEARCH but keep filter.
+						setSearchText(searchString, true)
 						HV.SuppressSearchCloseEnter = true
 						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
-						MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = true})
 					end
-					return true -- STRICT CAPTURE
+					return true
 				end
-				if isEscape then
+				if event.button == "Back" or button == "devicebutton_escape" then
 					if evType == "InputEventType_FirstPress" then
-						searchString = ""
-						if whee then whee:SongSearch("") end
-						MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
+						setSearchText("", true)
 						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
 					end
 					return true
 				end
 
-				-- Handle Paste (Ctrl + V)
 				local ctrl = INPUTFILTER:IsBeingPressed("left ctrl") or INPUTFILTER:IsBeingPressed("right ctrl")
-				if ctrl and btn:lower() == "devicebutton_v" then
-					if evType == "InputEventType_FirstPress" then
-						if Arch and Arch.getClipboard then
-							local clip = Arch.getClipboard()
-							if clip then
-								searchString = searchString .. clip
-								if instant and whee then whee:SongSearch(searchString) end
-								MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
-							end
-						end
+				if ctrl then
+					if editing and evType == "InputEventType_FirstPress" and button == "devicebutton_v"
+						and Arch and Arch.getClipboard then
+						local clip = Arch.getClipboard()
+						if clip then setSearchText(searchString .. clip:gsub("%c", " "), instant) end
 					end
 					return true
 				end
 
-				-- Handle Typing (Robust character detection)
-				local shifted = INPUTFILTER:IsBeingPressed("left shift") or INPUTFILTER:IsBeingPressed("right shift")
-				local c = (event.char and event.char ~= "") and event.char or DeviceBtnToChar(btn, shifted)
-				
-				-- Use a whitelist for characters to ensure stability (adapted from spawncamping-wallhack)
-				-- This regex covers letters, numbers, and a wide range of symbols.
-				local whitelist = '[%%%+%-%!%@%#%$%^%&%*%(%)%=%_%.%,%:%;%\'%"%>%<%?%/%~%|%w%[%]%{%}%`%\\]'
-				
-				if c and c ~= "" then
-					if c:match(whitelist) or c == " " then
-						if evType ~= "InputEventType_Release" then
-							searchString = searchString .. c
-							if instant and whee then whee:SongSearch(searchString) end
-							MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
-						end
+				if editing and button:match("^devicebutton_") and not button:find("mouse", 1, true) then
+					local shifted = INPUTFILTER:IsBeingPressed("left shift") or INPUTFILTER:IsBeingPressed("right shift")
+					local character = event.char
+					if not character or character == "" then character = DeviceBtnToChar(btn, shifted) end
+					if character and character ~= "" and not character:find("%c") then
+						setSearchText(searchString .. character, instant)
 					end
 					return true
 				end
-
-				-- Fallback: Sink most input to prevent music wheel movement while typing
-				-- but allow mouse movement and clicks to close the search
-				if btn:match("mouse") then return false end
-				return true
+				return not button:find("mouse", 1, true)
 			end
 
 			-- 3. Key Presses (Global Shortcuts)
@@ -974,11 +988,8 @@ main_af[#main_af + 1] = Def.ActorFrame {
 
 				-- Global Del to clear search
 				if btn:lower() == "devicebutton_delete" then
-					if searchString ~= "" then
-						searchString = ""
-						local whee = top.GetMusicWheel and top:GetMusicWheel() or (HV.SSM and HV.SSM.GetMusicWheel and HV.SSM:GetMusicWheel())
-						if whee then whee:SongSearch("") end
-						MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString})
+					if searchString ~= "" or appliedSearch ~= "" then
+						setSearchText("", true)
 						return true
 					end
 				end
@@ -1937,72 +1948,41 @@ main_af[#main_af + 1] = Def.ActorFrame {
 		LoadFont("Common Normal") .. {
 			Name = "SearchPlaceholder",
 			InitCommand = function(self)
-				self:halign(0):valign(0.5):xy(32, 14):zoom(0.35):diffuse(subText):settext("Click here to Search (or Ctrl + 4)")
+				self:halign(0):valign(0.5):xy(32, 14):zoom(0.35):maxwidth(255 / 0.35)
+					:diffuse(subText):settext("Click here to Search (or Ctrl + 4)")
+			end,
+			DrawSearchCommand = function(self, params)
+				local focused = params.focused
+				local query = focused and searchString or appliedSearch
+				local failed = query ~= "" and query == appliedSearch and not searchHasMatches
+				local label = focused and query or ("Search: " .. query)
+				if query == "" then
+					label = focused and "Search songs" or "Click here to Search (or Ctrl + 4)"
+				end
+				self:settext(label):diffuse(query == "" and subText or brightText)
+				local x = query == "" and 28 or 34 + self:GetZoomedWidth()
+				local parent = self:GetParent()
+				parent:GetChild("Cursor"):x(x):visible(focused)
+				parent:GetChild("SearchStatus"):visible(failed)
 			end,
 			SelectMusicTabChangedMessageCommand = function(self, params)
-				if params.Tab == "SEARCH" then
-					if searchString == "" then
-						self:settext("Type to search..."):diffuse(subText)
-					else
-						self:settext(searchString):diffuse(brightText)
-					end
-				else
-					if searchString ~= "" then
-						self:settext("Search: " .. searchString):diffuse(brightText)
-					else
-						self:settext("Click here to Search (or Ctrl + 4)"):diffuse(subText)
-					end
-				end
+				self:playcommand("DrawSearch", {focused = params.Tab == "SEARCH"})
 			end,
-			SearchQueryUpdatedMessageCommand = function(self, params)
-				if HV.ActiveTab == "SEARCH" then
-					if searchString == "" then
-						self:settext("Type to search..."):diffuse(subText)
-					else
-						self:settext(searchString):diffuse(brightText)
-					end
-				else
-					if searchString ~= "" then
-						self:settext("Search: " .. searchString):diffuse(brightText)
-					else
-						self:settext("Click here to Search (or Ctrl + 4)"):diffuse(subText)
-					end
-				end
-			end
+			SearchQueryUpdatedMessageCommand = function(self)
+				self:playcommand("DrawSearch", {focused = HV.ActiveTab == "SEARCH"})
+			end,
 		},
-		-- Integrated Blinking Cursor
 		LoadFont("Common Normal") .. {
 			Name = "Cursor",
 			InitCommand = function(self)
-				self:halign(0):valign(0.5):xy(32, 14):zoom(0.35):diffuse(accentColor):settext("|"):visible(false)
+				self:halign(0):valign(0.5):xy(28, 14):zoom(0.35):diffuse(accentColor):settext("|"):visible(false)
 			end,
-			SelectMusicTabChangedMessageCommand = function(self, params)
-				if params.Tab == "SEARCH" then
-					self:visible(true):playcommand("Blink")
-					self:playcommand("Position")
-				else
-					self:visible(false):stoptweening()
-				end
+		},
+		LoadFont("Common Normal") .. {
+			Name = "SearchStatus",
+			InitCommand = function(self)
+				self:halign(1):valign(0.5):xy(293, 23):zoom(0.25):diffuse(subText):settext("No matches"):visible(false)
 			end,
-			SearchQueryUpdatedMessageCommand = function(self, params)
-				self:playcommand("Position")
-			end,
-			PositionCommand = function(self)
-				local placeholder = self:GetParent():GetChild("SearchPlaceholder")
-				if placeholder then
-					if searchString == "" then
-						-- Left of "Type to search..."
-						self:x(32 - 4) 
-					else
-						-- Right of query
-						local textW = placeholder:GetZoomedWidth()
-						self:x(32 + textW + 2)
-					end
-				end
-			end,
-			BlinkCommand = function(self)
-				self:stoptweening():diffusealpha(1):sleep(0.5):linear(0.1):diffusealpha(0):sleep(0.3):queuecommand("Blink")
-			end
 		},
 	},
 

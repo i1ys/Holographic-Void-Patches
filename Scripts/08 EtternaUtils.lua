@@ -941,37 +941,22 @@ end
 -- JUDGE RESCORING
 ------------------------------------------------------------
 -- For Window-based Scoring
+local rescoredJudgmentKeys = {"W1", "W2", "W3", "W4", "W5", "Miss"}
+
 function getRescoredJudge(offsetVector, judgeScale, judge)
-	local tso = ms.JudgeScalers
-	local ts = (tso and tso[judgeScale]) or 1.0
-	judge = tonumber(judge) or 1
-	local windows = {22.5, 45.0, 90.0, 135.0, 180.0, 500.0}
-	local lowerBound = judge > 1 and windows[judge - 1] * ts or -1.0
-	local upperBound = judge == 5 and math.max(windows[judge] * ts, 180.0) or windows[judge] * ts
-	local judgeCount = 0
+	if type(offsetVector) ~= "table" then return 0 end
 
-	if type(offsetVector) ~= "table" then return judgeCount end
-
-	if judge > 5 then
-		lowerBound = math.max(lowerBound, 180.0)
-		for i = 1, #offsetVector do
-			local x = tonumber(offsetVector[i])
-			if x and math.abs(x) > lowerBound then
-				judgeCount = judgeCount + 1
-			end
-		end
-	else
-		for i = 1, #offsetVector do
-			local x = tonumber(offsetVector[i])
-			if x then
-				x = math.abs(x)
-			end
-			if x and x > lowerBound and x <= upperBound then
-				judgeCount = judgeCount + 1
-			end
+	local target = rescoredJudgmentKeys[tonumber(judge) or 1]
+	if not target then return 0 end
+	local windows = HV.Judgment.GetWindows(ms.JudgeScalers[judgeScale])
+	local count = 0
+	for _, value in ipairs(offsetVector) do
+		local offset = tonumber(value)
+		if offset and HV.Judgment.ClassifyOffset(offset, windows) == target then
+			count = count + 1
 		end
 	end
-	return judgeCount
+	return count
 end
 
 -- erf constants
@@ -1740,30 +1725,6 @@ function getJ4NormalizedPercentage(score)
 		end
 	end
 	return 0
-end
-
-------------------------------------------------------------
--- OFFSET TO JUDGE COLOR
-------------------------------------------------------------
-function offsetToJudgeColor(offset, scale)
-	if not offset then return HVColor.GetJudgmentColor("Miss") end
-	scale = scale or 1
-	local absOff = math.abs(offset)
-	if HV.EmulateRidiculousEnabled() and absOff <= 11.25 * scale then
-		return HVColor.GetJudgmentColor("Ridiculous")
-	elseif absOff <= 22.5 * scale then
-		return HVColor.GetJudgmentColor("W1")
-	elseif absOff <= 45 * scale then
-		return HVColor.GetJudgmentColor("W2")
-	elseif absOff <= 90 * scale then
-		return HVColor.GetJudgmentColor("W3")
-	elseif absOff <= 135 * scale then
-		return HVColor.GetJudgmentColor("W4")
-	elseif absOff <= 180 * scale then
-		return HVColor.GetJudgmentColor("W5")
-	else
-		return HVColor.GetJudgmentColor("Miss")
-	end
 end
 
 ------------------------------------------------------------

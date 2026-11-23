@@ -49,13 +49,6 @@ local function hasAssistEnabled(po, modStr)
 	return string.find(modStr, "AssistClap") or string.find(modStr, "AssistTick") or string.find(modStr, "AutoPlay")
 end
 
--- Cache the selected song's main BPM before the overlay actor is created.
-local bpms = {0, 0}
-if GAMESTATE:GetCurrentSong() then
-	local main = getMainBPM(GAMESTATE:GetCurrentSong(), GAMESTATE:GetCurrentSteps())
-	bpms = {main, main}
-end
-
 t[#t + 1] = Def.ActorFrame {
 	Name = "ModIcons",
 	InitCommand = function(self)
@@ -130,35 +123,13 @@ t[#t + 1] = Def.ActorFrame {
 		speedActor:diffuse(accent)
 
 		local rateActor = self:GetChild("Rate")
-		local bpmActor = self:GetChild("BPM")
-		if bpmActor then
-			bpmActor:settext(bpms[1] > 0 and string.format("[%d]", math.round(bpms[1] * tRate)) or "[???]")
-			bpmActor:diffuse(accent)
-		end
 		rateActor:settext(formatRateValue(tRate))
 		rateActor:diffuse(accent)
 
 		-- Life Difficulty
-		local lifeKey = "L7"
-		if tLife <= 1 then
-			lifeKey = "L1"
-		elseif tLife == 2 then
-			lifeKey = "L2"
-		elseif tLife == 3 then
-			lifeKey = "L3"
-		elseif tLife == 4 then
-			lifeKey = "L4"
-		elseif tLife == 5 then
-			lifeKey = "L5"
-		elseif tLife == 6 then
-			lifeKey = "L6"
-		end
-		local lifeColor = (HVColor and HVColor.GetLifeBarColor and HVColor.GetLifeBarColor(lifeKey))
-			or color("#FFFFFF")
-		
 		local lifeActor = self:GetChild("Life")
 		lifeActor:settext(string.format("L%d", tLife))
-		lifeActor:diffuse(lifeColor)
+		lifeActor:diffuse(accent)
 
 		-- Judge Difficulty
 		local judgeActor = self:GetChild("Judge")
@@ -227,8 +198,7 @@ t[#t + 1] = Def.ActorFrame {
 
 	-- Prefix Icons (L, J, F, AST)
 	LoadFont("Common Normal") .. { Name = "Speed", InitCommand = function(self) self:zoom(0.4):halign(0) end },
-	LoadFont("Common Normal") .. { Name = "Rate", InitCommand = function(self) self:x(42):y(-4):zoom(0.4):halign(0) end },
-	LoadFont("Common Normal") .. { Name = "BPM", InitCommand = function(self) self:x(42):y(6):zoom(0.4):halign(0):diffuse(HVColor and HVColor.Accent or color("#5ABAFF")) end },
+	LoadFont("Common Normal") .. { Name = "Rate", InitCommand = function(self) self:x(42):zoom(0.4):halign(0) end },
 	LoadFont("Common Normal") .. { Name = "Life", InitCommand = function(self) self:x(82):zoom(0.4):halign(0) end },
 	LoadFont("Common Normal") .. { Name = "Judge", InitCommand = function(self) self:x(110):zoom(0.4):halign(0):diffuse(HVColor and HVColor.Accent or color("#5ABAFF")) end },
 	LoadFont("Common Normal") .. { Name = "Fail", InitCommand = function(self) self:x(138):zoom(0.4):halign(0):diffuse(color("#CF9898")) end },

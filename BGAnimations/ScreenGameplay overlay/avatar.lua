@@ -173,7 +173,7 @@ local t = Def.ActorFrame {
 		end
 	},
 	
-	-- Judge Display (Customized)
+	-- Judge Display
 	LoadFont("Common Normal") .. {
 		InitCommand = function(self)
 			self:xy(panelW - 6, 22):zoom(fontZoomSmall):halign(1)
@@ -181,18 +181,7 @@ local t = Def.ActorFrame {
 
 		BeginCommand = function(self) self:queuecommand("Set") end,
 		SetCommand = function(self)
-			local j = GetTimingDifficulty()
-
-			local names = {
-				[4] = "Normal",
-				[5] = "Pro",
-				[6] = "Master",
-				[7] = "Insane",
-				[8] = "Godly",
-				[9] = "Justice"
-			}
-			local name = names[j] or "Custom"
-			self:settext(string.format("%s (J%d)", name, j))
+			self:settextf("J%d", GetTimingDifficulty())
 			self:diffuse(accentColor)
 		end
 
@@ -248,7 +237,7 @@ local t = Def.ActorFrame {
 	LoadFont("Common Normal") .. {
 		Name = "LifePct",
 		InitCommand = function(self)
-			self:xy(avatarSize + 6, 52):halign(0):zoom(fontZoomSmall * 1.1)
+			self:xy(avatarSize + 6, 52):halign(0):zoom(fontZoomSmall * 1.1):diffuse(accentColor)
 		end,
 		BeginCommand = function(self)
 			self:playcommand("UpdateLife")
@@ -260,25 +249,7 @@ local t = Def.ActorFrame {
 			self:playcommand("UpdateLife")
 		end,
 		UpdateLifeCommand = function(self)
-			local life = PLife()
-			self:settextf("%.1f%%", life * 100)
-
-			local diff = GetLifeDifficulty()
-			local lifeKey = "L7"
-			if diff <= 1 then
-				lifeKey = "L1"
-			elseif diff == 2 then
-				lifeKey = "L2"
-			elseif diff == 3 then
-				lifeKey = "L3"
-			elseif diff == 4 then
-				lifeKey = "L4"
-			elseif diff == 5 then
-				lifeKey = "L5"
-			elseif diff == 6 then
-				lifeKey = "L6"
-			end
-			self:diffuse(HVColor.GetLifeBarColor(lifeKey))
+			self:settextf("%.1f%%", PLife() * 100)
 		end
 	},
 
@@ -315,30 +286,6 @@ local t = Def.ActorFrame {
 			self:smooth(0.1)
 			local barMaxW = panelW - avatarSize - 44
 			self:zoomx(PLife() * barMaxW)
-			-- Color shift based on Life Difficulty and low life
-			local life = PLife()
-			if life < 0.3 and life > 0 then
-				self:diffuse(HVColor.GetLifeBarColor("Danger"))
-			elseif life <= 0 then
-				self:diffuse(HVColor.GetLifeBarColor("Danger"))
-			else
-				local diff = GetLifeDifficulty()
-				local lifeKey = "L7"
-				if diff <= 1 then
-					lifeKey = "L1"
-				elseif diff == 2 then
-					lifeKey = "L2"
-				elseif diff == 3 then
-					lifeKey = "L3"
-				elseif diff == 4 then
-					lifeKey = "L4"
-				elseif diff == 5 then
-					lifeKey = "L5"
-				elseif diff == 6 then
-					lifeKey = "L6"
-				end
-				self:diffuse(HVColor.GetLifeBarColor(lifeKey))
-			end
 		end
 	},
 

@@ -39,7 +39,6 @@ t[#t + 1] = LoadActor("intro")
 t[#t + 1] = LoadActor("messagebox")
 t[#t + 1] = LoadActor("elements/ngindicator.lua", gameplay)
 t[#t + 1] = LoadActor("elements/syncchallenge.lua", gameplay)
-t[#t + 1] = LoadActor("elements/cleareffect.lua", gameplay)
 t[#t + 1] = LoadActor("elements/autofail.lua", gameplay)
 t[#t + 1] = LoadActor("elements/nowplaying.lua")
 

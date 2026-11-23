@@ -166,13 +166,7 @@ local function cycleHoverMode(step)
 end
 
 local function getJudgeWindows()
-	local windows = {
-		W1 = 22.5 * (tso or 1),
-		W2 = 45 * (tso or 1),
-		W3 = 90 * (tso or 1),
-		W4 = 135 * (tso or 1),
-		W5 = 180 * (tso or 1),
-	}
+	local windows = HV.Judgment.GetWindows(tso)
 	if usingCustomWindows and getCustomWindowConfigJudgmentWindow then
 		windows.W1 = getCustomWindowConfigJudgmentWindow("TapNoteScore_W1") or windows.W1
 		windows.W2 = getCustomWindowConfigJudgmentWindow("TapNoteScore_W2") or windows.W2
@@ -181,17 +175,6 @@ local function getJudgeWindows()
 		windows.W5 = getCustomWindowConfigJudgmentWindow("TapNoteScore_W5") or windows.W5
 	end
 	return windows
-end
-
-local function classifyOffset(offsetMs, windows)
-	local absOffset = math.abs(offsetMs or 0)
-	if absOffset >= 1000 or absOffset > windows.W5 then return "Miss" end
-	if absOffset <= windows.W1 then return "W1" end
-	if absOffset <= windows.W2 then return "W2" end
-	if absOffset <= windows.W3 then return "W3" end
-	if absOffset <= windows.W4 then return "W4" end
-	if absOffset <= windows.W5 then return "W5" end
-	return "Miss"
 end
 
 local function getClearTypeFromCounts(judgments, wifePct)
@@ -316,7 +299,7 @@ local function calculateSliceStats(x1, x2, params)
 				noteCount = noteCount + 1
 				local offset = params.dvt[i]
 				wifePoints = wifePoints + wife3(math.abs(offset), tso)
-				local bucket = classifyOffset(offset, windows)
+				local bucket = HV.Judgment.ClassifyOffset(offset, windows)
 				judgments[bucket] = (judgments[bucket] or 0) + 1
 
 				if math.abs(offset) < 1000 then
@@ -936,7 +919,7 @@ t[#t+1] = Def.ActorMultiVertex{
 			if params.dvt[i] ~= nil and wuab[i] ~= nil then
 				local offset = params.dvt[i]
 				wifePoints = wifePoints + wife3(math.abs(offset), tso)
-				local bucket = classifyOffset(offset, windows)
+				local bucket = HV.Judgment.ClassifyOffset(offset, windows)
 				judgments[bucket] = (judgments[bucket] or 0) + 1
 
 				if math.abs(offset) < 1000 then
@@ -1014,10 +997,18 @@ t[#t+1] = Def.ActorMultiVertex{
 }
 
 -- Judgment threshold lines (symmetric)
-local fantabars = {22.5, 45, 90, 135}
-local bantafars = {"TapNoteScore_W2", "TapNoteScore_W3", "TapNoteScore_W4", "TapNoteScore_W5"}
-local santabarf = {"TapNoteScore_W1", "TapNoteScore_W2", "TapNoteScore_W3", "TapNoteScore_W4"}
-for i = 1, #fantabars do
+local thresholdKeys = {"W1", "W2", "W3", "W4", "W5"}
+local function getThresholdLine(index)
+	local fit = getJudgeWindows()[thresholdKeys[index]]
+	if usingCustomWindows and customOffsetToJudgeColor then
+		local customWindows = getCurrentCustomWindowConfigJudgmentWindowTable()
+		if customWindows then return fit, customOffsetToJudgeColor(fit + 1, customWindows) end
+	end
+	local palette = HV.Color.GetJudgmentPalette()
+	return fit, palette[thresholdKeys[index + 1]]
+end
+
+for i = 1, #thresholdKeys - 1 do
 	-- Upper line
 	t[#t + 1] = Def.Quad {
 		InitCommand = function(self) self:halign(0):valign(0) end,
@@ -1025,17 +1016,7 @@ for i = 1, #fantabars do
 			params = checkParams(params)
 			self:zoomto(params.width, 1)
 			
-			local fit = fantabars[i] * (tso or 1)
-			if usingCustomWindows and getCustomWindowConfigJudgmentWindow then
-				fit = getCustomWindowConfigJudgmentWindow(santabarf[i])
-			end
-			
-			local c = offsetToJudgeColor(fit + 1, tso)
-			if usingCustomWindows and customOffsetToJudgeColor then
-				local customWindows = getCurrentCustomWindowConfigJudgmentWindowTable()
-				if customWindows then c = customOffsetToJudgeColor(fit + 1, customWindows) end
-			end
-
+			local fit, c = getThresholdLine(i)
 			local visible = math.abs(fit) <= maxOffset
 			self:visible(visible)
 			if visible then
@@ -1052,17 +1033,7 @@ for i = 1, #fantabars do
 			params = checkParams(params)
 			self:zoomto(params.width, 1)
 			
-			local fit = fantabars[i] * (tso or 1)
-			if usingCustomWindows and getCustomWindowConfigJudgmentWindow then
-				fit = getCustomWindowConfigJudgmentWindow(santabarf[i])
-			end
-			
-			local c = offsetToJudgeColor(fit + 1, tso)
-			if usingCustomWindows and customOffsetToJudgeColor then
-				local customWindows = getCurrentCustomWindowConfigJudgmentWindowTable()
-				if customWindows then c = customOffsetToJudgeColor(fit + 1, customWindows) end
-			end
-
+			local fit, c = getThresholdLine(i)
 			local visible = math.abs(fit) <= maxOffset
 			self:visible(visible)
 			if visible then
@@ -1299,6 +1270,9 @@ t[#t+1] = Def.ActorMultiVertex{
 		end
 
 		local stepsTD = params.steps:GetTimingData()
+		local judgmentPalette = HV.Color.GetJudgmentPalette()
+		local windows = HV.Judgment.GetWindows(tso, HV.EmulateRidiculousEnabled())
+		local customWindows = usingCustomWindows and getCurrentCustomWindowConfigJudgmentWindowTable()
 		for i = 1, #params.nrv do
 			wuab[i] = stepsTD:GetElapsedTimeFromNoteRow(params.nrv[i])
 		end
@@ -1307,11 +1281,8 @@ t[#t+1] = Def.ActorMultiVertex{
 			if params.dvt[i] ~= nil then
 				local offsetMs = params.dvt[i]
 				local rawOffset = offsetMs
-				local c = offsetToJudgeColor(offsetMs, tso)
-				if usingCustomWindows and customOffsetToJudgeColor then
-					local customWindows = getCurrentCustomWindowConfigJudgmentWindowTable()
-					if customWindows then c = customOffsetToJudgeColor(offsetMs, customWindows) end
-				end
+				local c = customWindows and customOffsetToJudgeColor(offsetMs, customWindows)
+					or judgmentPalette[HV.Judgment.ClassifyOffset(offsetMs, windows)]
 				c = {c[1], c[2], c[3], 1}
 
 				local x = fitX(wuab[i]) + params.width / 2

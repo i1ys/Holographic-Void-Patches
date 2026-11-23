@@ -151,10 +151,13 @@ function HVColor.RefreshJudgmentColors()
 	end
 end
 
---- Get a color for a Judgment type based on style.
+function HV.Color.GetJudgmentPalette()
+	HVColor.RefreshJudgmentColors()
+	return HVColor.Judgment
+end
+
 function HVColor.GetJudgmentColor(judge)
-	HVColor.RefreshJudgmentColors() -- Ensure we are using correct palette
-	local palette = HVColor.Judgment
+	local palette = HV.Color.GetJudgmentPalette()
 	
 	if not judge then return palette.Miss end
 	local s = tostring(judge):gsub("TapNoteScore_", ""):gsub("HoldNoteScore_", "")

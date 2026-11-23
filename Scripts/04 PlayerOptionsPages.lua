@@ -24,6 +24,10 @@ function PONextScreen(currentKey)
 	for _, t in ipairs(tabs) do
 		table.insert(choices, t.label)
 	end
+	local profile = currentKey == "Main" and HV.Config.ProfileDirectory(PLAYER_1)
+	local playerState = GAMESTATE:GetPlayerState(PLAYER_1)
+	local preferred = playerState:GetPlayerOptions("ModsLevel_Preferred")
+	local savedSkin, savedReverse = preferred:NoteSkin(), preferred:Reverse()
 
 	return {
 		Name = "PONextScreen",
@@ -39,6 +43,17 @@ function PONextScreen(currentKey)
 		SaveSelections = function(self, list, pn)
 			for i, selected in ipairs(list) do
 				if selected then
+					if profile and profile == HV.Config.ProfileDirectory(PLAYER_1) then
+						local options = playerState:GetPlayerOptions("ModsLevel_Preferred")
+						local skin, reverse = options:NoteSkin(), options:Reverse()
+						if skin ~= savedSkin or reverse ~= savedReverse then
+							if PROFILEMAN:SaveProfile() then
+								savedSkin, savedReverse = skin, reverse
+							else
+								SCREENMAN:SystemMessage("Could not save the current player profile.")
+							end
+						end
+					end
 					if i == 1 then
 						-- "Gameplay" — exit to gameplay
 						local allowGameplay = HV.IsGameplayCustomizationEnabled()

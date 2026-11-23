@@ -31,7 +31,7 @@ return Def.ActorFrame {
 		SCREENMAN:GetTopScreen():AddInputCallback(MovableInput)
 		self:SetUpdateFunction(highlight)
 	end,
-	OffCommand = function(self)
+	EndCommand = function(self)
 		if allowedCustomization then
 			local saved, err = HV.SaveGameplayLayout()
 			if not saved and err then SCREENMAN:SystemMessage(err) end

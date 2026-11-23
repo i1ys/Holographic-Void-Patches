@@ -226,11 +226,6 @@ local HVPrefRows = {
 
 	
 	-- Background Effect Style
-	HV_BackgroundEffect = {
-		Default = "Grid",
-		Choices = {"Grid", "Hex", "Scanlines", "Flow", "Rays", "None"},
-		Values  = {"Grid", "Hex", "Scanlines", "Flow", "Rays", "None"},
-	},
 
 	-- Title Screen Text Mode
 	HV_QuotesMode = {
@@ -501,7 +496,7 @@ function HVThemeOptionsLines()
 	-- Logical grouping of theme options
 	local l = table.concat({
 		-- General / Visual
-		"HV_BGAnimIntensity", "HV_Parallax", "HV_BackgroundEffect", "HV_Particles", "HV_EnableGlow", "HV_QuotesMode",
+		"HV_BGAnimIntensity", "HV_Parallax", "HV_Particles", "HV_EnableGlow", "HV_QuotesMode",
 		"HV_SongBackgroundBrightness",
 		
 		-- Music Select

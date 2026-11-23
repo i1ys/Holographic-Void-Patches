@@ -1,4 +1,9 @@
 local gameplay = ...
+
+local function resetLivePercent(self)
+	self.liveWifePercent = nil
+	self:playcommand("Update")
+end
 local gameplayCoord = gameplay.gameplayCoord
 local gameplaySize = gameplay.gameplaySize
 local minimalisticHUDVisible = gameplay.minimalisticHUDVisible
@@ -37,8 +42,6 @@ return Def.ActorFrame {
 		Name = "ScoreValue",
 		InitCommand = function(self)
 			self:zoom(0.45):diffuse(brightText):diffusealpha(0.7)
-			self.currWifePoints = 0
-			self.currScoredTaps = 0
 			self.emulatedPoints = 0
 			self.emulatedMaxPoints = 0
 			self.replayWifePoints = 0
@@ -59,9 +62,17 @@ return Def.ActorFrame {
 			end
 			self:sleep(0.05):queuecommand("UpdateAutoplay")
 		end,
+		PracticeModeResetMessageCommand = resetLivePercent,
+		PracticeModeReloadMessageCommand = resetLivePercent,
 		JudgmentMessageCommand = function(self, msg)
-			if msg.Player ~= GAMESTATE:GetMasterPlayerNumber() then return end
-			if msg.HoldNoteScore then return end -- Skip holds, handled in HoldNoteScoreMessageCommand
+			local player = GAMESTATE:GetMasterPlayerNumber()
+			if msg.Player ~= player then return end
+			local wife = HV.Score.GetLiveWifePercent(msg, player)
+			if wife then self.liveWifePercent = wife end
+			if msg.HoldNoteScore then
+				self:playcommand("Update")
+				return
+			end
 			if msg.TapNoteScore and msg.TapNoteScore ~= "TapNoteScore_AvoidMine" and msg.TapNoteScore ~= "TapNoteScore_CheckpointHit" and msg.TapNoteScore ~= "TapNoteScore_CheckpointMiss" then
 				if HV.IsReplayPlayback and HV.IsReplayPlayback() then
 					if msg.TapNoteScore ~= "TapNoteScore_HitMine" then
@@ -83,18 +94,6 @@ return Def.ActorFrame {
 						self.emulatedMaxPoints = self.emulatedMaxPoints + HV.GetCosmeticTapMax(selection)
 					end
 					self.emulatedPoints = self.emulatedPoints + HV.GetCosmeticPointValue(selection, msg.TapNoteOffset and math.abs(msg.TapNoteOffset) * 1000 or nil, msg.TapNoteScore)
-				end
-				if msg.TapNoteOffset then
-					self.currWifePoints = self.currWifePoints + wife3(math.abs(msg.TapNoteOffset) * 1000, gameplay.judgeScale, "Wife3")
-					self.currScoredTaps = self.currScoredTaps + 1
-				elseif msg.TapNoteScore == "TapNoteScore_Miss" then
-					self.currWifePoints = self.currWifePoints - 5.5
-					self.currScoredTaps = self.currScoredTaps + 1
-				elseif msg.TapNoteScore == "TapNoteScore_HitMine" then
-					self.currWifePoints = self.currWifePoints - 7.0
-				elseif msg.TapNoteScore ~= "TapNoteScore_None" then
-					self.currWifePoints = self.currWifePoints + 2.0
-					self.currScoredTaps = self.currScoredTaps + 1
 				end
 			end
 			self:playcommand("Update")
@@ -169,28 +168,7 @@ return Def.ActorFrame {
 			elseif scoreMode == "Subtractive" then
 				wifePct = ((gameplay.maxPoints - gameplay.pointsLost) / gameplay.maxPoints) * 100
 			else
-				if pss then
-					local notesPassed = pss:GetTapNoteScores("TapNoteScore_W1") +
-						pss:GetTapNoteScores("TapNoteScore_W2") +
-						pss:GetTapNoteScores("TapNoteScore_W3") +
-						pss:GetTapNoteScores("TapNoteScore_W4") +
-						pss:GetTapNoteScores("TapNoteScore_W5") +
-						pss:GetTapNoteScores("TapNoteScore_Miss")
-					local ngCount = pss:GetHoldNoteScores("HoldNoteScore_LetGo") +
-						pss:GetHoldNoteScores("HoldNoteScore_MissedHold")
-					if type(pss.GetRollNoteScores) == "function" then
-						ngCount = ngCount + pss:GetRollNoteScores("RollNoteScore_LetGo") +
-							pss:GetRollNoteScores("RollNoteScore_MissedRoll")
-					end
-					local currentMaxPoints = self.currScoredTaps * 2
-					if currentMaxPoints > 0 then
-						wifePct = math.min(((self.currWifePoints - ngCount * 4.5) / currentMaxPoints) * 100, 100)
-					elseif self.currWifePoints - ngCount * 4.5 < 0 then
-						wifePct = ((self.currWifePoints - ngCount * 4.5) / 2) * 100
-					else
-						wifePct = 100.0000
-					end
-				end
+				wifePct = self.liveWifePercent or 0
 			end
 			if not wifePct then return end
 			self:settext(string.format("%.4f%%", wifePct))

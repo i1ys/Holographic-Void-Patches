@@ -5,6 +5,7 @@ local animateGameplayHUDVisibility = gameplay.animateGameplayHUDVisibility
 local showComboBreakHighlight = HV.ComboBreakHighlight() and not gameplay.isSync
 
 if showComboBreakHighlight then
+local judgmentPalette = HV.Color.GetJudgmentPalette()
 
 -- Helper: build a gradient AMV lane quad.
 -- xOffset: lane center X (relative to parent ActorFrame at SCREEN_CENTER)
@@ -75,10 +76,7 @@ return Def.ActorFrame {
 							  params.TapNoteScore == "TapNoteScore_W4")
 
 		if isComboBreak and params.Notes then
-			local jColor = color("#FF5050")
-			if params.TapNoteScore == "TapNoteScore_W4" then jColor = HVColor.GetJudgmentColor("W4")
-			elseif params.TapNoteScore == "TapNoteScore_W5" then jColor = HVColor.GetJudgmentColor("W5")
-			elseif params.TapNoteScore == "TapNoteScore_Miss" then jColor = HVColor.GetJudgmentColor("Miss") end
+			local jColor = judgmentPalette[ToEnumShortString(params.TapNoteScore)]
 
 			-- Flash lanes that had notes in this judgment
 			for i = 1, 4 do
