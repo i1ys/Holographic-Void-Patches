@@ -8,11 +8,10 @@ local ThemePrefs = HV.LegacyPrefs
 -- Supports hover tooltip showing running score/stats at cursor position.
 
 local tst = ms.JudgeScalers
-local judge = (PREFSMAN:GetPreference("SortBySSRNormPercent") and 4 or GetTimingDifficulty())
+local judge = math.max(4, math.min(9, PREFSMAN:GetPreference("SortBySSRNormPercent") and 4 or GetTimingDifficulty()))
 local tso = tst[judge]
 local plotScale = 100
 local maxOffset = math.max(180, 180 * (tso or 1))
-local dvt = {}
 
 local function clampJudge()
 	if judge < 4 then judge = 4 end
@@ -30,52 +29,26 @@ local function setPlotScale(scale)
 	MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 end
 
-local function setPlotScaleToWorstHit()
-	local worst = 0
-	for i = 1, #dvt do
-		local offset = math.abs(dvt[i] or 0)
-		-- Ignore misses (offset >= 1000ms) when scaling to worst hit
-		if offset < 1000 and offset > worst then worst = offset end
-	end
-	if worst > 0 then
-		setPlotScale(math.ceil(worst / math.max(180, 180 * (tso or 1)) * 100))
-	end
-end
-
 local dotWidth = 2
-local dotHeight = 2
-
-local nrv = {}
-local ctt = {}
-local ntt = {}
-local wuab = {}
-local columns = 4
 local finalSecond = 1
-local td
-local oddColumns = false
-local middleColumn = 1.5
-local cbl, cbr, cbm = 0, 0, 0
-local showMiddle = false
-
+local plotParams
+local setScoreKey
+local setWidth, setHeight = 0, 0
+local setRate = 1
+local setMania, setChordCohesion = false, false
 local handspecific = false
 local left = false
 local middle = false
-local setWidth = 0
-local setHeight = 0
-local setSong
-local setSteps
-local setScoreKey
-
 local usingCustomWindows = false
 
 local trendMetricModes = {
-	{id = "wife", label = "Wife%"},
-	{id = "grade", label = "Grade"},
-	{id = "clear", label = "Clear Type"},
+	{id = "wife", label = "Tap Wife%"},
+	{id = "grade", label = "Tap Grade"},
+	{id = "clear", label = "Tap Clear"},
 	{id = "mean", label = "Mean"},
 	{id = "sd", label = "Std Dev"},
-	{id = "ma", label = "MA"},
-	{id = "pa", label = "PA"},
+	{id = "ma", label = "Marv Count"},
+	{id = "pa", label = "Perf Count"},
 	{id = "off", label = "Off"},
 }
 local trendColorModes = {
@@ -107,7 +80,6 @@ end
 
 local selectedSliceX1 = nil
 local selectedSliceX2 = nil
-local selectedSliceStats = nil
 local slicePercent = getSavedOrDefault("HV_OffsetGraphSlicePercent", 25)
 local hoverModeOptions = {
 	{id = "point", label = "Point"},
@@ -119,7 +91,6 @@ for i, mode in ipairs(hoverModeOptions) do
 	if mode.id == savedHoverId then hoverModeIndex = i break end
 end
 local setSliceByCenterX
-local fitX
 
 local function clampValue(v, lo, hi)
 	if v < lo then return lo end
@@ -128,8 +99,9 @@ local function clampValue(v, lo, hi)
 end
 
 local function getMouseLocalX(bg)
-	if not bg then return 0 end
-	return clampValue(INPUTFILTER:GetMouseX() - bg:GetTrueX(), 0, setWidth)
+	if not bg or bg:GetZoomedWidth() <= 0 then return 0 end
+	local x = (INPUTFILTER:GetMouseX() - bg:GetTrueX()) * setWidth / bg:GetZoomedWidth()
+	return clampValue(x, 0, setWidth)
 end
 
 local function getCurrentSlicePercent()
@@ -143,7 +115,7 @@ local function adjustSlicePercent(delta)
 	delta = delta or 0
 	slicePercent = clampValue((slicePercent or 25) + delta, 1, 100)
 	if selectedSliceX1 and selectedSliceX2 then
-		setSliceByCenterX((selectedSliceX1 + selectedSliceX2) / 2, {width = setWidth, nrv = nrv, dvt = dvt})
+		setSliceByCenterX((selectedSliceX1 + selectedSliceX2) / 2)
 	end
 	if saveGraphPrefs then saveGraphPrefs() end
 	MESSAGEMAN:Broadcast("JudgeDisplayChanged")
@@ -161,7 +133,6 @@ local function cycleHoverMode(step)
 	if getCurrentHoverModeId() == "point" then
 		selectedSliceX1 = nil
 		selectedSliceX2 = nil
-		selectedSliceStats = nil
 	end
 	if saveGraphPrefs then saveGraphPrefs() end
 	MESSAGEMAN:Broadcast("JudgeDisplayChanged")
@@ -179,7 +150,188 @@ local function getJudgeWindows()
 	return windows
 end
 
-local function getClearTypeFromCounts(judgments, wifePct)
+local judgmentKeys = {"W1", "W2", "W3", "W4", "W5", "Miss"}
+
+local plotEvents, prefixes = {}, {}
+local middleColumn = 1.5
+local oddColumns = false
+local cbl, cbr, cbm = 0, 0, 0
+local showMiddle = false
+local handStats = {}
+
+local function finite(value)
+	return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+local function isTapType(kind)
+	return kind == "TapNoteType_Tap" or kind == "TapNoteType_HoldHead" or kind == "TapNoteType_Lift"
+end
+
+local function rangeStats(first, last)
+	local before, after = prefixes[first - 1], prefixes[last]
+	if not after or first > last then return end
+	local stats = {notes = after.notes - before.notes, judgments = {}}
+	for i, key in ipairs(judgmentKeys) do
+		stats.judgments[key] = after[i] - before[i]
+	end
+	local hits = after.hits - before.hits
+	if hits > 0 then
+		local sum = after.sum - before.sum
+		stats.mean = sum / hits
+		if hits > 1 then
+			local squares = after.squares - before.squares
+			stats.sd = math.sqrt(math.max(0, (squares - sum * sum / hits) / (hits - 1)))
+		end
+	end
+	if not usingCustomWindows and not setMania and stats.notes > 0 then
+		stats.wife = (after.points - before.points) / (stats.notes * 2) * 100
+	end
+	return stats
+end
+
+local function buildPlot(params)
+	plotEvents, prefixes, handStats = {}, {}, {}
+	if not params.steps then return end
+	local timing = params.steps:GetTimingData()
+	local rows, offsets = params.nrv or {}, params.dvt or {}
+	local tracks, types, misses = params.ctt or {}, params.ntt or {}, params.misses or {}
+	local windows = getJudgeWindows()
+	local recordedMisses, inputMisses = {}, {}
+	local useWife = not usingCustomWindows and not setMania
+
+	local function add(row, track, offset, isMiss)
+		if not finite(row) then return end
+		local time = timing:GetElapsedTimeFromNoteRow(row)
+		if not finite(time) then return end
+		if not finite(track) or track < 0 then track = nil end
+		local bucket = isMiss and "Miss" or HV.Judgment.ClassifyOffset(offset, windows)
+		-- Etterna's standard Wife3 miss weight is -5.5 points.
+		local points = useWife and (isMiss and -5.5 or wife3(math.abs(offset), tso)) or 0
+		plotEvents[#plotEvents + 1] = {
+			time = math.max(0, time), row = row, track = track, offset = offset,
+			miss = isMiss, bucket = bucket, points = points, order = #plotEvents + 1,
+		}
+	end
+
+	local function recordMiss(source, row, track)
+		if not finite(row) then return end
+		local entry = source[row] or {tracks = {}, count = 0}
+		if not finite(track) or track < 0 then
+			entry.count = entry.count + 1
+		elseif not entry.tracks[track] then
+			entry.tracks[track] = true
+			entry.count = entry.count + 1
+		end
+		source[row] = entry
+	end
+
+	for i, row in ipairs(rows) do
+		local offset, kind = offsets[i], types[i]
+		if finite(row) and finite(offset) and (#types == 0 or isTapType(kind)) then
+			if math.abs(offset) >= 1000 then
+				recordMiss(recordedMisses, row, tracks[i])
+			elseif math.abs(offset) <= 180.001 then
+				add(row, tracks[i], offset, false)
+			end
+		end
+	end
+
+	-- Newer input replays can store misses separately from legacy sentinels.
+	for _, miss in ipairs(misses) do
+		if not miss.noteType or isTapType(miss.noteType) then
+			recordMiss(inputMisses, miss.row, miss.track)
+		end
+	end
+	for row, input in pairs(inputMisses) do
+		local recorded = recordedMisses[row]
+		if recorded then
+			input.count = math.max(input.count, recorded.count)
+			for track in pairs(recorded.tracks) do input.tracks[track] = true end
+		end
+		recordedMisses[row] = input
+	end
+	for row, missesAtRow in pairs(recordedMisses) do
+		local known = 0
+		for track in pairs(missesAtRow.tracks) do
+			add(row, track, nil, true)
+			known = known + 1
+		end
+		-- Unknown lanes may already be represented by a known lane at this row.
+		for _ = known + 1, missesAtRow.count do add(row, nil, nil, true) end
+	end
+
+	table.sort(plotEvents, function(a, b)
+		if a.time ~= b.time then return a.time < b.time end
+		if a.row ~= b.row then return a.row < b.row end
+		return a.order < b.order
+	end)
+
+	local tally = {0, 0, 0, 0, 0, 0, notes = 0, points = 0, hits = 0, sum = 0, squares = 0}
+	prefixes[0] = tally
+	for i, event in ipairs(plotEvents) do
+		local nextTally = {
+			notes = i, points = tally.points + event.points,
+			hits = tally.hits, sum = tally.sum, squares = tally.squares,
+		}
+		for j, key in ipairs(judgmentKeys) do
+			nextTally[j] = tally[j] + (event.bucket == key and 1 or 0)
+		end
+		if event.offset ~= nil then
+			nextTally.hits = tally.hits + 1
+			nextTally.sum = tally.sum + event.offset
+			nextTally.squares = tally.squares + event.offset * event.offset
+		end
+		if event.track ~= nil then
+			local side = event.track < middleColumn and "L" or (event.track == middleColumn and "M" or "R")
+			local hand = handStats[side] or {notes = 0, points = 0}
+			hand.notes = hand.notes + 1
+			hand.points = hand.points + event.points
+			handStats[side] = hand
+		end
+		prefixes[i], tally = nextTally, nextTally
+	end
+end
+
+local function countThrough(time, inclusive)
+	local left, right = 1, #plotEvents
+	while left <= right do
+		local middle = math.floor((left + right) / 2)
+		local event = plotEvents[middle]
+		if event.time < time or (inclusive and event.time == time) then
+			left = middle + 1
+		else
+			right = middle - 1
+		end
+	end
+	return right
+end
+
+local function getHandWife(side)
+	local hand = handStats[side]
+	if hand and not usingCustomWindows and not setMania and not setChordCohesion then
+		return hand.points / (hand.notes * 2) * 100
+	end
+end
+
+local function setPlotScaleToWorstHit()
+	local worst = 0
+	for _, event in ipairs(plotEvents) do
+		if event.offset ~= nil then worst = math.max(worst, math.abs(event.offset)) end
+	end
+	if worst > 0 then
+		setPlotScale(math.ceil(worst / math.max(180, 180 * tso) * 100))
+	end
+end
+
+local function xForTime(seconds)
+	return clampValue(seconds / finalSecond, 0, 1) * setWidth
+end
+
+local function timeForX(x)
+	return x / setWidth * finalSecond
+end
+
+local function getClearTypeFromCounts(judgments)
 	local w2 = judgments.W2 or 0
 	local w3 = judgments.W3 or 0
 	local w4 = judgments.W4 or 0
@@ -260,130 +412,47 @@ local function cycleTrendColorMode(step)
 	MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 end
 
-local function getMetricValue(metricId, wifePct, judgments, mean, sd)
-	if metricId == "wife" then return wifePct end
-	if metricId == "grade" then
-		local grade = getWifeGradeTier and getWifeGradeTier(wifePct) or "Grade_Tier16"
-		return gradeToNumeric(grade)
-	end
-	if metricId == "clear" then
-		local clearType = getClearTypeFromCounts(judgments, wifePct)
-		return clearTypeToNumeric(clearType)
-	end
-	if metricId == "mean" then return mean end
-	if metricId == "sd" then return sd end
-	if metricId == "ma" then return judgments.W1 or 0 end
-	if metricId == "pa" then return judgments.W2 or 0 end
-	return wifePct
+local function metricValue(metric, stats, grade, clear)
+	if metric == "wife" then return stats.wife end
+	if metric == "grade" then return grade and gradeToNumeric(grade) end
+	if metric == "clear" then return clear and clearTypeToNumeric(clear) end
+	if metric == "mean" then return stats.mean end
+	if metric == "sd" then return stats.sd end
+	if setMania then return nil end
+	if metric == "ma" then return stats.judgments.W1 end
+	if metric == "pa" then return stats.judgments.W2 end
 end
 
-local function calculateSliceStats(x1, x2, params)
-	if not x1 or not x2 then return nil end
-	if not params or not params.nrv or not params.dvt then return nil end
-	local leftX = math.min(x1, x2)
-	local rightX = math.max(x1, x2)
-	if rightX - leftX < 1 then return nil end
-
-	local windows = getJudgeWindows()
-	local noteCount = 0
-	local wifePoints = 0
-	local judgments = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0}
-	local validCount = 0
-	local mean = 0
-	local m2 = 0
-	local firstTime = nil
-	local lastTime = nil
-
-	for i = 1, #params.nrv do
-		if params.dvt[i] ~= nil and wuab[i] ~= nil then
-			local x = fitX(wuab[i]) + params.width / 2
-			if x >= leftX and x <= rightX then
-				noteCount = noteCount + 1
-				local offset = params.dvt[i]
-				wifePoints = wifePoints + wife3(math.abs(offset), tso)
-				local bucket = HV.Judgment.ClassifyOffset(offset, windows)
-				judgments[bucket] = (judgments[bucket] or 0) + 1
-
-				if math.abs(offset) < 1000 then
-					validCount = validCount + 1
-					local delta = offset - mean
-					mean = mean + (delta / validCount)
-					m2 = m2 + delta * (offset - mean)
-				end
-
-				if firstTime == nil then firstTime = wuab[i] end
-				lastTime = wuab[i]
-			end
-		end
-	end
-
-	if noteCount == 0 then
-		return {
-			notes = 0,
-			wife = 0,
-			mean = 0,
-			sd = 0,
-			judgments = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0},
-			startTime = leftX / math.max(setWidth, 1) * finalSecond,
-			endTime = rightX / math.max(setWidth, 1) * finalSecond,
-		}
-	end
-
-	local sd = validCount > 1 and math.sqrt(m2 / (validCount - 1)) or 0
-	local wifePct = (wifePoints / (noteCount * 2)) * 100
-	return {
-		notes = noteCount,
-		wife = wifePct,
-		mean = mean,
-		sd = sd,
-		judgments = judgments,
-		startTime = firstTime or 0,
-		endTime = lastTime or 0,
-	}
+setSliceByCenterX = function(centerX)
+	if setWidth <= 0 then return end
+	local width = clampValue(setWidth * getCurrentSlicePercent() / 100, 1, setWidth)
+	selectedSliceX1 = clampValue(centerX - width / 2, 0, setWidth - width)
+	selectedSliceX2 = selectedSliceX1 + width
 end
 
-local function refreshSliceStats(params)
-	if selectedSliceX1 and selectedSliceX2 then
-		selectedSliceStats = calculateSliceStats(selectedSliceX1, selectedSliceX2, params)
+local function formatStat(value, format)
+	return value == nil and "—" or string.format(format, value)
+end
+
+local function formatHover(x)
+	local stats, label
+	if getCurrentHoverModeId() == "slice" and selectedSliceX1 and selectedSliceX2 then
+		local from, to = timeForX(selectedSliceX1), timeForX(selectedSliceX2)
+		stats = rangeStats(countThrough(from, false) + 1, countThrough(to, true))
+		label = string.format("Slice (%d%%) | %.2fs–%.2fs", getCurrentSlicePercent(), from / setRate, to / setRate)
 	else
-		selectedSliceStats = nil
+		local time = timeForX(x)
+		stats = rangeStats(1, countThrough(time, true))
+		label = string.format("Through %.2fs", time / setRate)
 	end
-end
-
-setSliceByCenterX = function(centerX, params)
-	params = params or {width = setWidth, nrv = nrv, dvt = dvt}
-	local width = params.width or setWidth
-	if not width or width <= 0 then return end
-
-	local pct = getCurrentSlicePercent()
-	local sliceWidth = clampValue(width * (pct / 100), 1, width)
-	local half = sliceWidth / 2
-	local x1 = centerX - half
-	local x2 = centerX + half
-
-	if x1 < 0 then
-		x2 = x2 - x1
-		x1 = 0
-	end
-	if x2 > width then
-		x1 = x1 - (x2 - width)
-		x2 = width
-	end
-
-	x1 = clampValue(x1, 0, width)
-	x2 = clampValue(x2, 0, width)
-	if x2 <= x1 then
-		x2 = math.min(width, x1 + 1)
-	end
-
-	selectedSliceX1 = x1
-	selectedSliceX2 = x2
-	refreshSliceStats(params)
-end
-
-fitX = function(x)
-	if finalSecond == 0 then return 0 end
-	return x / finalSecond * setWidth - setWidth / 2
+	if not stats then return label .. "\nNo recorded taps" end
+	local j = stats.judgments
+	label = label .. string.format(" | %d recorded %s\nTap Wife: %s | Mean: %s | SD: %s",
+		stats.notes, stats.notes == 1 and "tap" or "taps",
+		formatStat(stats.wife, "%.2f%%"), formatStat(stats.mean, "%+.2fms"), formatStat(stats.sd, "%.2fms"))
+	if setMania then return label end
+	return label .. string.format("\nMarv: %d | Perf: %d | Great: %d\nGood: %d | Bad: %d | Miss: %d",
+		j.W1, j.W2, j.W3, j.W4, j.W5, j.Miss)
 end
 
 local function fitY(y)
@@ -395,14 +464,6 @@ local function setOffsetVerts(vt, x, y, c)
 	vt[#vt + 1] = {{x + dotWidth/2, y + dotWidth/2, 0}, c}
 	vt[#vt + 1] = {{x + dotWidth/2, y - dotWidth/2, 0}, c}
 	vt[#vt + 1] = {{x - dotWidth/2, y - dotWidth/2, 0}, c}
-end
-
-local function convertXToRow(x)
-	local output = x / setWidth
-	if output < 0 then output = 0 end
-	if output > 1 then output = 1 end
-	local stepsTD = GAMESTATE:GetCurrentSteps():GetTimingData()
-	return stepsTD:GetBeatFromElapsedTime(output * finalSecond) * 48
 end
 
 local function HighlightUpdaterThing(self)
@@ -441,8 +502,10 @@ local t = Def.ActorFrame{
 	BeginCommand = function(self)
 		local screen = SCREENMAN:GetTopScreen()
 		if not screen then return end
-			screen:AddInputCallback(function(event)
-			if not event or not event.DeviceInput then return false end
+		screen:AddInputCallback(function(event)
+			local parent = self:GetParent()
+			if not self:GetVisible() or (parent and not parent:GetVisible())
+				or not event or not event.DeviceInput then return false end
 			local btn = event.DeviceInput.button
 
 			if event.type == "InputEventType_FirstPress" and btn == "DeviceButton_left mouse button" then
@@ -494,7 +557,7 @@ local t = Def.ActorFrame{
 				return true
 			elseif event.type == "InputEventType_FirstPress" and btn == "DeviceButton_left mouse button" then
 				if getCurrentHoverModeId() == "slice" then
-					setSliceByCenterX(getMouseLocalX(bg), {width = setWidth, nrv = nrv, dvt = dvt})
+					setSliceByCenterX(getMouseLocalX(bg))
 					MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 				else
 					setPlotScaleToWorstHit()
@@ -504,7 +567,6 @@ local t = Def.ActorFrame{
 				if selectedSliceX1 and selectedSliceX2 then
 					selectedSliceX1 = nil
 					selectedSliceX2 = nil
-					selectedSliceStats = nil
 					MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 				else
 					setPlotScale(100)
@@ -536,7 +598,7 @@ local t = Def.ActorFrame{
 			judge = judge + 1
 			clampJudge()
 			tso = tst[judge]
-		elseif params.Name == "ToggleHands" and #ctt > 0 then
+		elseif params.Name == "ToggleHands" and next(handStats) ~= nil and not setChordCohesion then
 			if not handspecific then
 				handspecific = true
 				left = true
@@ -583,13 +645,8 @@ local t = Def.ActorFrame{
 	end
 }
 local function checkParams(params)
-	if type(params) ~= "table" or params.width == nil then
-		params = {width = setWidth, height = setHeight, song = setSong,
-			steps = setSteps, nrv = nrv, dvt = dvt, ctt = ctt, ntt = ntt, columns = columns}
-	end
-	oddColumns = (columns or 4) % 2 ~= 0
-	middleColumn = ((columns or 4) - 1) / 2.0
-	return params
+	if type(params) == "table" and params.width ~= nil then return params end
+	return plotParams or {width = 0, height = 0}
 end
 
 -- Plot BG
@@ -600,43 +657,29 @@ t[#t+1] = Def.Quad{
 	end,
 	UpdateCommand = function(self, params)
 		params = checkParams(params)
-		if params.scoreKey and params.scoreKey ~= setScoreKey then
+		plotParams = params
+		if params.scoreKey ~= setScoreKey then
 			setScoreKey = params.scoreKey
-			selectedSliceX1, selectedSliceX2, selectedSliceStats = nil, nil, nil
+			selectedSliceX1, selectedSliceX2 = nil, nil
 		end
 		if params.judge then
 			judge = params.judge
+			clampJudge()
 			tso = tst[judge]
 			updateMaxOffset()
 		end
-		setWidth = params.width
-		setHeight = params.height
-		setSong = params.song
-		setSteps = params.steps
-		dvt = params.dvt or {}
-		nrv = params.nrv or {}
-		ctt = params.ctt or {}
-		ntt = params.ntt or {}
-		columns = params.columns or 4
-		cbl = params.cbl or 0
-		cbr = params.cbr or 0
-		cbm = params.cbm or 0
+		setWidth, setHeight = params.width, params.height
+		setRate = finite(params.rate) and params.rate > 0 and params.rate or 1
+		setChordCohesion, setMania = params.chordCohesion, params.mania
+		if params.customWindows ~= nil then usingCustomWindows = params.customWindows end
+		local columns = params.columns or 4
+		oddColumns, middleColumn = columns % 2 ~= 0, (columns - 1) / 2
+		cbl, cbr, cbm = params.cbl or 0, params.cbr or 0, params.cbm or 0
 		showMiddle = params.showMiddle or false
-		if params.song then
-			finalSecond = params.song:GetLastSecond()
-		end
-		if params.steps then
-			td = params.steps:GetTimingData()
-		end
-		if params.steps and params.nrv then
-			local stepsTD = params.steps:GetTimingData()
-			wuab = {}
-			for i = 1, #params.nrv do
-				wuab[i] = stepsTD:GetElapsedTimeFromNoteRow(params.nrv[i])
-			end
-		end
+		buildPlot(params)
+		finalSecond = math.max(0.001, params.song and params.song:GetLastSecond() or 0,
+			plotEvents[#plotEvents] and plotEvents[#plotEvents].time or 0)
 		self:zoomto(params.width, params.height)
-		refreshSliceStats(params)
 	end,
 	HighlightCommand = function(self)
 		local bar = self:GetParent():GetChild("PosBar")
@@ -651,6 +694,15 @@ t[#t+1] = Def.Quad{
 		local ha = self.GetHAlign and self:GetHAlign() or 0
 		local va = self.GetVAlign and self:GetVAlign() or 0
 		
+		local hovered = setWidth > 0 and w > 0 and h > 0
+			and mx >= x - w * ha and mx <= x + w * (1 - ha)
+			and my >= y - h * va and my <= y + h * (1 - va)
+		local xpos = hovered and getMouseLocalX(self)
+		if getCurrentHoverModeId() == "slice" then
+			if hovered then setSliceByCenterX(xpos)
+			else selectedSliceX1, selectedSliceX2 = nil, nil end
+		end
+
 		local activeX1 = selectedSliceX1
 		local activeX2 = selectedSliceX2
 
@@ -675,67 +727,16 @@ t[#t+1] = Def.Quad{
 			if sliceRightLine then sliceRightLine:visible(false) end
 		end
 
-		if mx >= x - w * ha and mx <= x + w * (1 - ha) and my >= y - h * va and my <= y + h * (1 - va) then
-			local xpos = INPUTFILTER:GetMouseX() - self:GetTrueX()
-			if getCurrentHoverModeId() == "slice" then
-				setSliceByCenterX(xpos, {width = setWidth, nrv = nrv, dvt = dvt})
-			end
-			bar:visible(true)
-			txt:visible(true)
-			bg:visible(true)
-			bar:x(xpos)
-			txt:x(xpos - 2)
-			txt:y(100)
-			bg:x(xpos)
-			bg:y(100)
-
-			if getCurrentHoverModeId() == "slice" and selectedSliceStats and selectedSliceX1 and selectedSliceX2 then
-				local j = selectedSliceStats.judgments or {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0}
-				txt:settextf("Slice (%d%%) | %.2fs-%.2fs\n%.2f%% | SD: %.2fms | Mean: %.2fms\nMarv: %d | Perf: %d | Great: %d\nGood: %d | Bad: %d | Miss: %d | Notes: %d",
-					getCurrentSlicePercent(),
-					selectedSliceStats.startTime or 0,
-					selectedSliceStats.endTime or 0,
-					selectedSliceStats.wife or 0,
-					selectedSliceStats.sd or 0,
-					selectedSliceStats.mean or 0,
-					j.W1 or 0, j.W2 or 0, j.W3 or 0,
-					j.W4 or 0, j.W5 or 0, j.Miss or 0,
-					selectedSliceStats.notes or 0)
-			else
-				local row = convertXToRow(xpos)
-				local ok, replay = pcall(function() return REPLAYS:GetActiveReplay() end)
-				if ok and replay and replay.GetReplaySnapshotForNoterow then
-					local sok, snapshot = pcall(function() return replay:GetReplaySnapshotForNoterow(row) end)
-					if sok and snapshot then
-						local judgments = snapshot:GetJudgments()
-						local wifescore = snapshot:GetWifePercent() * 100
-						local mean = snapshot:GetMean()
-						local sd = snapshot:GetStandardDeviation()
-						local timebro = td:GetElapsedTimeFromNoteRow(row) / getCurRateValue()
-						txt:settextf("%.2f%%\nMarv: %d\nPerf: %d\nGreat: %d\nGood: %d\nBad: %d\nMiss: %d\nSD: %.2fms\nMean: %.2fms\nTime: %.2fs",
-							wifescore,
-							judgments["W1"] or 0, judgments["W2"] or 0,
-							judgments["W3"] or 0, judgments["W4"] or 0,
-							judgments["W5"] or 0, judgments["Miss"] or 0,
-							sd or 0, mean or 0, timebro or 0)
-					else
-						txt:settext("")
-					end
-				else
-					txt:settext("")
-				end
-			end
-
+		if hovered then
+			bar:visible(true):x(xpos)
+			txt:visible(true):xy(xpos - 2, 100)
+			bg:visible(true):xy(xpos, 100)
+			txt:settext(formatHover(xpos))
 			bg:zoomto(txt:GetZoomedWidth() + 4, txt:GetZoomedHeight() + 4)
 		else
 			bar:visible(false)
 			txt:visible(false)
 			bg:visible(false)
-			if getCurrentHoverModeId() == "slice" then
-				selectedSliceX1 = nil
-				selectedSliceX2 = nil
-				selectedSliceStats = nil
-			end
 		end
 	end
 }
@@ -899,109 +900,72 @@ t[#t+1] = Def.Quad {
 	JudgeDisplayChangedMessageCommand = function(self) self:queuecommand("Update") end
 }
 
--- Progression line (metric over chart)
+-- Step trend on its own value range. All judgments at the same chart
+-- time contribute to one point before the line advances.
 t[#t+1] = Def.ActorMultiVertex{
 	Name = "TrendLine",
 	UpdateCommand = function(self, params)
 		params = checkParams(params)
-		local verts = {}
-		local metricId = getCurrentTrendMetricId()
-
-		if metricId == "off" or params.song == nil or params.steps == nil or params.nrv == nil or params.dvt == nil
-			or #params.nrv == 0 or #params.dvt == 0 then
-			self:SetVertices(verts)
-			self:SetDrawState{Mode = "DrawMode_Quads", First = 1, Num = 0}
-			return
-		end
-
-		local windows = getJudgeWindows()
-		local colorModeId = getCurrentTrendColorModeId()
-		local judgments = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0}
-		local wifePoints = 0
-		local validCount = 0
-		local runningMean = 0
-		local m2 = 0
-		local points = {}
-		local minVal = math.huge
-		local maxVal = -math.huge
-
-		for i = 1, #params.nrv do
-			if params.dvt[i] ~= nil and wuab[i] ~= nil then
-				local offset = params.dvt[i]
-				wifePoints = wifePoints + wife3(math.abs(offset), tso)
-				local bucket = HV.Judgment.ClassifyOffset(offset, windows)
-				judgments[bucket] = (judgments[bucket] or 0) + 1
-
-				if math.abs(offset) < 1000 then
-					validCount = validCount + 1
-					local delta = offset - runningMean
-					runningMean = runningMean + (delta / validCount)
-					m2 = m2 + delta * (offset - runningMean)
+		local verts, points = {}, {}
+		local metric = getCurrentTrendMetricId()
+		local colorMode = getCurrentTrendColorModeId()
+		local lo, hi = math.huge, -math.huge
+		if metric ~= "off" then
+			for i, event in ipairs(plotEvents) do
+				if not plotEvents[i + 1] or plotEvents[i + 1].time ~= event.time then
+					local stats = rangeStats(1, i)
+					local grade = stats.wife and getWifeGradeTier(stats.wife)
+					local clear = not setMania and getClearTypeFromCounts(stats.judgments)
+					local value = metricValue(metric, stats, grade, clear)
+					if finite(value) then
+						points[#points + 1] = {x = xForTime(event.time), value = value, grade = grade, clear = clear}
+						lo, hi = math.min(lo, value), math.max(hi, value)
+					end
 				end
-
-				local wifePct = (wifePoints / (i * 2)) * 100
-				local sd = validCount > 1 and math.sqrt(m2 / (validCount - 1)) or 0
-				local clearType = getClearTypeFromCounts(judgments, wifePct)
-				local grade = getWifeGradeTier and getWifeGradeTier(wifePct) or "Grade_Tier16"
-				local metricValue = getMetricValue(metricId, wifePct, judgments, runningMean, sd)
-
-				points[#points + 1] = {
-					x = fitX(wuab[i]) + params.width / 2,
-					value = metricValue,
-					grade = grade,
-					clearType = clearType,
-				}
-
-				if metricValue < minVal then minVal = metricValue end
-				if metricValue > maxVal then maxVal = metricValue end
 			end
 		end
 
-		if #points < 2 then
-			self:SetVertices(verts)
-			self:SetDrawState{Mode = "DrawMode_Quads", First = 1, Num = 0}
-			return
+		local function segment(x1, y1, x2, y2, color)
+			local dx, dy = x2 - x1, y2 - y1
+			local length = math.sqrt(dx * dx + dy * dy)
+			if length <= 0.0001 then return end
+			local nx, ny = -dy / length * 0.8, dx / length * 0.8
+			verts[#verts + 1] = {{x1 - nx, y1 - ny, 0}, color}
+			verts[#verts + 1] = {{x1 + nx, y1 + ny, 0}, color}
+			verts[#verts + 1] = {{x2 + nx, y2 + ny, 0}, color}
+			verts[#verts + 1] = {{x2 - nx, y2 - ny, 0}, color}
 		end
-
-		if minVal == math.huge or maxVal == -math.huge then
-			self:SetVertices(verts)
-			self:SetDrawState{Mode = "DrawMode_Quads", First = 1, Num = 0}
-			return
+		local function y(value)
+			if hi == lo then return params.height / 2 end
+			return 1 + (hi - value) / (hi - lo) * math.max(0, params.height - 2)
 		end
-
-		if math.abs(maxVal - minVal) < 0.0001 then
-			maxVal = minVal + 1
-		end
-
-		local lineThickness = 0.8
 		for i = 2, #points do
-			local p1 = points[i - 1]
-			local p2 = points[i]
-			local y1 = params.height - (((p1.value - minVal) / (maxVal - minVal)) * params.height)
-			local y2 = params.height - (((p2.value - minVal) / (maxVal - minVal)) * params.height)
-			local dx = p2.x - p1.x
-			local dy = y2 - y1
-			local len = math.sqrt(dx * dx + dy * dy)
-			if len > 0.0001 then
-				local nx = -dy / len * lineThickness
-				local ny = dx / len * lineThickness
-				local c = {accentColor[1], accentColor[2], accentColor[3], 0.92}
-				if colorModeId == "grade" then
-					local gc = HVColor.GetGradeColor(p2.grade)
-					c = {gc[1], gc[2], gc[3], 0.92}
-				elseif colorModeId == "clear" then
-					local cc = getClearTypeColor and getClearTypeColor(p2.clearType) or accentColor
-					c = {cc[1], cc[2], cc[3], 0.92}
-				end
-				verts[#verts + 1] = {{p1.x - nx, y1 - ny, 0}, c}
-				verts[#verts + 1] = {{p1.x + nx, y1 + ny, 0}, c}
-				verts[#verts + 1] = {{p2.x + nx, y2 + ny, 0}, c}
-				verts[#verts + 1] = {{p2.x - nx, y2 - ny, 0}, c}
-			end
+			local from, to = points[i - 1], points[i]
+			local tint = accentColor
+			if colorMode == "grade" and to.grade then tint = HVColor.GetGradeColor(to.grade) end
+			if colorMode == "clear" and to.clear then tint = getClearTypeColor(to.clear) or accentColor end
+			local color = {tint[1], tint[2], tint[3], 0.92}
+			segment(from.x, y(from.value), to.x, y(from.value), color)
+			segment(to.x, y(from.value), to.x, y(to.value), color)
 		end
 
 		self:SetVertices(verts)
 		self:SetDrawState{Mode = "DrawMode_Quads", First = 1, Num = #verts}
+		local caption = self:GetParent():GetChild("TrendRange")
+		if not caption then return end
+		if metric == "off" then
+			caption:settext("")
+		elseif #points < 2 then
+			caption:settext("Trend unavailable")
+		elseif metric == "wife" then
+			caption:settextf("Trend scale: %.2f%% to %.2f%%", lo, hi)
+		elseif metric == "mean" or metric == "sd" then
+			caption:settextf("Trend scale: %.2f to %.2f ms", lo, hi)
+		elseif metric == "ma" or metric == "pa" then
+			caption:settextf("Trend scale: %d to %d", lo, hi)
+		else
+			caption:settext("Trend scale: relative rank")
+		end
 	end,
 	JudgeDisplayChangedMessageCommand = function(self) self:queuecommand("Update") end
 }
@@ -1010,7 +974,7 @@ t[#t+1] = Def.ActorMultiVertex{
 local thresholdKeys = {"W1", "W2", "W3", "W4", "W5"}
 local function getThresholdLine(index)
 	local fit = getJudgeWindows()[thresholdKeys[index]]
-	if usingCustomWindows and customOffsetToJudgeColor then
+	if usingCustomWindows and customOffsetToJudgeColor and getCurrentCustomWindowConfigJudgmentWindowTable then
 		local customWindows = getCurrentCustomWindowConfigJudgmentWindowTable()
 		if customWindows then return fit, customOffsetToJudgeColor(fit + 1, customWindows) end
 	end
@@ -1102,6 +1066,15 @@ t[#t+1] = LoadFont("Common Normal") .. {
 	JudgeDisplayChangedMessageCommand = function(self) self:queuecommand("Update") end
 }
 
+t[#t+1] = LoadFont("Common Normal") .. {
+	Name = "TrendRange",
+	InitCommand = function(self) self:zoom(0.3):diffuse(dimText) end,
+	UpdateCommand = function(self, params)
+		params = checkParams(params)
+		self:xy(params.width / 2, params.height + 20)
+	end,
+}
+
 t[#t+1] = buttonBg("TrendColor", function(p) return p.width - 5 end, 12, 80, 1)
 
 t[#t+1] = LoadFont("Common Normal") .. {
@@ -1123,44 +1096,16 @@ t[#t+1] = LoadFont("Common Normal") .. {
 	UpdateCommand = function(self, params)
 		params = checkParams(params)
 		self:xy(params.width / 2, -48)
-		if ntt ~= nil and #ntt > 0 then
-			if handspecific then
-				local leftPts, rightPts, midPts = 0, 0, 0
-				local leftTaps, rightTaps, midTaps = 0, 0, 0
-				local tso = tst[judge] or 1
-				
-				for i = 1, #dvt do
-					local pts = wife3(math.abs(dvt[i]), tso)
-					if ctt[i] < middleColumn then
-						leftPts = leftPts + pts
-						leftTaps = leftTaps + 1
-					elseif ctt[i] > middleColumn then
-						rightPts = rightPts + pts
-						rightTaps = rightTaps + 1
-					else
-						midPts = midPts + pts
-						midTaps = midTaps + 1
-					end
-				end
-				
-				local score = 0
-				if left then
-					score = leftTaps > 0 and (leftPts / (leftTaps * 2)) * 100 or 0
-					self:settextf("Left hand: %.4f%%", score)
-				elseif middle then
-					score = midTaps > 0 and (midPts / (midTaps * 2)) * 100 or 0
-					self:settextf("Middle: %.4f%%", score)
-				else
-					score = rightTaps > 0 and (rightPts / (rightTaps * 2)) * 100 or 0
-					self:settextf("Right hand: %.4f%%", score)
-				end
-				self:diffuse(accentColor)
-			else
-				self:settext("DOWN TOGGLE HIGHLIGHTS")
-				self:diffuse(subText)
-			end
-		else
+		if not next(handStats) or setChordCohesion then
 			self:settext("")
+		elseif handspecific then
+			local side = left and "L" or (middle and "M" or "R")
+			local label = left and "Left" or (middle and "Middle" or "Right")
+			self:settextf("%s tap Wife: %s", label, formatStat(getHandWife(side), "%.4f%%"))
+			self:diffuse(accentColor)
+		else
+			self:settext("DOWN TOGGLE HIGHLIGHTS")
+			self:diffuse(subText)
 		end
 	end,
 	JudgeDisplayChangedMessageCommand = function(self) self:queuecommand("Update") end
@@ -1174,11 +1119,10 @@ t[#t+1] = LoadFont("Common Normal") .. {
 		self:xy(params.width - 5, -5)
 		local early = 0
 		local late = 0
-		if params.dvt and #params.dvt > 0 then
-			for _, off in ipairs(params.dvt) do
-				if off < 0 then early = early + 1
-				elseif off > 0 then late = late + 1 end
-			end
+		for _, event in ipairs(plotEvents) do
+			local off = event.offset
+			if off and off < 0 then early = early + 1
+			elseif off and off > 0 then late = late + 1 end
 		end
 		if early + late > 0 then
 			self:settextf("Early: %d (%.1f%%) | Late: %d (%.1f%%)", 
@@ -1205,62 +1149,27 @@ t[#t+1] = LoadFont("Common Normal") .. {
 	JudgeDisplayChangedMessageCommand = function(self) self:queuecommand("Update") end
 }
 
--- Delta Hand Display (Stacked above Distribution on Right)
+-- Delta Hand Display (recorded tap Wife percentage points)
 t[#t+1] = LoadFont("Common Normal") .. {
 	InitCommand = function(self) self:zoom(0.4):halign(1):valign(1):diffuse(brightText) end,
 	UpdateCommand = function(self, params)
 		params = checkParams(params)
-		self:xy(params.width - 5, -5 - 10)
-		if params.chordCohesion then
-			self:settext("Cannot Record Hand Data")
+		self:xy(params.width - 5, -15)
+		local leftWife, rightWife, middleWife = getHandWife("L"), getHandWife("R"), getHandWife("M")
+		if not leftWife or not rightWife or (oddColumns and not middleWife) then
+			self:settext("")
 			return
 		end
-		if params.dvt and #params.dvt > 0 and params.ctt and #params.ctt > 0 then
-			local leftPts, rightPts, middlePts = 0, 0, 0
-			local leftTaps, rightTaps, middleTaps = 0, 0, 0
-			local tso = tst[judge] or 1
-			for i = 1, #params.dvt do
-				local pts = wife3(math.abs(params.dvt[i]), tso)
-				if params.ctt[i] < middleColumn then
-					leftPts = leftPts + pts
-					leftTaps = leftTaps + 1
-				elseif params.ctt[i] > middleColumn then
-					rightPts = rightPts + pts
-					rightTaps = rightTaps + 1
-				else
-					middlePts = middlePts + pts
-					middleTaps = middleTaps + 1
-				end
-			end
-			local leftScore = leftTaps > 0 and (leftPts / (leftTaps * 2)) or 0
-			local rightScore = rightTaps > 0 and (rightPts / (rightTaps * 2)) or 0
-			local middleScore = middleTaps > 0 and (middlePts / (middleTaps * 2)) or 0
-			
-			local delta, symbol
-			if oddColumns then
-				-- Odd keymodes: range across three hands
-				local scores = {L = leftScore, M = middleScore, R = rightScore}
-				local minScore = math.min(leftScore, middleScore, rightScore)
-				local maxScore = math.max(leftScore, middleScore, rightScore)
-				delta = (maxScore - minScore) * 100
-				
-				-- Build ranking symbol
-				local sorted = {"L", "M", "R"}
-				table.sort(sorted, function(a, b) return scores[a] > scores[b] end)
-				symbol = table.concat(sorted, ">")
-			else
-				-- Even keymodes: keep current behavior
-				delta = math.abs(leftScore - rightScore) * 100
-				symbol = leftScore > rightScore and "> " or "< "
-			end
-			
-			if oddColumns then
-				self:settextf("Δ Hand: %s %.4f%%", symbol, delta)
-			else
-				self:settextf("Δ Hand: %s%.4f%%", symbol, delta)
-			end
+		if oddColumns then
+			local scores = {L = leftWife, M = middleWife, R = rightWife}
+			local sides = {"L", "M", "R"}
+			table.sort(sides, function(a, b)
+				if scores[a] == scores[b] then return a < b end
+				return scores[a] > scores[b]
+			end)
+			self:settextf("Δ Hand: %s %.4f pp", table.concat(sides, ">"), scores[sides[1]] - scores[sides[3]])
 		else
-			self:settext("")
+			self:settextf("Δ Hand: %s %.4f pp", leftWife > rightWife and ">" or "<", math.abs(leftWife - rightWife))
 		end
 	end,
 	JudgeDisplayChangedMessageCommand = function(self) self:queuecommand("Update") end
@@ -1272,55 +1181,38 @@ t[#t+1] = Def.ActorMultiVertex{
 		params = checkParams(params)
 		local verts = {}
 
-		if params.song == nil or params.steps == nil or params.nrv == nil or params.dvt == nil
-			or #params.nrv == 0 or #params.dvt == 0 then
-			self:SetVertices(verts)
-			self:SetDrawState{Mode = "DrawMode_Quads", First = 1, Num = 0}
-			return
-		end
-
-		local stepsTD = params.steps:GetTimingData()
-		local judgmentPalette = HV.Color.GetJudgmentPalette()
+		local palette = HV.Color.GetJudgmentPalette()
 		local windows = HV.Judgment.GetWindows(tso, HV.EmulateRidiculousEnabled())
-		local customWindows = usingCustomWindows and getCurrentCustomWindowConfigJudgmentWindowTable()
-		for i = 1, #params.nrv do
-			wuab[i] = stepsTD:GetElapsedTimeFromNoteRow(params.nrv[i])
-		end
-
-		for i = 1, #params.nrv do
-			if params.dvt[i] ~= nil then
-				local offsetMs = params.dvt[i]
-				local rawOffset = offsetMs
-				local c = customWindows and customOffsetToJudgeColor(offsetMs, customWindows)
-					or judgmentPalette[HV.Judgment.ClassifyOffset(offsetMs, windows)]
-				c = {c[1], c[2], c[3], 1}
-
-				local x = fitX(wuab[i]) + params.width / 2
-				local y = fitY(offsetMs) + params.height / 2
-				local alpha = 1
-
-				if handspecific and params.ctt and params.ctt[i] then
-					if left then
-						if params.ctt[i] >= middleColumn then alpha = 0.1 end
-					elseif middle then
-						if params.ctt[i] ~= middleColumn then alpha = 0.1 end
-					else
-						if params.ctt[i] <= middleColumn then alpha = 0.1 end
-					end
+		local customWindows = usingCustomWindows and getCurrentCustomWindowConfigJudgmentWindowTable
+			and getCurrentCustomWindowConfigJudgmentWindowTable()
+		for _, event in ipairs(plotEvents) do
+			local sourceColor
+			if not event.miss and customWindows and customOffsetToJudgeColor then
+				sourceColor = customOffsetToJudgeColor(event.offset, customWindows)
+			else
+				local bucket = event.miss and "Miss" or HV.Judgment.ClassifyOffset(event.offset, windows)
+				sourceColor = palette[bucket]
+			end
+			sourceColor = sourceColor or accentColor
+			local x = xForTime(event.time)
+			local alpha = 1
+			local track = event.track
+			if handspecific and track and not setChordCohesion then
+				if (left and track >= middleColumn) or (middle and track ~= middleColumn)
+					or (not left and not middle and track <= middleColumn) then
+					alpha = 0.1
 				end
-
-				if math.abs(rawOffset) >= 1000 then
-					-- Misses: vertical line (Etterna recorded misses as 1000ms)
-					local a = alpha == 1 and 0.3 or 0.1
-					c[4] = a
-					verts[#verts+1] = {{x - dotWidth/4, params.height, 0}, c}
-					verts[#verts+1] = {{x + dotWidth/4, params.height, 0}, c}
-					verts[#verts+1] = {{x + dotWidth/4, 0, 0}, c}
-					verts[#verts+1] = {{x - dotWidth/4, 0, 0}, c}
-				else
-					c[4] = alpha
-					setOffsetVerts(verts, x, y, c)
-				end
+			end
+			local color = {sourceColor[1], sourceColor[2], sourceColor[3], alpha}
+			if event.miss then
+				color[4] = math.min(alpha, 0.3)
+				verts[#verts + 1] = {{x - dotWidth/4, params.height, 0}, color}
+				verts[#verts + 1] = {{x + dotWidth/4, params.height, 0}, color}
+				verts[#verts + 1] = {{x + dotWidth/4, 0, 0}, color}
+				verts[#verts + 1] = {{x - dotWidth/4, 0, 0}, color}
+			else
+				local y = fitY(event.offset) + params.height / 2
+				setOffsetVerts(verts, x, y, color)
 			end
 		end
 

@@ -69,6 +69,13 @@ local function finite(value)
 	return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
 
+function HV.Score.FormatEvaluationWifePercent(percent)
+	local precision = percent >= 99 and 4 or 2
+	local scale = 10 ^ precision
+	local rounded = math.floor(percent * scale + 0.5) / scale
+	return string.format("%." .. precision .. "f%%", rounded)
+end
+
 function HV.Score.BuildEvaluationLeaderboard(scores, currentRate, allRates, online, includeInvalid)
 	local result = {}
 	for _, score in ipairs(scores) do

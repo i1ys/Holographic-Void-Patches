@@ -116,6 +116,7 @@ local judges = HV.EmulateRidiculousEnabled() and {"Ridiculous","TapNoteScore_W1"
 
 -- Rescoring/offset plot state
 local nrv, dvt, ctt, ntt, totalTaps
+local plotMisses
 local offsetStats
 local rescoredPercentage
 local usingCustomWindows = false
@@ -197,11 +198,7 @@ local function getJudgeForScore(score)
 	return math.max(4, math.min(9, playedJudge))
 end
 
-local function formatWifePercent(pct)
-	local precision = pct >= 99 and 4 or 2
-	local rounded = roundTo(pct, precision)
-	return string.format("%." .. precision .. "f%%", rounded)
-end
+local formatWifePercent = HV.Score.FormatEvaluationWifePercent
 
 local evalModShorthands = {
 	-- Turn
@@ -396,6 +393,7 @@ end
 
 
 local function updateVectors()
+	plotMisses = nil
 	if scoringVoided then
 		nrv, dvt, ctt, ntt, totalTaps = {}, {}, {}, {}, 0
 		offsetStats = {}
@@ -409,6 +407,7 @@ local function updateVectors()
 		ctt = replay:GetTrackVector()
 		ntt = replay:GetTapNoteTypeVector()
 		dvt = replay:GetOffsetVector()
+		if replay.GetMissDataVector then plotMisses = replay:GetMissDataVector() end
 		totalTaps = 0
 		if ntt then
 			for _, typ in ipairs(ntt) do
@@ -426,6 +425,7 @@ local function updateVectors()
 		local orderedOffsets, _, orderedTaps = HV.GetOrderedReplayTapOffsets(curScore, true)
 		if orderedTaps then
 			dvt, nrv, ctt, ntt = {}, {}, {}, {}
+			plotMisses = nil
 			for i, tap in ipairs(orderedTaps) do
 				dvt[i] = orderedOffsets[i]
 				nrv[i] = tap.row
@@ -2707,6 +2707,10 @@ t[#t + 1] = Def.ActorFrame {
 						dvt = dvt,
 						ctt = ctt,
 						ntt = ntt,
+						misses = plotMisses,
+						rate = curScore and curScore:GetMusicRate() or getCurRateValue(),
+						customWindows = usingCustomWindows,
+						mania = isManiaModeEnabled(),
 						chordCohesion = curScore and curScore.GetChordCohesion and curScore:GetChordCohesion() or false,
 						columns = steps and steps:GetNumColumns() or 4,
 						cbl = cbl,

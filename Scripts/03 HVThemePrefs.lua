@@ -26,7 +26,7 @@ local HVPrefs = {
 	-- Offset Graph: Trend metric mode
 	HV_OffsetGraphTrendMetric = {
 		Default = "wife",
-		Choices = {"Wife%", "Grade", "Clear Type", "Mean", "Std Dev", "MA", "PA", "Off"},
+		Choices = {"Tap Wife%", "Tap Grade", "Tap Clear", "Mean", "Std Dev", "Marv Count", "Perf Count", "Off"},
 		Values = {"wife", "grade", "clear", "mean", "sd", "ma", "pa", "off"}
 	},
 

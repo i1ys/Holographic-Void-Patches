@@ -217,11 +217,7 @@ local function scoreItem(i)
 			InitCommand = function(self) self:xy(90, 26):zoom(0.5):halign(0):diffuse(mainText) end,
 			SetScoreCommand = function(self, params)
 				local ws = scoreList[params.index].wife
-				if ws >= 0.99 then
-					self:settextf("%.4f%%", math.floor(ws * 1000000) / 10000)
-				else
-					self:settextf("%.2f%%", math.floor(ws * 10000) / 100)
-				end
+				self:settext(HV.Score.FormatEvaluationWifePercent(ws * 100))
 			end
 		},
 
