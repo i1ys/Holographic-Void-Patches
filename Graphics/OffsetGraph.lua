@@ -76,6 +76,7 @@ local trendMetricModes = {
 	{id = "sd", label = "Std Dev"},
 	{id = "ma", label = "MA"},
 	{id = "pa", label = "PA"},
+	{id = "off", label = "Off"},
 }
 local trendColorModes = {
 	{id = "none", label = "None"},
@@ -904,8 +905,9 @@ t[#t+1] = Def.ActorMultiVertex{
 	UpdateCommand = function(self, params)
 		params = checkParams(params)
 		local verts = {}
+		local metricId = getCurrentTrendMetricId()
 
-		if params.song == nil or params.steps == nil or params.nrv == nil or params.dvt == nil
+		if metricId == "off" or params.song == nil or params.steps == nil or params.nrv == nil or params.dvt == nil
 			or #params.nrv == 0 or #params.dvt == 0 then
 			self:SetVertices(verts)
 			self:SetDrawState{Mode = "DrawMode_Quads", First = 1, Num = 0}
@@ -913,7 +915,6 @@ t[#t+1] = Def.ActorMultiVertex{
 		end
 
 		local windows = getJudgeWindows()
-		local metricId = getCurrentTrendMetricId()
 		local colorModeId = getCurrentTrendColorModeId()
 		local judgments = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0}
 		local wifePoints = 0
