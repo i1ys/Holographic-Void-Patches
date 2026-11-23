@@ -507,14 +507,55 @@ local HVPrefs = {
 	},
 }
 
-HV.Config.RegisterThemeDefaults(HVPrefs)
+local Config = HV.Config
+-- Keep the global definitions readable as defaults for pre-migration HV2 profiles.
+Config.GameplayHUD = {}
+for _, key in ipairs({
+	"HV_MinimalisticMode", "HV_ShowJudgment", "HV_EmulateRidiculous",
+	"HV_JudgmentAnimation", "HV_RecentJudgmentDisplay", "HV_PrioritizeLowerJudgements",
+	"HV_DisplayLowerJudgementOffset", "HV_OffsetDisplayJudgement", "HV_ShowCombo",
+	"HV_ComboAnimation", "HV_ShowCurrentWife", "HV_ShowJudgeCounter",
+	"HV_JudgeCounterMode", "HV_ShowNGIndicator", "HV_ShowPlayerInfo",
+	"HV_ProgressBarPosition", "HV_MiniProgressBar", "HV_ShowInGameLeaderboard",
+	"HV_LastInGameLeaderboardMode", "HV_ShowNPS", "HV_NPSWindowSize",
+	"HV_ShowNPSGraph", "HV_ErrorBarMode", "HV_ErrorBarColoringMode",
+	"HV_ShowMean", "HV_ShowMeasureLines", "HV_ComboBreakHighlight",
+	"HV_ShowGoalTracker", "HV_PacemakerTargetType", "HV_PacemakerTargetGoal",
+}) do
+	Config.GameplayHUD[key] = HVPrefs[key]
+end
 
-local Theme = HV.Config.Theme
+function Config.NormalizeGameplayHUD(key, value)
+	local definition = Config.GameplayHUD[key]
+	if not definition then return nil end
+	if key == "HV_ShowMean" and value == "J4" then return "Mean" end
+	if key == "HV_PacemakerTargetGoal" then
+		if Config.IsFinite(value) and value >= 0 and value <= 100 then return value end
+		return nil
+	end
+	for _, choice in ipairs(definition.Values) do
+		if value == choice then return value end
+	end
+end
+
+Config.RegisterThemeDefaults(HVPrefs)
+
+local Theme = Config.Theme
 local ThemePrefs = {
-	Get = Theme.Get,
+	Get = function(key)
+		if Config.GameplayHUD[key] and Config.Player then
+			return Config.Player.Get(PLAYER_1, key)
+		end
+		return Theme.Get(key)
+	end,
 	Save = Theme.Save,
 	ForceSave = Theme.Save,
 	Set = function(key, value)
+		if Config.GameplayHUD[key] and Config.Player then
+			if not Config.Player.Set(PLAYER_1, key, value) then return false end
+			if not Config.ProfileDirectory(PLAYER_1) then return true end
+			return Config.Player.Save(PLAYER_1)
+		end
 		if not Theme.Set(key, value) then return false end
 		return Theme.Save()
 	end,

@@ -141,6 +141,9 @@ local function normalizeLayout(layout, defaults)
 end
 
 local function normalizePlayer(data)
+	for key in pairs(Config.GameplayHUD) do
+		data[key] = Config.NormalizeGameplayHUD(key, data[key])
+	end
 	data.CustomizeGameplay = nil
 	data.PracticeMode = nil
 	for key, default in pairs(defaultConfig) do
@@ -155,17 +158,33 @@ local function normalizePlayer(data)
 end
 
 local profiles = Config.CreateStore("playerConfig.lua", defaultConfig, normalizePlayer)
+local guestHUD = {}
 
 Config.Player = {
 	Get = function(pn, key)
-		if defaultConfig[key] == nil then return nil end
+		local hud = Config.GameplayHUD[key]
+		if not hud and defaultConfig[key] == nil then return nil end
 		local directory = Config.ProfileDirectory(pn)
-		local data = directory and profiles.Get(directory) or defaultConfig
+		local data = directory and profiles.Get(directory) or (hud and guestHUD or defaultConfig)
 		local value = data[key]
+		if hud and value == nil then
+			if directory then value = Config.NormalizeGameplayHUD(key, Config.Theme.Get(key)) end
+			if value == nil then value = hud.Default end
+		end
 		return type(value) == "table" and DeepCopy(value) or value
 	end,
 	Set = function(pn, key, value, directory)
 		directory = directory or Config.ProfileDirectory(pn)
+		if Config.GameplayHUD[key] then
+			value = Config.NormalizeGameplayHUD(key, value)
+			if value == nil then return false end
+			if directory then
+				profiles.Set(directory, key, value)
+			else
+				guestHUD[key] = value
+			end
+			return true
+		end
 		local default = defaultConfig[key]
 		if not directory or default == nil or type(value) ~= type(default) then return false end
 		if type(value) == "table" then

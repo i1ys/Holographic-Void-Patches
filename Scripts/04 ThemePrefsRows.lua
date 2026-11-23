@@ -467,45 +467,14 @@ function OptionRowMini()
 	}
 end
 
--- Also register a global function to get all HV option row lines
--- for use in metrics.ini ScreenOptionsService Lines
-function HVThemeOptionsLines()
-	-- Logical grouping of theme options
-	local l = table.concat({
-		-- General / Visual
-		"HV_BGAnimIntensity", "HV_Parallax", "HV_Particles", "HV_EnableGlow", "HV_QuotesMode",
-		"HV_SongBackgroundBrightness",
-		
-		-- Music Select
-		-- Music Select
-		"HV_ShowMSD", "HV_ShowProfileStats", "HV_SongPreview", "HV_SongSelectBGM", "HV_InstantSearch",
-		
-		-- Gameplay HUD
-		"HV_MinimalisticMode", "HV_ShowJudgment", "HV_EmulateRidiculous", "HV_JudgmentAnimation", "HV_RecentJudgmentDisplay", "HV_PrioritizeLowerJudgements", "HV_DisplayLowerJudgementOffset", "HV_OffsetDisplayJudgement", "HV_ShowCombo", "HV_ComboAnimation", "HV_ShowCurrentWife",
-			"HV_ShowJudgeCounter", "HV_JudgeCounterMode", "HV_ShowNGIndicator",
-		"HV_ShowPlayerInfo", "HV_ProgressBarPosition", "HV_ShowInGameLeaderboard",
-		
-		-- Gameplay Tools
-		"HV_ShowNPS", "HV_NPSWindowSize", "HV_ShowNPSGraph", "HV_ErrorBarMode",
-		"HV_ErrorBarColoringMode", "HV_ShowMean", "HV_ShowMeasureLines",
-		"HV_ComboBreakHighlight", "HV_AssistMode",
-		
-		-- Goal Tracker
-		"HV_ShowGoalTracker",
-		
-		-- Grades
-		"HV_UseCustomGrades"
-	}, ",")
-	return l
-end
-
--- Wrap ThemePrefRow to ensure it saves to disk immediately when changed
--- Robustly wrap ThemePrefRow to ensure it correctly loads and saves boolean values
+-- Adapt the fallback option row to HV2's theme or active-profile store.
 function HV.OptionRow(name, title, config)
 	local baseRow = ThemePrefRow(name, title)
 	local row = baseRow and DeepCopy(baseRow)
 	local prefs = config or ThemePrefs
-	local hvPref = HVPrefRows[name]
+	local hud = HV.Config.GameplayHUD[name]
+	local hvPref = hud or HVPrefRows[name]
+	local profileDirectory
 	
 	if not row then
 		row = {
@@ -522,12 +491,19 @@ function HV.OptionRow(name, title, config)
 	-- screen requires this to be a string.
 	row.LayoutType = "ShowAllInRow"
 	row.SelectType = "SelectOne"
+	if hud then row.OneChoiceForAllPlayers = true end
 	
 	row.ExportOnChange = true
 	
 	-- Define a robust load function that handles string/boolean mismatch
 	row.LoadSelections = function(self, list, pn)
-		local val = prefs.Get(name)
+		local val
+		if hud then
+			profileDirectory = HV.Config.ProfileDirectory(PLAYER_1) or false
+			val = HV.Config.Player.Get(PLAYER_1, name)
+		else
+			val = prefs.Get(name)
+		end
 		local found = false
 		for i, v in ipairs(self.Values) do
 			if v == val or tostring(v) == tostring(val) then
@@ -553,11 +529,19 @@ function HV.OptionRow(name, title, config)
 			if selected then
 				val = self.Values[i]
 				break
-						end
+			end
 		end
 		if val == nil then return end
-		local ok, err = prefs.Set(name, val)
-		if ok and config then ok, err = config.Save() end
+		local ok, err
+		if hud then
+			local directory = HV.Config.ProfileDirectory(PLAYER_1)
+			if profileDirectory ~= nil and profileDirectory ~= (directory or false) then return end
+			ok = HV.Config.Player.Set(PLAYER_1, name, val, directory)
+			if ok and directory then ok, err = HV.Config.Player.Save(PLAYER_1, directory) end
+		else
+			ok, err = prefs.Set(name, val)
+			if ok and config then ok, err = config.Save() end
+		end
 		if not ok and err then SCREENMAN:SystemMessage(err) end
 		MESSAGEMAN:Broadcast("ThemePrefChanged", {Name = name})
 		if (name == "HV_LaneCoverSudden" or name == "HV_LaneCoverHidden")
@@ -596,18 +580,7 @@ function OptionRowShowNPS()
 end
 
 function OptionRowShowMean()
-	local row = HV.OptionRow("HV_ShowMean", "Mean Display")
-	row.LoadSelections = function(self, list)
-		local current = HV.GetNotefieldStat()
-		for i, value in ipairs(self.Values) do
-			if value == current then
-				list[i] = true
-				return
-			end
-		end
-		list[2] = true -- Mean
-	end
-	return row
+	return HV.OptionRow("HV_ShowMean", "Mean Display")
 end
 
 function OptionRowPacemakerType()
@@ -641,37 +614,7 @@ function OptionRowErrorBarMode()
 end
 
 function OptionRowErrorBarColoringMode()
-	local name = "HV_ErrorBarColoringMode"
-	local row = HV.OptionRow(name, "Error Bar Coloring")
-	row.Choices = {"J4", "Current Judge"}
-	row.Values = {"J4", "Current"}
-
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get(name)
-		local found = false
-		for i, v in ipairs(self.Values) do
-			if v == val then
-				list[i] = true
-				found = true
-				break
-			end
-		end
-		if not found then
-			list[2] = true -- Default to index 2 (Current)
-		end
-	end
-
-	row.SaveSelections = function(self, list, pn)
-		local val = "Current"
-		for i, selected in ipairs(list) do
-			if selected then
-				val = self.Values[i]
-				break
-			end
-		end
-		ThemePrefs.Set(name, val)
-	end
-	return row
+	return HV.OptionRow("HV_ErrorBarColoringMode", "Error Bar Coloring")
 end
 
 function OptionRowProgressBarPosition()
@@ -679,17 +622,7 @@ function OptionRowProgressBarPosition()
 end
 
 function OptionRowShowJudgment()
-	local row = HV.OptionRow("HV_ShowJudgment", "Show Judgment")
-	local baseLoad = row.LoadSelections
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ShowJudgment")
-		if val == "true" or val == true then
-			list[2] = true  -- On
-		else
-			list[1] = true  -- Off
-		end
-	end
-	return row
+	return HV.OptionRow("HV_ShowJudgment", "Show Judgment")
 end
 
 function OptionRowEmulateRidiculous()
@@ -697,59 +630,19 @@ function OptionRowEmulateRidiculous()
 end
 
 function OptionRowShowCombo()
-	local row = HV.OptionRow("HV_ShowCombo", "Show Combo")
-	local baseLoad = row.LoadSelections
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ShowCombo")
-		if val == "true" or val == true then
-			list[2] = true  -- On
-		else
-			list[1] = true  -- Off
-		end
-	end
-	return row
+	return HV.OptionRow("HV_ShowCombo", "Show Combo")
 end
 
 function OptionRowShowCurrentWife()
-	local row = HV.OptionRow("HV_ShowCurrentWife", "Show Current %")
-	local baseLoad = row.LoadSelections
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ShowCurrentWife")
-		if val == "true" or val == true then
-			list[2] = true  -- On
-		else
-			list[1] = true  -- Off
-		end
-	end
-	return row
+	return HV.OptionRow("HV_ShowCurrentWife", "Show Current %")
 end
 
 function OptionRowShowJudgeCounter()
-	local row = HV.OptionRow("HV_ShowJudgeCounter", "Show Judge Counter")
-	local baseLoad = row.LoadSelections
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ShowJudgeCounter")
-		if val == "true" or val == true then
-			list[2] = true  -- On
-		else
-			list[1] = true  -- Off
-		end
-	end
-	return row
+	return HV.OptionRow("HV_ShowJudgeCounter", "Show Judge Counter")
 end
 
 function OptionRowShowPlayerInfo()
-	local row = HV.OptionRow("HV_ShowPlayerInfo", "Show Player Info")
-	local baseLoad = row.LoadSelections
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ShowPlayerInfo")
-		if val == "true" or val == true then
-			list[2] = true  -- On
-		else
-			list[1] = true  -- Off
-		end
-	end
-	return row
+	return HV.OptionRow("HV_ShowPlayerInfo", "Show Player Info")
 end
 
 function OptionRowShowInGameLeaderboard()
@@ -757,31 +650,11 @@ function OptionRowShowInGameLeaderboard()
 end
 
 function OptionRowShowNPSGraph()
-	local row = HV.OptionRow("HV_ShowNPSGraph", "Show NPS Graph")
-	local baseLoad = row.LoadSelections
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ShowNPSGraph")
-		if val == "true" or val == true then
-			list[2] = true  -- On
-		else
-			list[1] = true  -- Off
-		end
-	end
-	return row
+	return HV.OptionRow("HV_ShowNPSGraph", "Show NPS Graph")
 end
 
 function OptionRowComboBreakHighlight()
-	local row = HV.OptionRow("HV_ComboBreakHighlight", "Combo Break Highlight")
-	local baseLoad = row.LoadSelections
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ComboBreakHighlight")
-		if val == "true" or val == true then
-			list[2] = true  -- On
-		else
-			list[1] = true  -- Off
-		end
-	end
-	return row
+	return HV.OptionRow("HV_ComboBreakHighlight", "Combo Break Highlight")
 end
 
 function OptionRowAssistMode()

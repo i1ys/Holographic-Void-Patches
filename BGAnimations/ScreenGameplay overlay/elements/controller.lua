@@ -2,6 +2,7 @@ local gameplay = ...
 local gameplayCoord = gameplay.gameplayCoord
 local gameplaySize = gameplay.gameplaySize
 local ThemePrefs = HV.LegacyPrefs
+local Config = HV.Config
 
 local function hideFallbackLifeBar()
 	local top = SCREENMAN and SCREENMAN:GetTopScreen()
@@ -15,9 +16,16 @@ local function hideFallbackLifeBar()
 	end
 end
 
+local function saveHUDPreferences()
+	if not Config.ProfileDirectory(gameplay.player) then return end
+	local ok, err = Config.Player.Save(gameplay.player)
+	if not ok and err then SCREENMAN:SystemMessage(err) end
+end
+
 local function toggleMinimalisticModePreference()
 	local enabled = not HV.MinimalisticMode()
-	ThemePrefs.Set("HV_MinimalisticMode", enabled)
+	if not Config.Player.Set(gameplay.player, "HV_MinimalisticMode", enabled) then return end
+	saveHUDPreferences()
 	local top = SCREENMAN and SCREENMAN:GetTopScreen()
 	if top and top.GetChild then
 		local overlay = top:GetChild("GameplayOverlay")
@@ -33,18 +41,15 @@ end
 
 local function toggleInGameLeaderboardPreference()
 	local mode = HV.ShowInGameLeaderboard()
+	local nextMode = "Off"
 	if mode == "Off" then
-		local lastMode = ThemePrefs.Get("HV_LastInGameLeaderboardMode") or "Local"
-		if lastMode ~= "Local" and lastMode ~= "Online" then lastMode = "Local" end
-		ThemePrefs.Set("HV_ShowInGameLeaderboard", lastMode)
-		MESSAGEMAN:Broadcast("HV_InGameLeaderboardModeChanged", { Mode = lastMode })
+		nextMode = Config.Player.Get(gameplay.player, "HV_LastInGameLeaderboardMode")
 	else
-		if mode == "Local" or mode == "Online" then
-			ThemePrefs.Set("HV_LastInGameLeaderboardMode", mode)
-		end
-		ThemePrefs.Set("HV_ShowInGameLeaderboard", "Off")
-		MESSAGEMAN:Broadcast("HV_InGameLeaderboardModeChanged", { Mode = "Off" })
+		Config.Player.Set(gameplay.player, "HV_LastInGameLeaderboardMode", mode)
 	end
+	if not Config.Player.Set(gameplay.player, "HV_ShowInGameLeaderboard", nextMode) then return end
+	saveHUDPreferences()
+	MESSAGEMAN:Broadcast("HV_InGameLeaderboardModeChanged", { Mode = nextMode })
 end
 
 local function isRidiculousJudgment(params)
