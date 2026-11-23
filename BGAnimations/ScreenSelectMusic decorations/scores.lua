@@ -96,27 +96,21 @@ local function GetSSR(s)
 	return 0
 end
 
-local function SortScores(scoreTable)
-	if not scoreTable or #scoreTable == 0 then return end
-	
-	table.sort(scoreTable, function(a, b)
-		-- Handle different score structures (local vs online)
-		local sA = a.score or a
-		local sB = b.score or b
-		
-		if currentSort == SORT_SSR then
-			local ssrA = GetSSR(sA)
-			local ssrB = GetSSR(sB)
-			if math.abs(ssrA - ssrB) > 0.0001 then return ssrA > ssrB end
-			return sA:GetWifeScore() > sB:GetWifeScore()
-		else
-			-- Wife% sort
-			local wA = displayAsJ4 and getJ4NormalizedPercentage(sA) or sA:GetWifeScore() * 100
-			local wB = displayAsJ4 and getJ4NormalizedPercentage(sB) or sB:GetWifeScore() * 100
-			if math.abs(wA - wB) > 0.000001 then return wA > wB end
-			-- Fallback to SSR
-			return GetSSR(sA) > GetSSR(sB)
-		end
+local function FiniteScoreValue(value)
+	if type(value) == "number" and value == value and math.abs(value) < math.huge then return value end
+end
+
+local function SortScores(scores)
+	local primary, secondary = "ssr", "wife"
+	if currentSort == SORT_WIFE then primary, secondary = secondary, primary end
+	table.sort(scores, function(a, b)
+		local aPrimary, bPrimary = a[primary] or -math.huge, b[primary] or -math.huge
+		if aPrimary ~= bPrimary then return aPrimary > bPrimary end
+		local aSecondary, bSecondary = a[secondary] or -math.huge, b[secondary] or -math.huge
+		if aSecondary ~= bSecondary then return aSecondary > bSecondary end
+		if a.date ~= b.date then return a.date > b.date end
+		if a.key ~= b.key then return a.key < b.key end
+		return a.sourceIndex < b.sourceIndex
 	end)
 end
 
@@ -142,14 +136,11 @@ local function GetLocalScores()
 			local scores = scoreList:GetScores()
 			if scores then
 				for _, s in ipairs(scores) do
-					localScores[#localScores + 1] = {score = s, rate = rateName}
+					localScores[#localScores + 1] = s
 				end
 			end
 		end
 	end
-
-	-- Sort using helper
-	SortScores(localScores)
 end
 
 local function FetchOnlineScores()
@@ -180,7 +171,6 @@ local function FetchOnlineScores()
 	if cached and #cached > 0 then
 		onlineScores = cached
 		onlineLoading = false
-		if scoresActor then scoresActor:playcommand("RefreshScores") end
 		return
 	end
 
@@ -191,8 +181,6 @@ local function FetchOnlineScores()
 			if requestToken ~= onlineRequestToken then return end
 			if type(leaderboard) == "table" then
 				onlineScores = leaderboard
-				-- Sort using helper
-				SortScores(onlineScores)
 			else
 				onlineScores = {}
 			end
@@ -208,14 +196,13 @@ end
 
 local function ViewScore(score)
 	if not score then return end
-	local ss = score.score or score
 	local screen = SCREENMAN:GetTopScreen()
 	if screen and screen.ShowEvalScreenForScore then
 		HV.OnlineReplayActive = false
 		HV.OnlineReplayName = nil
 		HV.OnlineEvaluationActive = nil
 		HV.OnlineEvaluationName = nil
-		screen:ShowEvalScreenForScore(ss)
+		screen:ShowEvalScreenForScore(score)
 	end
 end
 
@@ -313,7 +300,7 @@ local t = Def.ActorFrame {
 				if mx >= SCREEN_CENTER_X - overlayW / 2 + 25 and mx <= SCREEN_CENTER_X + overlayW / 2 - 25
 					and my >= ry - rowH / 2 and my <= ry + rowH / 2 then
 					local entry = displayedScores[(currentPage - 1) * pageSize + ri]
-					found = entry and (entry.score or entry) or nil
+					found = entry and entry.score or nil
 					break
 				end
 			end
@@ -372,7 +359,7 @@ local t = Def.ActorFrame {
 		if self:GetVisible() and params and params.dir then
 			local totalPages = math.max(1, math.ceil(#displayedScores / pageSize))
 			currentPage = math.max(1, math.min(totalPages, currentPage + params.dir))
-			self:playcommand("RefreshScores")
+			self:playcommand("RefreshScoreRows")
 		end
 	end,
 	CurrentStepsChangedMessageCommand = function(self)
@@ -614,11 +601,10 @@ for i = 1, pageSize do
 			InitCommand = function(self) self:xy(overlayW - 60, rowH / 2):zoom(0.32) end,
 			RefreshScoresCommand = function(self)
 				local idx = (currentPage - 1) * pageSize + i
-				local s = displayedScores[idx]
-				if s then
-					local ss = s.score or s
+				local entry = displayedScores[idx]
+				if entry then
 					if currentView == VIEW_LOCAL then
-						self:visible(ss:HasReplayData())
+						self:visible(entry.score:HasReplayData())
 					else
 						self:visible(true)
 					end
@@ -639,32 +625,24 @@ for i = 1, pageSize do
 			if idx <= #scores then
 				self:visible(true)
 				self:stoptweening():diffusealpha(0):sleep(i * 0.04):linear(0.15):diffusealpha(1)
-				local rowScore = scores[idx].score or scores[idx]
-				local rowInvalid = (currentView == VIEW_ONLINE and IsOnlineScoreInvalid(rowScore))
-					or (currentView == VIEW_LOCAL and IsLocalScoreInvalid(rowScore))
+				local entry = scores[idx]
+				local s = entry.score
+				local rowInvalid = (currentView == VIEW_ONLINE and IsOnlineScoreInvalid(s))
+					or (currentView == VIEW_LOCAL and IsLocalScoreInvalid(s))
 				self:GetChild("Bg"):diffuse(rowInvalid and color("#7A1018") or color("0,0,0,0.2"))
 				self:GetChild("Rank"):settext(tostring(idx))
+				self:GetChild("Date"):settext(entry.date)
+				local wifeFormat = entry.wife and (entry.wife >= 99.7 and "%.4f%%" or "%.2f%%")
+				self:GetChild("Wife"):settext(wifeFormat and string.format(wifeFormat, entry.wife) or "—")
+				self:GetChild("SSR"):settext(entry.ssr and string.format("%.2f", entry.ssr) or "—")
+					:diffuse(entry.ssr and HVColor.GetMSDRatingColor(entry.ssr) or subText):visible(HV.ShowMSD())
 
 				if currentView == VIEW_LOCAL then
-					local entry = scores[idx]
-					local s = entry.score
 					self:GetChild("Player"):settext(THEME:GetString("Common", "You"))
 					
 					-- Judgments
 					self:GetChild("Judgments"):settext(HV.GetRidiculousTallyString(s))
 
-					-- Wife% display
-					local wife = s:GetWifeScore() * 100
-					if displayAsJ4 then
-						wife = getJ4NormalizedPercentage(s)
-					end
-					
-					if wife >= 99.7 then
-						self:GetChild("Wife"):settextf("%.4f%%", wife)
-					else
-						self:GetChild("Wife"):settextf("%.2f%%", wife)
-					end
-					
 					local norm = PREFSMAN:GetPreference("SortBySSRNormPercent")
 					local judgeIndex = ""
 					if displayAsJ4 then
@@ -691,13 +669,6 @@ for i = 1, pageSize do
 						self:GetChild("Judge"):diffuse(subText)
 					end
 
-					local ssr = 0
-					if s.GetSkillsetSSR then ssr = s:GetSkillsetSSR("Overall")
-					elseif s.GetSkillsetSum then ssr = s:GetSkillsetSum()
-					elseif s.GetSkillSetSum then ssr = s:GetSkillSetSum() end
-					
-					self:GetChild("SSR"):settextf("%.2f", ssr):diffuse(HVColor.GetMSDRatingColor(ssr)):visible(HV.ShowMSD())
-
 					local gradeStr = ToEnumShortString(s:GetWifeGrade())
 					self:GetChild("Grade"):settext(HV.GetGradeName(gradeStr)):diffuse(HVColor.GetGradeColor(gradeStr))
 					self:GetChild("Rate"):settextf("%.2fx", s:GetMusicRate())
@@ -705,7 +676,6 @@ for i = 1, pageSize do
 					local ct = getDetailedClearType(s)
 					if IsLocalScoreInvalid(s) then ct = "Invalid" end
 					self:GetChild("Clear"):settext(ct):diffuse(HVColor.GetClearTypeColor(ct))
-					self:GetChild("Date"):settext(s:GetDate())
 
 					-- Chord Cohesion indicator
 					local cc = self:GetChild("CC")
@@ -714,7 +684,6 @@ for i = 1, pageSize do
 					end
 				else
 					-- Online leaderboard score
-					local s = scores[idx]
 					pcall(function()
 						local username = GetScoreDisplayName(s) or "Unknown"
 						self:GetChild("Player"):settext(username)
@@ -722,21 +691,7 @@ for i = 1, pageSize do
 						-- Online judgments if available
 						self:GetChild("Judgments"):settext(HV.GetRidiculousTallyString(s))
 
-						local wife = s:GetWifeScore() * 100
-						if wife >= 99.7 then
-							self:GetChild("Wife"):settextf("%.4f%%", wife)
-						else
-							self:GetChild("Wife"):settextf("%.2f%%", wife)
-						end
-						
 						self:GetChild("Judge"):settext("")
-
-						local ssr = 0
-						if s.GetSkillsetSSR then ssr = s:GetSkillsetSSR("Overall")
-						elseif s.GetSkillsetSum then ssr = s:GetSkillsetSum()
-						elseif s.GetSkillSetSum then ssr = s:GetSkillSetSum() end
-						
-						self:GetChild("SSR"):settextf("%.2f", ssr):diffuse(HVColor.GetMSDRatingColor(ssr)):visible(HV.ShowMSD())
 
 						local gradeStr = ToEnumShortString(s:GetWifeGrade())
 						self:GetChild("Grade"):settext(HV.GetGradeName(gradeStr)):diffuse(HVColor.GetGradeColor(gradeStr))
@@ -744,7 +699,6 @@ for i = 1, pageSize do
 
 						local ct = IsOnlineScoreInvalid(s) and "Invalid" or getDetailedClearType(s)
 						self:GetChild("Clear"):settext(ct):diffuse(HVColor.GetClearTypeColor(ct))
-						self:GetChild("Date"):settext(s:GetDate())
 
 						-- Chord Cohesion indicator (online scores might not always have this)
 						local cc = self:GetChild("CC")
@@ -766,30 +720,40 @@ end
 
 local function UpdateDisplayedScores()
 	displayedScores = {}
-	local source = currentView == VIEW_LOCAL and localScores or onlineScores
-	
-	if currentView == VIEW_LOCAL then
-		displayedScores = source -- localScores is already filtered in GetLocalScores
-	else
-		-- Online scores need manual filtering if CUR. RATE is active
-		local currentRate = getCurRateValue()
-		for _, s in ipairs(source) do
-			local rNum = s:GetMusicRate()
-			if (showInvalidScores or not IsOnlineScoreInvalid(s)) and (not filterCurrentRate or math.abs(rNum - currentRate) < 0.001) then
-				displayedScores[#displayedScores + 1] = s
+	local isLocal = currentView == VIEW_LOCAL
+	local source = isLocal and localScores or onlineScores
+	local currentRate = not isLocal and filterCurrentRate and getCurRateValue()
+	for sourceIndex, score in ipairs(source) do
+		if isLocal or ((showInvalidScores or not IsOnlineScoreInvalid(score))
+			and (not currentRate or math.abs(score:GetMusicRate() - currentRate) < 0.001)) then
+			local wife
+			if isLocal and displayAsJ4 then
+				wife = getJ4NormalizedPercentage(score)
+			else
+				local fraction = FiniteScoreValue(score:GetWifeScore())
+				wife = fraction and fraction * 100
 			end
+			displayedScores[#displayedScores + 1] = {
+				score = score,
+				ssr = FiniteScoreValue(GetSSR(score)),
+				wife = FiniteScoreValue(wife),
+				date = score:GetDate() or "",
+				key = score:GetScoreKey() or "",
+				sourceIndex = sourceIndex,
+			}
 		end
 	end
-
-	-- Always sort the final displayed list if we just switched sort mode
 	SortScores(displayedScores)
 end
 
--- RefreshScores on main frame
 t.RefreshScoresCommand = function(self)
-	hoveredCommentScore = nil
 	UpdateDisplayedScores()
-	
+	self:playcommand("RefreshScoreRows")
+end
+
+t.RefreshScoreRowsCommand = function(self)
+	hoveredCommentScore = nil
+
 	local scores = displayedScores
 	local totalPages = math.max(1, math.ceil(#scores / pageSize))
 	currentPage = math.min(currentPage, totalPages)
@@ -832,7 +796,7 @@ t[#t + 1] = Def.ActorFrame {
 						local ry = SCREEN_CENTER_Y + rowsStartY + (ri - 1) * rowH + rowH / 2
 						if IsMouseOverCentered(SCREEN_CENTER_X, ry, overlayW - 50, rowH) then
 							local entry = displayedScores[(currentPage - 1) * pageSize + ri]
-							local score = entry and (entry.score or entry)
+							local score = entry and entry.score
 							if score and type(score) ~= "table" and type(score.ToggleEtternaValidation) == "function" then
 								score:ToggleEtternaValidation()
 								ms.ok(score:GetEtternaValid() and "Score validated" or "Score invalidated")
@@ -897,8 +861,6 @@ t[#t + 1] = Def.ActorFrame {
 				if IsMouseOverCentered(SCREEN_CENTER_X + overlayW/2 - 215, SCREEN_CENTER_Y - overlayH/2 + 18, 65, 18) then
 					currentSort = (currentSort == SORT_SSR) and SORT_WIFE or SORT_SSR
 					currentPage = 1
-					SortScores(localScores)
-					SortScores(onlineScores)
 					scoresActor:playcommand("RefreshScores")
 					return true
 				end
@@ -908,8 +870,6 @@ t[#t + 1] = Def.ActorFrame {
 				if not normPref and IsMouseOverCentered(SCREEN_CENTER_X + overlayW/2 - 285, SCREEN_CENTER_Y - overlayH/2 + 18, 65, 18) then
 					displayAsJ4 = not displayAsJ4
 					currentPage = 1
-					SortScores(localScores)
-					SortScores(onlineScores)
 					scoresActor:playcommand("RefreshScores")
 					return true
 				end
@@ -923,9 +883,9 @@ t[#t + 1] = Def.ActorFrame {
 					-- Check Replay Button.
 					if IsMouseOverCentered(replayX, ry, 35, 30) then
 						local idx = (currentPage - 1) * pageSize + ri
-						local s = displayedScores[idx]
-						if s then
-							local ss = s.score or s
+						local entry = displayedScores[idx]
+						if entry then
+							local ss = entry.score
 							if currentView == VIEW_LOCAL then
 								HV.OnlineReplayActive = false
 								HV.OnlineReplayName = nil
@@ -953,9 +913,9 @@ t[#t + 1] = Def.ActorFrame {
 					-- Check Row Click (View Score)
 					if IsMouseOverCentered(SCREEN_CENTER_X, ry, overlayW - 50, rowH) then
 						local idx = (currentPage - 1) * pageSize + ri
-						local s = displayedScores[idx]
-						if s then
-							local ss = s.score or s
+						local entry = displayedScores[idx]
+						if entry then
+							local ss = entry.score
 							local rowLeft = SCREEN_CENTER_X - overlayW / 2 + 25
 							local localX = INPUTFILTER:GetMouseX() - rowLeft
 							-- Online name and Wife% cells link to EO. If score metadata
@@ -967,7 +927,7 @@ t[#t + 1] = Def.ActorFrame {
 								if not OpenOnlineScore(ss) then ms.ok("Online score page unavailable") end
 							else
 								if currentView == VIEW_LOCAL then
-									ViewScore(s)
+									ViewScore(ss)
 								elseif not ShowScoreOffsetPlot(ss) then
 									ms.ok("Replay not available")
 								end
