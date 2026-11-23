@@ -158,12 +158,6 @@ local HVPrefs = {
 		Values = {"J4", "Current"}
 	},
 
-	-- Gameplay: Toggle Full Pacemaker Graph
-	HV_ShowPacemakerGraph = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true}
-	},
 
 	-- Gameplay: Mini Pacemaker Target Type
 	HV_PacemakerTargetType = {
@@ -236,16 +230,16 @@ local HVPrefs = {
 	-- Gameplay: Show Hit Mean Display
 	HV_ShowHitMean = {
 		Default = "Mean",
-		Choices = {"Off", "Mean", "Tap Offset", "Std Dev", "J4 Score", "MA Ratio", "Delta Hand"},
-		Values = {"Off", "Mean", "TapOffset", "StdDev", "J4", "MARatio", "DeltaHand"}
+		Choices = {"Off", "Mean", "Tap Offset", "Std Dev", "MA Ratio", "Delta Hand"},
+		Values = {"Off", "Mean", "TapOffset", "StdDev", "MARatio", "DeltaHand"}
 	},
 	HV_MiniProgressBar = { Default = true, Choices = {"Off", "On"}, Values = {false, true} },
 
 	-- Gameplay: Show Hit Mean Display (Legacy compatibility)
 	HV_ShowMean = {
 		Default = "Mean",
-		Choices = {"Off", "Mean", "Std Dev", "J4 Score", "MA Ratio", "Delta Hand"},
-		Values = {"Off", "Mean", "StdDev", "J4", "MARatio", "DeltaHand"}
+		Choices = {"Off", "Mean", "Tap Offset", "Std Dev", "MA Ratio", "Delta Hand"},
+		Values = {"Off", "Mean", "TapOffset", "StdDev", "MARatio", "DeltaHand"}
 	},
 
 	-- Gameplay: Mini (Receptor Size)
@@ -440,12 +434,6 @@ local HVPrefs = {
 		Values = {false, true}
 	},
 
-	-- Gameplay: Score Display Mode
-	HV_ScoreDisplayMode = {
-		Default = "Normal",
-		Choices = {"Normal", "Subtractive"},
-		Values = {"Normal", "Subtractive"}
-	},
 
 	-- Gameplay: Auto-Fail Action Mode
 	HV_AutoFailMode = {
@@ -516,17 +504,6 @@ local HVPrefs = {
 		Default = false,
 		Choices = {"Off", "On"},
 		Values = {false, true}
-	},
-	-- Cosmetic gameplay score emulation.
-	HV_EmulateScore = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true}
-	},
-	HV_EmulateScoreJudge = {
-		Default = "J4",
-		Choices = {"J4", "J5", "J6", "J7", "J8", "J9"},
-		Values = {"J4", "J5", "J6", "J7", "J8", "J9"}
 	},
 }
 
@@ -695,11 +672,6 @@ function HV.GetAssistMode()
 	return ThemePrefs.Get("HV_AssistMode") or "Off"
 end
 
---- Check if the full goal tracker graph should be shown.
-function HV.ShowGoalTrackerGraph()
-	return isTrue(ThemePrefs.Get("HV_ShowPacemakerGraph"))
-end
-
 --- Check if goal tracker text should be shown.
 function HV.ShowGoalTrackerText()
 	return isTrue(ThemePrefs.Get("HV_ShowGoalTracker"))
@@ -708,7 +680,7 @@ end
 --- Get Notefield Stat Display type
 function HV.GetNotefieldStat()
 	local val = ThemePrefs.Get("HV_ShowMean")
-	if val == true or val == "true" then return "Mean" end
+	if val == true or val == "true" or val == "J4" then return "Mean" end
 	if val == false or val == "false" then return "Off" end
 	return val or "Mean"
 end

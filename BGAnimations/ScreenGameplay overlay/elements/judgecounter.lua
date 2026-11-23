@@ -183,78 +183,17 @@ return Def.ActorFrame {
 			end
 		end,
 
-		-- Rescored % (J4)
-		LoadFont("Common Normal") .. {
-			InitCommand = function(self)
-				self:halign(0):valign(0):zoom(0.34):diffuse(dimText)
-				self:settext("J4")
-			end
-		},
-		LoadFont("Common Normal") .. {
-			Name = "RescoreValue",
-			InitCommand = function(self)
-				self:halign(1):valign(0):x(65):zoom(0.34):diffuse(subText)
-				self:settext("0.0000%")
-				self.currWifePoints = 0
-			end,
-			JudgmentMessageCommand = function(self, msg)
-				-- Only process tap-related judgments.
-				if msg.HoldNoteScore or msg.RollNoteScore then
-					if msg.HoldNoteScore == "HoldNoteScore_LetGo" or msg.RollNoteScore == "RollNoteScore_MissedRoll" then
-						self.currWifePoints = self.currWifePoints - 4.5
-						self:queuecommand("Update")
-					end
-					return
-				end
-
-				if msg.TapNoteScore and msg.TapNoteScore ~= "TapNoteScore_AvoidMine" and msg.TapNoteScore ~= "TapNoteScore_CheckpointHit" then
-					local ts = ms.JudgeScalers[4] or 1.0 -- J4 rescaling always uses J4 (Index 4)
-					if msg.TapNoteOffset then
-						self.currWifePoints = self.currWifePoints + wife3(math.abs(msg.TapNoteOffset) * 1000, ts, "Wife3")
-					elseif msg.TapNoteScore == "TapNoteScore_Miss" then
-						self.currWifePoints = self.currWifePoints - 5.5
-					elseif msg.TapNoteScore == "TapNoteScore_HitMine" then
-						self.currWifePoints = self.currWifePoints - 7.0
-					elseif msg.TapNoteScore ~= "TapNoteScore_None" then
-						self.currWifePoints = self.currWifePoints + 2.0
-					end
-				end
-				self:queuecommand("Update")
-			end,
-			UpdateCommand = function(self)
-				local pss = STATSMAN:GetCurStageStats():GetPlayerStageStats()
-				if pss then
-					local notesPassed = pss:GetTapNoteScores("TapNoteScore_W1") +
-									   pss:GetTapNoteScores("TapNoteScore_W2") +
-									   pss:GetTapNoteScores("TapNoteScore_W3") +
-									   pss:GetTapNoteScores("TapNoteScore_W4") +
-									   pss:GetTapNoteScores("TapNoteScore_W5") +
-									   pss:GetTapNoteScores("TapNoteScore_Miss")
-
-					local maxPoints = notesPassed * 2
-					if maxPoints > 0 then
-						local j4 = math.min((self.currWifePoints / maxPoints) * 100, 100)
-						self:settext(string.format("%.4f%%", j4))
-					else
-						self:settext("100.0000%")
-					end
-				end
-			end,
-			PracticeModeResetMessageCommand = function(self) self.currWifePoints = 0; self:settext("100.0000%") end,
-			PracticeModeReloadMessageCommand = function(self) self.currWifePoints = 0; self:settext("100.0000%") end
-		},
-
 		-- MA Ratio (W1/W2)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self)
-				self:halign(0):valign(0):y(16):zoom(0.34):diffuse(dimText)
+				self:halign(0):valign(0):zoom(0.34):diffuse(dimText)
 				self:settext("MA Ratio")
 			end
 		},
 		LoadFont("Common Normal") .. {
 			Name = "MARatioValue",
 			InitCommand = function(self)
-				self:halign(1):valign(0):x(65):y(16):zoom(0.34):diffuse(subText)
+				self:halign(1):valign(0):x(65):zoom(0.34):diffuse(subText)
 				self:settext("0.00:1")
 			end,
 			JudgmentMessageCommand = function(self)
@@ -283,14 +222,14 @@ return Def.ActorFrame {
 		-- PA Ratio (W2/W3)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self)
-				self:halign(0):valign(0):y(32):zoom(0.34):diffuse(dimText)
+				self:halign(0):valign(0):y(16):zoom(0.34):diffuse(dimText)
 				self:settext("PA Ratio")
 			end
 		},
 		LoadFont("Common Normal") .. {
 			Name = "PARatioValue",
 			InitCommand = function(self)
-				self:halign(1):valign(0):x(65):y(32):zoom(0.34):diffuse(subText)
+				self:halign(1):valign(0):x(65):y(16):zoom(0.34):diffuse(subText)
 				self:settext("0.00:1")
 			end,
 			JudgmentMessageCommand = function(self)
@@ -319,14 +258,14 @@ return Def.ActorFrame {
 		-- Longest Combo
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self)
-				self:halign(0):valign(0):y(48):zoom(0.34):diffuse(dimText)
+				self:halign(0):valign(0):y(32):zoom(0.34):diffuse(dimText)
 				self:settext("Longest")
 			end
 		},
 		LoadFont("Common Normal") .. {
 			Name = "MaxComboValue",
 			InitCommand = function(self)
-				self:halign(1):valign(0):x(65):y(48):zoom(0.34):diffuse(subText)
+				self:halign(1):valign(0):x(65):y(32):zoom(0.34):diffuse(subText)
 				self:settext("0")
 			end,
 			JudgmentMessageCommand = function(self)
@@ -345,14 +284,14 @@ return Def.ActorFrame {
 		-- Std Dev
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self)
-				self:halign(0):valign(0):y(64):zoom(0.34):diffuse(dimText)
+				self:halign(0):valign(0):y(48):zoom(0.34):diffuse(dimText)
 				self:settext("SD")
 			end
 		},
 		LoadFont("Common Normal") .. {
 			Name = "SDValue",
 			InitCommand = function(self)
-				self:halign(1):valign(0):x(65):y(64):zoom(0.34):diffuse(subText)
+				self:halign(1):valign(0):x(65):y(48):zoom(0.34):diffuse(subText)
 				self:settext("0.00")
 				-- Optimization
 				self.runningmean = 0
@@ -396,14 +335,14 @@ return Def.ActorFrame {
 		-- Largest Offset
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self)
-				self:halign(0):valign(0):y(80):zoom(0.34):diffuse(dimText)
+				self:halign(0):valign(0):y(64):zoom(0.34):diffuse(dimText)
 				self:settext("Max")
 			end
 		},
 		LoadFont("Common Normal") .. {
 			Name = "LargestValue",
 			InitCommand = function(self)
-				self:halign(1):valign(0):x(65):y(80):zoom(0.34):diffuse(subText)
+				self:halign(1):valign(0):x(65):y(64):zoom(0.34):diffuse(subText)
 				self:settext("0.00")
 				self.max = 0
 			end,

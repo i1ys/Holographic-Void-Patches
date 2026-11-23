@@ -137,12 +137,6 @@ local HVPrefRows = {
 		Values  = {"J4", "Current"},
 	},
 
-	-- Show Full Pacemaker Graph
-	HV_ShowPacemakerGraph = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
 
 	-- Show Mini Text Goal Tracker (formerly Pacemaker)
 	HV_ShowGoalTracker = {
@@ -205,8 +199,8 @@ local HVPrefRows = {
 	-- Show Mean on Notefield
 	HV_ShowMean = {
 		Default = "Mean",
-		Choices = {"Off", "Mean", "Tap Offset", "Std Dev", "J4 Score", "MA Ratio", "Delta Hand"},
-		Values = {"Off", "Mean", "TapOffset", "StdDev", "J4", "MARatio", "DeltaHand"},
+		Choices = {"Off", "Mean", "Tap Offset", "Std Dev", "MA Ratio", "Delta Hand"},
+		Values = {"Off", "Mean", "TapOffset", "StdDev", "MARatio", "DeltaHand"},
 	},
 	
 	-- Accent Color
@@ -360,12 +354,6 @@ local HVPrefRows = {
 		Values = {false, true},
 	},
 
-	-- Score Display Mode
-	HV_ScoreDisplayMode = {
-		Default = "Normal",
-		Choices = {"Normal", "Subtractive"},
-		Values = {"Normal", "Subtractive"},
-	},
 
 	-- Auto-Fail Action Mode
 	HV_AutoFailMode = {
@@ -437,17 +425,6 @@ local HVPrefRows = {
 		Choices = {"Off", "On"},
 		Values = {false, true},
 	},
-	-- Cosmetic gameplay score emulation.
-	HV_EmulateScore = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_EmulateScoreJudge = {
-		Default = "J4",
-		Choices = {"J4", "J5", "J6", "J7", "J8", "J9"},
-		Values = {"J4", "J5", "J6", "J7", "J8", "J9"},
-	},
 } -- End of HVPrefRows
 
 -- Register the rows with the _Fallback ThemePrefsRows system
@@ -511,7 +488,7 @@ function HVThemeOptionsLines()
 		-- Gameplay Tools
 		"HV_ShowNPS", "HV_NPSWindowSize", "HV_ShowNPSGraph", "HV_ErrorBarMode",
 		"HV_ErrorBarColoringMode", "HV_ShowMean", "HV_ShowMeasureLines",
-		"HV_ComboBreakHighlight", "HV_AssistMode", "HV_ScoreDisplayMode",
+		"HV_ComboBreakHighlight", "HV_AssistMode",
 		
 		-- Goal Tracker
 		"HV_ShowGoalTracker",
@@ -620,25 +597,15 @@ end
 
 function OptionRowShowMean()
 	local row = HV.OptionRow("HV_ShowMean", "Mean Display")
-	row.LoadSelections = function(self, list, pn)
-		local val = ThemePrefs.Get("HV_ShowMean")
-		if val == true or val == "true" then
-			list[2] = true -- "Mean"
-		elseif val == false or val == "false" then
-			list[1] = true -- "Off"
-		else
-			local found = false
-			for i, v in ipairs(self.Values) do
-				if v == val then
-					list[i] = true
-					found = true
-					break
-				end
-			end
-			if not found then
-				list[2] = true -- Fallback to "Mean"
+	row.LoadSelections = function(self, list)
+		local current = HV.GetNotefieldStat()
+		for i, value in ipairs(self.Values) do
+			if value == current then
+				list[i] = true
+				return
 			end
 		end
+		list[2] = true -- Mean
 	end
 	return row
 end
@@ -727,42 +694,6 @@ end
 
 function OptionRowEmulateRidiculous()
 	return HV.OptionRow("HV_EmulateRidiculous", "Emulate Ridiculous")
-end
-
-function OptionRowEmulateScore()
-	return HV.OptionRow("HV_EmulateScore", "Emulate Score (Cosmetic)")
-end
-
-function OptionRowEmulateScoreJudge()
-	local row = HV.OptionRow("HV_EmulateScoreJudge", "Emulated Judge")
-	local choices = {"Judge 4", "Judge 5", "Judge 6", "Judge 7", "Judge 8", "Judge 9"}
-	local values = {"J4", "J5", "J6", "J7", "J8", "J9"}
-	if HV.GetCustomWindowChoices then
-		local customChoices, customValues = HV.GetCustomWindowChoices()
-		for i, choice in ipairs(customChoices or {}) do
-			choices[#choices + 1] = choice
-			values[#values + 1] = customValues[i]
-		end
-	end
-	row.Choices, row.Values = choices, values
-	row.ExportOnChange = true
-	row.LoadSelections = function(self, list, pn)
-		local value = ThemePrefs.Get("HV_EmulateScoreJudge") or "J4"
-		for i, candidate in ipairs(self.Values) do
-			if tostring(candidate) == tostring(value) then list[i] = true; return end
-		end
-		list[1] = true
-	end
-	row.SaveSelections = function(self, list, pn)
-		for i, selected in ipairs(list) do
-			if selected then
-				ThemePrefs.Set("HV_EmulateScoreJudge", self.Values[i])
-				ThemePrefs.ForceSave()
-				return
-			end
-		end
-	end
-	return row
 end
 
 function OptionRowShowCombo()

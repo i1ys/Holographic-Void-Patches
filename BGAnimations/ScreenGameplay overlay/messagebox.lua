@@ -91,8 +91,6 @@ return Def.ActorFrame {
 				"m: "..transStr("MeanPosition"),
 				"n: "..transStr("NotefieldSpacing"),
 				",: "..transStr("MeanSize"),
-				".: "..transStr("DPDisplayPosition"),
-				"/: "..transStr("DPDisplaySize"),
 			}
 			if HV.Config.Player.Get(PLAYER_1, "LaneCover") ~= 0 then
 				local selectStr = THEME:GetString("GameButton", "Select")

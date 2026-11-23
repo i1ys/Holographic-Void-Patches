@@ -27,9 +27,21 @@ function HV.Judgment.ClassifyOffset(offsetMs, windows)
 end
 
 function HV.Score.GetLiveWifePercent(message, player)
-	if message.Player ~= player or type(message.MaxWifeScore) ~= "number" or message.MaxWifeScore <= 0 then return end
+	-- Replay resume broadcasts a snapshot with the raw player index.
+	local replaySnapshot = message.FromReplay == true
+	local matchesPlayer = message.Player == player or (replaySnapshot and message.Player == 0 and player == PLAYER_1)
+	if not matchesPlayer or type(message.MaxWifeScore) ~= "number" then return end
+
+	-- The engine sends judgments for these controllers without recording a live score.
+	local state = GAMESTATE:GetPlayerState(player)
+	local controller = state and state:GetPlayerController()
+	if controller == "PlayerController_Autoplay" or controller == "PlayerController_Cpu" then return end
+
 	local percent = message.WifePercent
-	if type(percent) == "number" and percent == percent and math.abs(percent) < math.huge then return percent end
+	if type(percent) ~= "number" or percent ~= percent or math.abs(percent) == math.huge then return end
+	if message.MaxWifeScore > 0 or (replaySnapshot and message.MaxWifeScore == 0 and percent == 0) then
+		return percent
+	end
 end
 
 function HV.Score.GetEvaluationOpeningScore(steps, stageStats, replayPlayback)

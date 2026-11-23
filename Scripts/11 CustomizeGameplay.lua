@@ -78,9 +78,6 @@ local function loadValuesTable()
 	MovableValues.RecentJudgmentDisplayX = coord("RecentJudgmentDisplayX")
 	MovableValues.RecentJudgmentDisplayY = coord("RecentJudgmentDisplayY")
 	MovableValues.RecentJudgmentDisplayZoom = size("RecentJudgmentDisplayZoom")
-	MovableValues.DPDisplayX = coord("DPDisplayX")
-	MovableValues.DPDisplayY = coord("DPDisplayY")
-	MovableValues.DPDisplayZoom = size("DPDisplayZoom")
 	MovableValues.AutoFailDisplayX = coord("AutoFailDisplayX")
 	MovableValues.AutoFailDisplayY = coord("AutoFailDisplayY")
 	MovableValues.AutoFailDisplayZoom = size("AutoFailDisplayZoom")
@@ -889,45 +886,6 @@ Movable = {
 			inc = -0.01
 		}
 	},
-	DeviceButton_period = {
-		name = "DPDisplay",
-		textHeader = "DP Display Position:",
-		element = {},
-		properties = {"X", "Y"},
-		elementTree = "GameplayXYCoordinates",
-		DeviceButton_up = {
-			property = "AddY",
-			inc = -3
-		},
-		DeviceButton_down = {
-			property = "AddY",
-			inc = 3
-		},
-		DeviceButton_left = {
-			property = "AddX",
-			inc = -3
-		},
-		DeviceButton_right = {
-			property = "AddX",
-			inc = 3
-		}
-	},
-	DeviceButton_slash = {
-		name = "DPDisplay",
-		textHeader = "DP Display Size:",
-		properties = {"Zoom"},
-		element = {},
-		elementTree = "GameplaySizes",
-		DeviceButton_up = {
-			property = "Zoom",
-			inc = 0.01
-		},
-		DeviceButton_down = {
-			property = "Zoom",
-			inc = -0.01
-		}
-	}
-	
 }
 
 local function updatetext(button)

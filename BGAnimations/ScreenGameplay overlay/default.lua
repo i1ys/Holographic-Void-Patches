@@ -25,9 +25,6 @@ t[#t + 1] = LoadActor("elements/toasty.lua", gameplay)
 if not gameplay.isSync then
 	if HV.ApplyLaneCoverModifiers then HV.ApplyLaneCoverModifiers() end
 	t[#t + 1] = LoadActor("scoretracking")
-	if HV.LegacyPrefs.Get("HV_ShowPacemakerGraph") then
-		t[#t + 1] = LoadActor("pacemaker")
-	end
 	t[#t + 1] = LoadActor("elements/autofaildisplay.lua", gameplay)
 	t[#t + 1] = LoadActor("npscalc")
 	t[#t + 1] = LoadActor("multiplayer")
