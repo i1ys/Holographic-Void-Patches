@@ -399,20 +399,6 @@ local HVPrefs = {
 		Values = {false, true}
 	},
 
-	-- Gameplay: Display Lower Judgement Offset
-	HV_DisplayLowerJudgementOffset = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true}
-	},
-
-	-- Gameplay: Offset Display Judgement
-	HV_OffsetDisplayJudgement = {
-		Default = "W3",
-		Choices = {"Marvelous", "Perfect", "Great", "Good", "Bad"},
-		Values = {"W1", "W2", "W3", "W4", "W5"}
-	},
-	
 	-- Visual: Judgment Animation
 	HV_JudgmentAnimation = {
 		Default = false,
@@ -426,14 +412,6 @@ local HVPrefs = {
 		Choices = {"Off", "On"},
 		Values = {false, true}
 	},
-
-	-- Visual: Recent Judgement Display
-	HV_RecentJudgmentDisplay = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true}
-	},
-
 
 	-- Gameplay: Auto-Fail Action Mode
 	HV_AutoFailMode = {
@@ -512,9 +490,8 @@ local Config = HV.Config
 Config.GameplayHUD = {}
 for _, key in ipairs({
 	"HV_MinimalisticMode", "HV_ShowJudgment", "HV_EmulateRidiculous",
-	"HV_JudgmentAnimation", "HV_RecentJudgmentDisplay", "HV_PrioritizeLowerJudgements",
-	"HV_DisplayLowerJudgementOffset", "HV_OffsetDisplayJudgement", "HV_ShowCombo",
-	"HV_ComboAnimation", "HV_ShowCurrentWife", "HV_ShowJudgeCounter",
+	"HV_JudgmentAnimation", "HV_PrioritizeLowerJudgements",
+	"HV_ShowCombo", "HV_ComboAnimation", "HV_ShowCurrentWife", "HV_ShowJudgeCounter",
 	"HV_JudgeCounterMode", "HV_ShowNGIndicator", "HV_ShowPlayerInfo",
 	"HV_ProgressBarPosition", "HV_MiniProgressBar", "HV_ShowInGameLeaderboard",
 	"HV_LastInGameLeaderboardMode", "HV_ShowNPS", "HV_NPSWindowSize",
@@ -751,16 +728,6 @@ function HV.PrioritizeLowerJudgements()
 	return isTrue(ThemePrefs.Get("HV_PrioritizeLowerJudgements"))
 end
 
---- Check if lower judgment offsets should be displayed.
-function HV.DisplayLowerJudgementOffset()
-	return isTrue(ThemePrefs.Get("HV_DisplayLowerJudgementOffset"))
-end
-
---- Get the lowest judgment threshold that should show hit offset text.
-function HV.GetOffsetDisplayJudgement()
-	return ThemePrefs.Get("HV_OffsetDisplayJudgement") or "W3"
-end
-
 --- Check if judgment animations are enabled.
 function HV.JudgmentAnimation()
 	return isTrue(ThemePrefs.Get("HV_JudgmentAnimation"))
@@ -769,11 +736,6 @@ end
 --- Check if combo animations are enabled.
 function HV.ComboAnimation()
 	return isTrue(ThemePrefs.Get("HV_ComboAnimation"))
-end
-
---- Check if recent judgment display is enabled.
-function HV.RecentJudgmentDisplay()
-	return isTrue(ThemePrefs.Get("HV_RecentJudgmentDisplay"))
 end
 
 --- Check if song background should be shown.

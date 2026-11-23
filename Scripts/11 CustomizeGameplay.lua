@@ -75,9 +75,6 @@ local function loadValuesTable()
 	MovableValues.BPMTextX = coord("BPMTextX")
 	MovableValues.BPMTextY = coord("BPMTextY")
 	MovableValues.BPMTextZoom = size("BPMTextZoom")
-	MovableValues.RecentJudgmentDisplayX = coord("RecentJudgmentDisplayX")
-	MovableValues.RecentJudgmentDisplayY = coord("RecentJudgmentDisplayY")
-	MovableValues.RecentJudgmentDisplayZoom = size("RecentJudgmentDisplayZoom")
 	MovableValues.AutoFailDisplayX = coord("AutoFailDisplayX")
 	MovableValues.AutoFailDisplayY = coord("AutoFailDisplayY")
 	MovableValues.AutoFailDisplayZoom = size("AutoFailDisplayZoom")
@@ -797,45 +794,6 @@ Movable = {
 	DeviceButton_c = {
 		name = "BPMText",
 		textHeader = "BPM / Rate Size:",
-		element = {},
-		properties = {"Zoom"},
-		elementTree = "GameplaySizes",
-		DeviceButton_up = {
-			property = "Zoom",
-			inc = 0.01
-		},
-		DeviceButton_down = {
-			property = "Zoom",
-			inc = -0.01
-		}
-	},
-	DeviceButton_v = {
-		name = "RecentJudgmentDisplay",
-		textHeader = "Recent Judgment Display Position:",
-		element = {},
-		properties = {"X", "Y"},
-		elementTree = "GameplayXYCoordinates",
-		propertyOffsets = {0, 76},
-		DeviceButton_up = {
-			property = "AddY",
-			inc = -5
-		},
-		DeviceButton_down = {
-			property = "AddY",
-			inc = 5
-		},
-		DeviceButton_left = {
-			property = "AddX",
-			inc = -5
-		},
-		DeviceButton_right = {
-			property = "AddX",
-			inc = 5
-		}
-	},
-	DeviceButton_b = {
-		name = "RecentJudgmentDisplay",
-		textHeader = "Recent Judgment Display Size:",
 		element = {},
 		properties = {"Zoom"},
 		elementTree = "GameplaySizes",

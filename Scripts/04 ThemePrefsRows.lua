@@ -319,20 +319,6 @@ local HVPrefRows = {
 		Values = {false, true},
 	},
 
-	-- Display Lower Judgement Offset
-	HV_DisplayLowerJudgementOffset = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Offset Display Judgement
-	HV_OffsetDisplayJudgement = {
-		Default = "W3",
-		Choices = {"Marvelous", "Perfect", "Great", "Good", "Bad"},
-		Values = {"W1", "W2", "W3", "W4", "W5"},
-	},
-
 	-- Judgment Animation
 	HV_JudgmentAnimation = {
 		Default = false,
@@ -346,14 +332,6 @@ local HVPrefRows = {
 		Choices = {"Off", "On"},
 		Values = {false, true},
 	},
-
-	-- Recent Judgement Display
-	HV_RecentJudgmentDisplay = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
 
 	-- Auto-Fail Action Mode
 	HV_AutoFailMode = {
@@ -681,24 +659,12 @@ function OptionRowPrioritizeLowerJudgements()
 	return HV.OptionRow("HV_PrioritizeLowerJudgements", "Prioritize Lower Judgements")
 end
 
-function OptionRowDisplayLowerJudgementOffset()
-	return HV.OptionRow("HV_DisplayLowerJudgementOffset", "Display Lower Judgement Offset")
-end
-
-function OptionRowOffsetDisplayJudgement()
-	return HV.OptionRow("HV_OffsetDisplayJudgement", "Offset Display Judgement")
-end
-
 function OptionRowJudgmentAnimation()
 	return HV.OptionRow("HV_JudgmentAnimation", "Judgment Animation")
 end
 
 function OptionRowComboAnimation()
 	return HV.OptionRow("HV_ComboAnimation", "Combo Animation")
-end
-
-function OptionRowRecentJudgmentDisplay()
-	return HV.OptionRow("HV_RecentJudgmentDisplay", "Recent Judgement Display")
 end
 
 -- Custom Brightness row backed by Etterna's internal BGBrightness preference.

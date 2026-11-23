@@ -1,59 +1,4 @@
-local DOT_COUNT = 20
-local dotHistory = {}
-local judgmentThresholds = {W1=0, W2=1, W3=2, W4=3, W5=4}
-
-local function shouldShowLowerJudgementOffset(tns)
-	if not (HV.DisplayLowerJudgementOffset and HV.DisplayLowerJudgementOffset()) then return false end
-	if tns == "Miss" then return false end
-
-	local threshold = HV.GetOffsetDisplayJudgement and HV.GetOffsetDisplayJudgement() or "W3"
-	local currentIndex = judgmentThresholds[tns]
-	local thresholdIndex = judgmentThresholds[threshold] or judgmentThresholds.W3
-	return currentIndex ~= nil and currentIndex >= thresholdIndex
-end
-
-local function recentJudgmentVisible()
-	return HV.RecentJudgmentDisplay() and not HV.MinimalisticMode()
-end
-
-local function animateRecentJudgmentVisibility(self, visible)
-	self:stoptweening()
-	if visible then
-		self:visible(true):diffusealpha(0):decelerate(0.18):diffusealpha(1)
-	else
-		self:accelerate(0.14):diffusealpha(0)
-	end
-end
-
--- Create the Recent Judgment display dots statically first
-local recentJudgmentDisplay = Def.ActorFrame {
-	Name = "RecentJudgmentDisplay",
-	InitCommand = function(self)
-		self:xy((MovableValues and MovableValues.RecentJudgmentDisplayX) or getDefaultGameplayCoordinate("RecentJudgmentDisplayX") or -160, (MovableValues and MovableValues.RecentJudgmentDisplayY) or getDefaultGameplayCoordinate("RecentJudgmentDisplayY") or 50):zoom((MovableValues and MovableValues.RecentJudgmentDisplayZoom) or getDefaultGameplaySize("RecentJudgmentDisplayZoom") or 1)
-		self:visible(recentJudgmentVisible())
-		self:diffusealpha(recentJudgmentVisible() and 1 or 0)
-	end,
-	OnCommand = function(self)
-		setMovableActor({"DeviceButton_v", "DeviceButton_b"}, self, self:GetChild("Border"))
-	end,
-	UpdateRowsMessageCommand = function(self)
-		animateRecentJudgmentVisibility(self, recentJudgmentVisible())
-	end,
-	HV_MinimalisticModeChangedMessageCommand = function(self)
-		animateRecentJudgmentVisibility(self, recentJudgmentVisible())
-	end
-}
-
-for i = 1, DOT_COUNT do
-	recentJudgmentDisplay[#recentJudgmentDisplay + 1] = Def.Quad {
-		Name = "Dot"..i,
-		InitCommand = function(self)
-			self:zoomto(6, 6):y((i-1) * 8):visible(false)
-		end
-	}
-end
-
-recentJudgmentDisplay[#recentJudgmentDisplay + 1] = MovableBorder(12, ((DOT_COUNT - 1) * 8) + 6, 1, 0, (((DOT_COUNT - 1) * 8) + 6) / 2)
+local judgments = {W1 = 0, W2 = 1, W3 = 2, W4 = 3, W5 = 4, Miss = 5}
 
 local t = Def.ActorFrame {
 	JudgmentMessageCommand = function(self, params)
@@ -66,11 +11,8 @@ local t = Def.ActorFrame {
 		local tns = ToEnumShortString(params.TapNoteScore)
 		local container = judgment:GetChild("JudgmentContainer")
 		local sprite = container:GetChild("JudgmentSprite")
-		local offsetText = container:GetChild("OffsetText")
 		if not sprite then return end
 		
-		-- Judgment index: W1=0, W2=1, W3=2, W4=3, W5=4, Miss=5
-		local judgments = {W1=0, W2=1, W3=2, W4=3, W5=4, Miss=5}
 		local jdgIdx = judgments[tns]
 		if not jdgIdx then return end
 		
@@ -79,34 +21,6 @@ local t = Def.ActorFrame {
 			local judgeScale = tonumber(HV_JudgeScale) or PREFSMAN:GetPreference("TimingWindowScale") or 1
 			if math.abs(params.TapNoteOffset) <= 0.01125 * judgeScale then
 				isRidiculous = true
-			end
-		end
-
-		-- Recent Judgment Display Logic
-		if HV.RecentJudgmentDisplay and HV.RecentJudgmentDisplay() and not HV.MinimalisticMode() then
-			local dotFrame = self:GetChild("RecentJudgmentDisplay")
-			if dotFrame then
-				-- Push history
-				for i = DOT_COUNT, 2, -1 do
-					dotHistory[i] = dotHistory[i-1]
-				end
-				dotHistory[1] = HVColor.GetJudgmentColor(isRidiculous and "Ridiculous" or tns)
-				
-				-- Update dots
-				for i = 1, DOT_COUNT do
-					local dot = dotFrame:GetChild("Dot"..i)
-					if dot then
-						if dotHistory[i] then
-							dot:stoptweening()
-							dot:diffuse(dotHistory[i])
-							-- Fade older dots: instant update
-							dot:diffusealpha(math.max(0.1, 1 - (i-1)/DOT_COUNT))
-							dot:visible(true)
-						else
-							dot:visible(false)
-						end
-					end
-				end
 			end
 		end
 
@@ -204,16 +118,6 @@ local t = Def.ActorFrame {
 			end
 		end
 
-		if offsetText then
-			if shouldShowLowerJudgementOffset(tns) and params.TapNoteOffset ~= nil then
-				offsetText:settext(string.format("%+.2fms", params.TapNoteOffset * 1000))
-				offsetText:diffuse(HVColor.GetJudgmentColor(isRidiculous and "Ridiculous" or tns))
-				offsetText:visible(true):diffusealpha(1)
-			else
-				offsetText:visible(false)
-			end
-		end
-		
 		-- Apply Animation if enabled (only to the judgment container)
 		if HV.JudgmentAnimation and HV.JudgmentAnimation() then
 			container:zoom(0.81) -- Start slightly larger for the pulse
@@ -255,15 +159,6 @@ local t = Def.ActorFrame {
 				end
 			},
 			LoadFont("Common Normal") .. {
-				Name = "OffsetText",
-				InitCommand = function(self)
-					-- Keep the timing offset legible at a constant size when the
-					-- judgment itself is resized in Customize Gameplay.
-					local judgeZoom = (MovableValues and MovableValues.JudgeZoom) or getDefaultGameplaySize("JudgeZoom") or 1
-					self:y(18):zoom(0.455 / judgeZoom):visible(false):diffusealpha(0):maxwidth(180)
-				end
-			},
-			LoadFont("Common Normal") .. {
 				Name = "RidiculousIndicator",
 				InitCommand = function(self)
 					self:y(-22):zoom(0.4):visible(false):maxwidth(200)
@@ -275,7 +170,6 @@ local t = Def.ActorFrame {
 		},
 		MovableBorder(120, 40, 1, 0, 0)
 	},
-	recentJudgmentDisplay
 }
 
 return t
