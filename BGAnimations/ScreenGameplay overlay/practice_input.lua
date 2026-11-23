@@ -59,21 +59,6 @@ local function isPaused()
 	return GAMESTATE:IsPaused() and true or false
 end
 
-local function pauseAtCurrentPos()
-	local top = getTop()
-	if not top then return end
-	local pos = getSongPos()
-	if top.TogglePause then
-		if not isPaused() then
-			setSongPos(pos, false)
-		end
-		pcall(function() top:TogglePause() end)
-		if isPaused() then
-			setSongPos(pos, false)
-		end
-	end
-end
-
 -- Direct reference to the graph Hitbox, set once actors are ready
 local graphHitboxRef = nil
 
@@ -199,7 +184,16 @@ local function frameStep(delta)
 	setSongPos(nextpos, false)
 end
 
+local function togglePause()
+	local top = getTop()
+	if top and top.TogglePause then top:TogglePause() end
+end
+
 local function handlePracticeCommand(name)
+	if name == "PracPause" then
+		togglePause()
+		return
+	end
 	local top = getTop()
 	if not top then return end
 
@@ -207,8 +201,6 @@ local function handlePracticeCommand(name)
 		if top.AddToRate then pcall(function() top:AddToRate(0.05) end) else changeMusicRate(0.05) end
 	elseif name == "PracRateDown" then
 		if top.AddToRate then pcall(function() top:AddToRate(-0.05) end) else changeMusicRate(-0.05) end
-	elseif name == "PracPause" then
-		if top.TogglePause then top:TogglePause() end
 	elseif name == "PracRestart" then
 		setSongPos(loopStartPos or 0, true)
 	elseif name == "PracLoopStart" then
@@ -243,7 +235,7 @@ local function duminput(event)
 	if event.type == "InputEventType_FirstPress" then
 		if event.DeviceInput and event.DeviceInput.button == "DeviceButton_right mouse button" then
 			if not isMouseOverGraph() then
-				pauseAtCurrentPos()
+				togglePause()
 				return true
 			end
 		end

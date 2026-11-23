@@ -5,19 +5,16 @@ local ThemePrefs = HV.LegacyPrefs
 -- Time-based moving average with ActorMultiVertex graph display
 
 local pn = GAMESTATE:GetEnabledPlayers()[1]
-local countNotesSeparately = GAMESTATE:CountNotesSeparately()
-
--- Check preferences
-if not HV.ShowNPS() then
+local showText, showGraph = HV.ShowNPS(), HV.ShowNPSGraph()
+if not showText and not showGraph then
 	return Def.ActorFrame {}
 end
 
--- Window sizes from ThemePrefs instead of hardcoded
+local minWindow = 0.5
 local function getWindowSize()
-	return tonumber(ThemePrefs.Get("HV_NPSWindowSize")) or 1.5
+	return math.max(minWindow, tonumber(ThemePrefs.Get("HV_NPSWindowSize")) or 1.5)
 end
 local npsWindow = getWindowSize()
-local minWindow = 0.5 
 
 -- HV Specific Styling & Position
 local graphWidth = 140
@@ -26,23 +23,17 @@ local graphX = 10
 local graphY = SCREEN_CENTER_Y + 100
 local fontZoom = 0.65
 local accentColor = HVColor.Accent or color("#00CFFF")
-local isCustomizeGameplay = HV.IsGameplayCustomizationEnabled()
 
--- Graph settings
-local initialPeak = 1 -- Set lower so easy songs don't look broken
-local maxVerts = 150
-local graphFreq = 0.2
+local maxSamples = 150
+local sampleInterval = 0.2
+local initialPeak = 1
 
 local noteTable = {}
-local lastJudgment = "TapNoteScore_None"
-local noteSum = 0
-local peakNPS = 0
-local curNPS = 0
-local lastMusicSeconds = nil
-local npsReferenceSeconds = nil
-
--- Cached UI references
-local npsTextActor = nil
+local noteSum, peakNPS = 0, 0
+local lastSongSeconds, lastRate, referenceSeconds, wasPaused
+local samples = {}
+local lastSampleTime
+local npsTextActor, graphActor
 
 local function animateNPSVisibility(self, visible)
 	self:stoptweening()
@@ -53,72 +44,61 @@ local function animateNPSVisibility(self, visible)
 	end
 end
 
-local function addNote(time, size)
-	if countNotesSeparately then size = 1 end
-	noteTable[#noteTable + 1] = {time, size}
-	noteSum = noteSum + size
-end
-
-local function getMusicSeconds()
-	return math.max(0, GAMESTATE:GetSongPosition():GetMusicSeconds() / getCurRateValue())
-end
-
-local function resetNPSWindow()
+local function resetNPS()
 	noteTable = {}
-	noteSum = 0
-	lastMusicSeconds = nil
-	npsReferenceSeconds = nil
+	noteSum, peakNPS = 0, 0
+	lastSongSeconds, lastRate, referenceSeconds, wasPaused = nil, nil, nil, nil
+	samples, lastSampleTime = {}, nil
+	if npsTextActor then npsTextActor:settext("NPS: 0  Peak: 0") end
+	if graphActor then
+		graphActor:SetDrawState {First = 1, Num = 0}
+	end
 end
 
-local function getCurrentMusicSeconds()
-	local currentTime = getMusicSeconds()
-	-- A bookmark loop rewinds the song position. Discard timestamps from the
-	-- previous pass so they cannot remain ahead of the new pass in the queue.
-	if lastMusicSeconds and currentTime < lastMusicSeconds - 0.05 then
-		resetNPSWindow()
-	end
-	lastMusicSeconds = currentTime
-	if not npsReferenceSeconds then
-		npsReferenceSeconds = currentTime
-	end
-	return currentTime
-end
-
-local function removeNote()
-	local exit = false
-	while not exit do
-		if #noteTable >= 1 then
-			-- Calculate time since start (mimicking GetTimeSinceStart for gameplay)
-			local currentTime = getCurrentMusicSeconds()
-			local noteTime = noteTable[1][1]
-			if noteTime + npsWindow < currentTime then
-				noteSum = noteSum - noteTable[1][2]
-				table.remove(noteTable, 1)
-			else
-				exit = true
-			end
+local function sampleClock()
+	local songSeconds = math.max(0, GAMESTATE:GetSongPosition():GetMusicSeconds())
+	local rate = getCurRateValue()
+	local paused = GAMESTATE:IsPaused()
+	if lastSongSeconds then
+		local jump = songSeconds - lastSongSeconds
+		if rate ~= lastRate or jump < -0.05 or (paused and wasPaused and jump > 0.05) then
+			resetNPS()
 		else
-			exit = true
+			-- The audio clock can move slightly backward when it resumes.
+			songSeconds = math.max(songSeconds, lastSongSeconds)
 		end
 	end
+	lastSongSeconds, lastRate, wasPaused = songSeconds, rate, paused
+	referenceSeconds = referenceSeconds or songSeconds
+	return (songSeconds - referenceSeconds) / rate
 end
 
-local function getCurNPS()
-	local musicSeconds = getCurrentMusicSeconds()
-	local elapsedSeconds = musicSeconds - (npsReferenceSeconds or musicSeconds)
-	return noteSum / clamp(elapsedSeconds, minWindow, npsWindow)
-end
+local function updateGraph(elapsed, nps)
+	if not graphActor or (lastSampleTime and elapsed - lastSampleTime < sampleInterval) then return end
+	lastSampleTime = elapsed
+	samples[#samples + 1] = nps
+	if #samples > maxSamples then table.remove(samples, 1) end
 
-local function Update(self)
-	removeNote()
-	curNPS = getCurNPS()
-
-	-- Track peak NPS from the start of the song
-	peakNPS = math.max(peakNPS, curNPS)
-	
-	if npsTextActor then
-		npsTextActor:settextf("NPS: %0.0f  Peak: %0.0f", curNPS, peakNPS)
+	local verts = {}
+	local peak = math.max(peakNPS, initialPeak)
+	for i, sample in ipairs(samples) do
+		local x = (i - #samples) * graphWidth / maxSamples
+		verts[i] = {{x, -sample / peak * graphHeight, 0}, accentColor}
 	end
+	graphActor:SetVertices(verts)
+	graphActor:SetDrawState {First = 1, Num = #verts > 1 and #verts or 0}
+end
+
+local function update()
+	-- Clock discontinuities may clear the queue. Sample before accessing it.
+	local elapsed = sampleClock()
+	while noteTable[1] and elapsed - noteTable[1].time > npsWindow do
+		noteSum = noteSum - table.remove(noteTable, 1).size
+	end
+	local nps = noteSum / clamp(elapsed, minWindow, npsWindow)
+	peakNPS = math.max(peakNPS, nps)
+	if npsTextActor then npsTextActor:settextf("NPS: %0.0f  Peak: %0.0f", nps, peakNPS) end
+	updateGraph(elapsed, nps)
 end
 
 local t = Def.ActorFrame {
@@ -131,50 +111,55 @@ local t = Def.ActorFrame {
 		animateNPSVisibility(self, not (params and params.Enabled))
 	end,
 	OnCommand = function(self)
-		setMovableActor({"DeviceButton_y", "DeviceButton_u"}, self:GetChild("NPSTextContainer"), self:GetChild("NPSTextContainer"):GetChild("Border"))
-		setMovableActor({"DeviceButton_i", "DeviceButton_o"}, self:GetChild("NPSGraph"), self:GetChild("NPSGraph"):GetChild("Border"))
-		self:SetUpdateFunction(Update)
+		if showText then
+			local text = self:GetChild("NPSTextContainer")
+			setMovableActor({"DeviceButton_y", "DeviceButton_u"}, text, text:GetChild("Border"))
+		end
+		if showGraph then
+			local graph = self:GetChild("NPSGraph")
+			setMovableActor({"DeviceButton_i", "DeviceButton_o"}, graph, graph:GetChild("Border"))
+		end
+		self:SetUpdateFunction(update)
 	end,
-	
-	-- Judgment hook
+
 	Def.Actor {
 		JudgmentMessageCommand = function(self, params)
-			local notes = params.Notes
-			local chordsize = 0
-			if params.Player == pn and params.Type == "Tap" then
-				if GAMESTATE:GetCurrentGame():CountNotesSeparately() then
-					chordsize = 1
-				else
-					for i = 1, GAMESTATE:GetCurrentStyle():ColumnsPerPlayer() do
-						if notes ~= nil and notes[i] ~= nil then
-							chordsize = chordsize + 1
-						end
-					end
-				end
-				local currentTime = getCurrentMusicSeconds()
-				addNote(currentTime, chordsize)
-				lastJudgment = params.TapNoteScore
+			if params.Player ~= pn or params.Type ~= "Tap" or params.FromReplay then return end
+
+			local size = 0
+			if params.Notes then
+				-- Etterna sends only the judged lane when chord cohesion is off.
+				for _ in pairs(params.Notes) do size = size + 1 end
+			elseif GAMESTATE:CountNotesSeparately() then
+				size = 1
 			end
+			if size == 0 then return end
+
+			local elapsed = sampleClock()
+			noteTable[#noteTable + 1] = {time = elapsed, size = size}
+			noteSum = noteSum + size
 		end,
-		PracticeLoopChangedMessageCommand = function(self)
-			resetNPSWindow()
-		end,
-		PracticeModeResetMessageCommand = function(self)
-			resetNPSWindow()
-		end,
-		PracticeModeReloadMessageCommand = function(self)
-			resetNPSWindow()
+		PracticeLoopChangedMessageCommand = resetNPS,
+		PracticeModeResetMessageCommand = resetNPS,
+		PracticeModeReloadMessageCommand = resetNPS,
+		CurrentSongChangedMessageCommand = resetNPS,
+		CurrentRateChangedMessageCommand = function()
+			sampleClock()
 		end,
 		ThemePrefChangedMessageCommand = function(self, params)
 			if params and params.Name == "HV_NPSWindowSize" then
-				npsWindow = getWindowSize()
+				local size = getWindowSize()
+				if npsWindow ~= size then
+					npsWindow = size
+					resetNPS()
+				end
 			end
 		end
 	},
 }
 
 -- Text Container
-t[#t + 1] = Def.ActorFrame {
+local text = Def.ActorFrame {
 	Name = "NPSTextContainer",
 	InitCommand = function(self)
 		self:xy((MovableValues and MovableValues.NPSDisplayX) or getDefaultGameplayCoordinate("NPSDisplayX") or graphX, (MovableValues and MovableValues.NPSDisplayY) or getDefaultGameplayCoordinate("NPSDisplayY") or (graphY - 5)):zoom((MovableValues and MovableValues.NPSDisplayZoom) or getDefaultGameplaySize("NPSDisplayZoom") or fontZoom)
@@ -190,11 +175,9 @@ t[#t + 1] = Def.ActorFrame {
 	MovableBorder(110, 18, 1, 55, -9)
 }
 
--- Graph Container
-local verts = {{{0, 0, 0}, Color.White}}
-local total = 1
-local graphPeakNPS = initialPeak
+if showText then t[#t + 1] = text end
 
+-- Graph Container
 local graphVerts = Def.ActorFrame {
 	Name = "NPSGraph",
 	InitCommand = function(self)
@@ -235,43 +218,14 @@ local graphVerts = Def.ActorFrame {
 	Def.ActorMultiVertex {
 		Name = "AMV_QuadStrip",
 		InitCommand = function(self)
-			self:visible(true)
+			graphActor = self
 			self:xy(graphWidth, graphHeight)
-			self:SetDrawState {Mode = "DrawMode_LineStrip"}
+			self:SetDrawState {Mode = "DrawMode_LineStrip", First = 1, Num = 0}
 		end,
-		BeginCommand = function(self)
-			peakNPS = 0
-			graphPeakNPS = initialPeak
-			self:SetDrawState {First = 1, Num = -1}
-			self:SetVertices(verts)
-			self:queuecommand("GraphUpdate")
-		end,
-		GraphUpdateCommand = function(self)
-			total = total + 1
-			-- ensure we keep scaling appropriately
-			if peakNPS > graphPeakNPS then
-				for i = 1, #verts do
-					verts[i][1][2] = verts[i][1][2] * (graphPeakNPS / peakNPS)
-				end
-				graphPeakNPS = peakNPS
-			end
-			
-			local currentPeak = math.max(graphPeakNPS, initialPeak)
-			verts[#verts + 1] = {{total * (graphWidth / maxVerts), -curNPS / currentPeak * graphHeight, 0}, accentColor}
-			
-			if #verts > maxVerts + 2 then
-				table.remove(verts, 1)
-			end
-			self:SetVertices(verts)
-			self:addx(-graphWidth / maxVerts)
-			self:SetDrawState {First = math.max(1, #verts - maxVerts), Num = math.min(maxVerts, #verts)}
-			self:sleep(graphFreq)
-			self:queuecommand("GraphUpdate")
-		end
 	},
 	MovableBorder(graphWidth, graphHeight, 1, graphWidth / 2, graphHeight / 2)
 }
 
-t[#t + 1] = graphVerts
+if showGraph then t[#t + 1] = graphVerts end
 
 return t
