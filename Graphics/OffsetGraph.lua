@@ -1,4 +1,5 @@
 local ThemePrefs = HV.LegacyPrefs
+local scoreTabPlot = ... == "ScoreTab"
 
 --- Holographic Void: Offset Plot Graph
 -- Ported from spawncamping-wallhack OffsetGraph.lua
@@ -155,7 +156,7 @@ local judgmentKeys = {"W1", "W2", "W3", "W4", "W5", "Miss"}
 local plotEvents, prefixes = {}, {}
 local middleColumn = 1.5
 local oddColumns = false
-local cbl, cbr, cbm = 0, 0, 0
+local cbl, cbr, cbm
 local showMiddle = false
 local handStats = {}
 
@@ -489,10 +490,12 @@ local t = Def.ActorFrame{
 		end)
 	end,
 	OnCommand = function(self)
-		local name = SCREENMAN:GetTopScreen():GetName()
-		if name == "ScreenEvaluationNormal" or name == "ScreenNetEvaluation" then
+		local screen = SCREENMAN:GetTopScreen()
+		if scoreTabPlot then
+			self:SetUpdateFunction(HighlightUpdaterThing)
+		elseif screen and (screen:GetName() == "ScreenEvaluationNormal" or screen:GetName() == "ScreenNetEvaluation") then
 			local ok, allowHovering = pcall(function()
-				return not SCREENMAN:GetTopScreen():ScoreUsedInvalidModifier()
+				return not screen:ScoreUsedInvalidModifier()
 			end)
 			if ok and allowHovering then
 				self:SetUpdateFunction(HighlightUpdaterThing)
@@ -563,7 +566,7 @@ local t = Def.ActorFrame{
 					setPlotScaleToWorstHit()
 				end
 				return true
-			elseif event.type == "InputEventType_FirstPress" and btn == "DeviceButton_right mouse button" then
+			elseif not scoreTabPlot and event.type == "InputEventType_FirstPress" and btn == "DeviceButton_right mouse button" then
 				if selectedSliceX1 and selectedSliceX2 then
 					selectedSliceX1 = nil
 					selectedSliceX2 = nil
@@ -636,10 +639,12 @@ local t = Def.ActorFrame{
 		MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 	end,
 	LoadedCustomWindowMessageCommand = function(self)
+		if scoreTabPlot then return end
 		usingCustomWindows = true
 		self:queuecommand("Update")
 	end,
 	UnloadedCustomWindowMessageCommand = function(self)
+		if scoreTabPlot then return end
 		usingCustomWindows = false
 		self:queuecommand("Update")
 	end
@@ -674,10 +679,10 @@ t[#t+1] = Def.Quad{
 		if params.customWindows ~= nil then usingCustomWindows = params.customWindows end
 		local columns = params.columns or 4
 		oddColumns, middleColumn = columns % 2 ~= 0, (columns - 1) / 2
-		cbl, cbr, cbm = params.cbl or 0, params.cbr or 0, params.cbm or 0
+		cbl, cbr, cbm = params.cbl, params.cbr or 0, params.cbm or 0
 		showMiddle = params.showMiddle or false
 		buildPlot(params)
-		finalSecond = math.max(0.001, params.song and params.song:GetLastSecond() or 0,
+		finalSecond = math.max(0.001, params.lastSecond or (params.song and params.song:GetLastSecond()) or 0,
 			plotEvents[#plotEvents] and plotEvents[#plotEvents].time or 0)
 		self:zoomto(params.width, params.height)
 	end,
@@ -729,10 +734,11 @@ t[#t+1] = Def.Quad{
 
 		if hovered then
 			bar:visible(true):x(xpos)
-			txt:visible(true):xy(xpos - 2, 100)
-			bg:visible(true):xy(xpos, 100)
-			txt:settext(formatHover(xpos))
-			bg:zoomto(txt:GetZoomedWidth() + 4, txt:GetZoomedHeight() + 4)
+			txt:visible(true):settext(formatHover(xpos))
+			local width, height = txt:GetZoomedWidth() + 4, txt:GetZoomedHeight() + 4
+			local right = math.max(width, xpos)
+			txt:xy(right - 2, setHeight - 2)
+			bg:visible(true):xy(right, setHeight):zoomto(width, height)
 		else
 			bar:visible(false)
 			txt:visible(false)
@@ -1141,6 +1147,7 @@ t[#t+1] = LoadFont("Common Normal") .. {
 	UpdateCommand = function(self, params)
 		params = checkParams(params)
 		self:xy(params.width - 5, -5 - 20)
+		if cbl == nil then self:settext(""); return end
 		local totalCBs = cbl + cbr + cbm
 		local text = string.format("CB: %d (L:%d  R:%d", totalCBs, cbl, cbr)
 		if showMiddle then text = text .. string.format("  M:%d", cbm) end

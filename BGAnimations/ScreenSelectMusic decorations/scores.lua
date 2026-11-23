@@ -40,11 +40,6 @@ local showInvalidScores = false
 local displayAsJ4 = PREFSMAN:GetPreference("SortBySSRNormPercent")
 local hoveredCommentScore = nil
 
--- Shared with ScreenScoreTabOffsetPlot, matching Til Death's score-tab flow.
-local scoreForOffsetPlot = nil
-function setScoreForPlot(score) scoreForOffsetPlot = score end
-function getScoreForPlot() return scoreForOffsetPlot end
-
 local function IsOnlineScoreInvalid(score)
 	if not score then return false end
 	if type(score.GetEtternaValid) == "function" then
@@ -236,12 +231,9 @@ local function requestSelectedOnlineReplay(score, onReady)
 end
 
 local function ShowScoreOffsetPlot(score)
-	-- Keep this compatible with the offset-plot screen provided by Etterna/Til Death.
-	-- The score is intentionally stored before changing screens because the plot
-	-- screen reads it during its first update.
-	if type(setScoreForPlot) == "function" and SCREENMAN.AddNewScreenToTop then
+	if score and SCREENMAN.AddNewScreenToTop then
 		local open = function()
-			setScoreForPlot(score)
+			HV.PendingScoreOffsetPlot = score
 			SCREENMAN:AddNewScreenToTop("ScreenScoreTabOffsetPlot")
 		end
 		if currentView == VIEW_ONLINE and type(DLMAN.RequestOnlineScoreReplayData) == "function" then

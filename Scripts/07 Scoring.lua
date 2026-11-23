@@ -65,6 +65,16 @@ function HV.Score.GetEvaluationOpeningScore(steps, stageStats, replayPlayback)
 	if score and score:GetChartKey() == chartKey then return score end
 end
 
+function HV.Score.GetReplayPlotVectors(score)
+	local replay = score and score:GetReplay()
+	if not replay or not replay:LoadAllData() then return end
+	return {
+		nrv = replay:GetNoteRowVector(), dvt = replay:GetOffsetVector(),
+		ctt = replay:GetTrackVector(), ntt = replay:GetTapNoteTypeVector(),
+		misses = replay.GetMissDataVector and replay:GetMissDataVector() or nil,
+	}
+end
+
 local function finite(value)
 	return type(value) == "number" and value == value and math.abs(value) < math.huge
 end

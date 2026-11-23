@@ -399,15 +399,10 @@ local function updateVectors()
 		offsetStats = {}
 		return
 	end
-	local replay = curScore and curScore:GetReplay() or nil
-	local hasReplay = replay and replay:LoadAllData()
+	local vectors = HV.Score.GetReplayPlotVectors(curScore)
 
-	if hasReplay then
-		nrv = replay:GetNoteRowVector()
-		ctt = replay:GetTrackVector()
-		ntt = replay:GetTapNoteTypeVector()
-		dvt = replay:GetOffsetVector()
-		if replay.GetMissDataVector then plotMisses = replay:GetMissDataVector() end
+	if vectors then
+		nrv, dvt, ctt, ntt, plotMisses = vectors.nrv, vectors.dvt, vectors.ctt, vectors.ntt, vectors.misses
 		totalTaps = 0
 		if ntt then
 			for _, typ in ipairs(ntt) do
