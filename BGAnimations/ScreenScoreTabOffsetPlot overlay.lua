@@ -1,3 +1,5 @@
+local getReplayPlotVectors = LoadActor("ReplayPlotVectors.lua")
+
 local plotX = 24
 local plotWidth = SCREEN_WIDTH - 2 * plotX
 local plotHeight = math.min(SCREEN_HEIGHT * 0.32, SCREEN_WIDTH * 0.3)
@@ -22,7 +24,7 @@ local function loadPlotData(score)
 	local song = SONGMAN:GetSongByChartKey(chartKey)
 	if not steps or not song then return nil, "Chart unavailable" end
 
-	local data = HV.Score.GetReplayPlotVectors(score)
+	local data = getReplayPlotVectors(score)
 	local hasHits = data and data.nrv and #data.nrv > 0 and data.dvt and #data.dvt > 0
 	local hasMisses = data and data.misses and #data.misses > 0
 	if not hasHits and not hasMisses then return nil, "Replay has no timing data" end

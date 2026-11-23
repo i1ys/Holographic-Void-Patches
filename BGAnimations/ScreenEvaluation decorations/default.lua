@@ -1,4 +1,5 @@
 local ThemePrefs = HV.LegacyPrefs
+local getReplayPlotVectors = LoadActor("../ReplayPlotVectors.lua")
 
 --- Holographic Void: ScreenEvaluation Decorations
 -- Full-featured evaluation screen ported from spawncamping-wallhack.
@@ -399,7 +400,7 @@ local function updateVectors()
 		offsetStats = {}
 		return
 	end
-	local vectors = HV.Score.GetReplayPlotVectors(curScore)
+	local vectors = getReplayPlotVectors(curScore)
 
 	if vectors then
 		nrv, dvt, ctt, ntt, plotMisses = vectors.nrv, vectors.dvt, vectors.ctt, vectors.ntt, vectors.misses

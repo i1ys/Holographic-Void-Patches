@@ -6,7 +6,7 @@ local ThemePrefs = HV.LegacyPrefs
 local accentColor = HVColor.Accent
 local brightText = color("1,1,1,1")
 
--- Load grade counter data (initializes GRADECOUNTERSTORAGE)
+-- Initialize session grade counters and the profile grade refresh.
 LoadActor("../gradecounter.lua")
 
 -- Compact Profile Login Button Bounds
@@ -45,38 +45,6 @@ local searchString = ""
 local appliedSearch = ""
 local searchHasMatches = true
 
--- SCOREMAN's ranked lists are shared by all local profiles.  Keep the
--- Profile tab scoped to the profile that is currently selected in PLAYER_1.
-local function getActiveLocalProfileName()
-	local profile = (GetPlayerOrMachineProfile and GetPlayerOrMachineProfile(PLAYER_1))
-		or (PROFILEMAN and PROFILEMAN:GetProfile(PLAYER_1))
-	if not profile or type(profile.GetDisplayName) ~= "function" then return nil end
-	local ok, name = pcall(function() return profile:GetDisplayName() end)
-	return ok and name and tostring(name) or nil
-end
-
-local function isScoreForActiveLocalProfile(score, profileName)
-	if not score or type(score) == "table" then return false end
-	-- SCOREMAN's local list is profile-scoped; if the profile name is not
-	-- available, retain that list rather than making the display empty.
-	if not profileName then return true end
-	local hasProfileName = false
-	for _, getterName in ipairs({"GetDisplayName", "GetName"}) do
-		local getter = score[getterName]
-		if type(getter) == "function" then
-			local ok, name = pcall(getter, score)
-			if ok and name and tostring(name) ~= "" then
-				hasProfileName = true
-				if tostring(name) == profileName then return true end
-			end
-		end
-	end
-	-- Scores loaded from older Etterna.xml files may not have a name field.
-	-- SCOREMAN's local ranked list is already scoped to the loaded profile, so
-	-- keep unnamed scores instead of hiding the entire local history.
-	return not hasProfileName
-end
-
 -- Online top-score entries are not guaranteed to be native HighScore objects;
 -- some Etterna versions return plain tables.  Keep the validation indicator
 -- useful for both shapes without making online entries toggleable locally.
@@ -91,27 +59,6 @@ local function isProfileScoreInvalid(score)
 			or score.valid == false or score.invalid == true or score.invalidated == true
 	end
 	return IsScoreInvalid(score)
-end
-
-local function getLocalProfileScores(endIndex, isRecent, skillset)
-	local scores = {}
-	local profileName = getActiveLocalProfileName()
-
-	local rawIndex = 0
-	while #scores < endIndex and rawIndex < 10000 do
-		rawIndex = rawIndex + 1
-		local ok, score = pcall(function()
-			if isRecent then
-				return SCOREMAN:GetRecentScoreForGame(rawIndex)
-			end
-			return SCOREMAN:GetTopSSRHighScoreForGame(rawIndex, skillset)
-		end)
-		if not ok or not score then break end
-		if isScoreForActiveLocalProfile(score, profileName) then
-			scores[#scores + 1] = score
-		end
-	end
-	return scores
 end
 
 local searchFields = {
@@ -1649,44 +1596,31 @@ local profileOverlay = Def.ActorFrame {
 
 	UpdateAllScoresCommand = function(self)
 		local rows = self:GetChild("MainArea"):GetChild("ScoreListRows")
-		local start = ((self.isRecentMode and self.recentPage or self.topPage) - 1) * scorePageSize
+		local pageField = self.isRecentMode and "recentPage" or "topPage"
+		local start = (self[pageField] - 1) * scorePageSize
+		local useOnlineScores = not self.isRecentMode and self.isOnlineMode and DLMAN:IsLoggedIn()
 
-		-- Safe Pagination: Instead of checking totals (which might not exist in all versions),
-		-- we'll just allow scrolling up to a reasonble limit or until we hit empty rows.
-		local maxPage = 100 -- Large enough safety net
-		
-		local maxPage = 100 -- Logic clamping below will handle real end
-		local useLocalScores = self.isRecentMode or not (self.isOnlineMode and DLMAN:IsLoggedIn())
-		
 		if self.isRecentMode then
 			SCOREMAN:SortRecentScoresForGame()
-		elseif useLocalScores then
+		elseif not useOnlineScores then
 			SCOREMAN:SortSSRsForGame(self.currentSkillset)
 		end
 
-		local localScores = nil
-		if useLocalScores then
-			localScores = getLocalProfileScores(start + scorePageSize, self.isRecentMode, self.currentSkillset)
-		end
-		
 		local foundAnyOnPage = false
 		for i = 1, scorePageSize do
 			local row = rows:GetChild("Row_" .. i)
-			local pageIndex = start + i
-			local score = nil
-			
+			local rank = start + i
+			local score
+
 			if self.isRecentMode then
-				score = localScores and localScores[pageIndex] or nil
+				score = SCOREMAN:GetRecentScoreForGame(rank)
+			elseif useOnlineScores then
+				local ok, result = pcall(DLMAN.GetTopSkillsetScore, DLMAN, rank, self.currentSkillset)
+				if ok then score = result end
 			else
-				if self.isOnlineMode and DLMAN:IsLoggedIn() then
-					-- Online scores are 1-indexed
-					local ok, res = pcall(function() return DLMAN:GetTopSkillsetScore(pageIndex, self.currentSkillset) end)
-					score = (ok and res ~= nil) and res or nil
-				else
-					score = localScores and localScores[pageIndex] or nil
-				end
+				score = SCOREMAN:GetTopSSRHighScoreForGame(rank, self.currentSkillset)
 			end
-			
+
 			row.currentScore = score
 			if score then
 				foundAnyOnPage = true
@@ -1786,9 +1720,8 @@ local profileOverlay = Def.ActorFrame {
 		end
 
 		-- Dynamic Clamping: If page is empty and not page 1, go back
-		if not foundAnyOnPage and (self.isRecentMode and self.recentPage > 1 or self.topPage > 1) then
-			if self.isRecentMode then self.recentPage = self.recentPage - 1
-			else self.topPage = self.topPage - 1 end
+		if not foundAnyOnPage and self[pageField] > 1 then
+			self[pageField] = self[pageField] - 1
 			self:playcommand("UpdateAllScores")
 			return
 		end
@@ -1796,6 +1729,12 @@ local profileOverlay = Def.ActorFrame {
 		self:playcommand("UpdateOverlaySkillsets")
 		self:GetChild("MainArea"):playcommand("UpdateOverlayUI")
 		self:GetChild("Sidebar"):playcommand("UpdateOverlayUI")
+	end,
+
+	OnlineUpdateMessageCommand = function(self)
+		if HV.ActiveTab == "PROFILE" and self.isOnlineMode and not self.isRecentMode then
+			self:playcommand("UpdateAllScores")
+		end
 	end,
 
 	-- Core Logic Signals
@@ -1821,6 +1760,8 @@ local profileOverlay = Def.ActorFrame {
 		if targetTab == "PROFILE" then
 			self:visible(true):stoptweening()
 				:diffusealpha(0):linear(0.15):diffusealpha(1)
+			GRADECOUNTERSTORAGE:refreshProfile()
+			self:GetChild("GradeSidebar"):playcommand("UpdateOverlayUI")
 			self:playcommand("UpdateAllScores")
 		else
 			self:stoptweening():linear(0.1):diffusealpha(0):queuecommand("UnlockInput"):queuecommand("Hide")

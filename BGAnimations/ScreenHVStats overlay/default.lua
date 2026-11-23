@@ -82,6 +82,7 @@ activityMonthCounts = {}
 activityMonthMaxCount = 0
 activityMonthDayCount = 31
 selectedScoresForDisplay = {}
+local recentScoresByDate = {}
 overallBestScoresForDisplay = {}
 leaderboardEntriesForDisplay = {}
 overallOverviewRowsForDisplay = {}
@@ -2017,18 +2018,6 @@ formatRate = function(score)
 	return string.format("%.2f", score:GetMusicRate()):gsub("%.?0+$", "") .. "x"
 end
 
-function getRecentScoreCount()
-	local count = 0
-	for i = 1, 64 do
-		if SCOREMAN:GetRecentScoreForGame(i) then
-			count = count + 1
-		else
-			break
-		end
-	end
-	return count
-end
-
 formatDateKey = function(year, month, day)
 	return string.format("%04d-%02d-%02d", year, month, day)
 end
@@ -2119,36 +2108,31 @@ function getScoreDateKey(score)
 	return formatDateKey(year, month, day)
 end
 
-function getScoresForSelectedDate()
-	local selectedKey = formatDateKey(selectedYear, selectedMonth, selectedDay)
-	local scores = {}
-	for i = 1, 512 do
-		local score = SCOREMAN:GetRecentScoreForGame(i)
-		if not score then break end
-		if getScoreDateKey(score) == selectedKey then
-			scores[#scores + 1] = score
+local function refreshRecentScores()
+	recentScoresByDate = {}
+	SCOREMAN:SortRecentScoresForGame()
+	local rank = 1
+	local score = SCOREMAN:GetRecentScoreForGame(rank)
+	while score do
+		local key = getScoreDateKey(score)
+		if key then
+			local dayScores = recentScoresByDate[key] or {}
+			dayScores[#dayScores + 1] = score
+			recentScoresByDate[key] = dayScores
 		end
+		rank = rank + 1
+		score = SCOREMAN:GetRecentScoreForGame(rank)
 	end
-	return scores
 end
 
 function getSelectedMonthActivity()
 	local counts = {}
 	local monthDays = daysInMonth(selectedYear, selectedMonth)
-	for day = 1, monthDays do
-		counts[day] = 0
-	end
 	local maxCount = 0
-	for i = 1, 512 do
-		local score = SCOREMAN:GetRecentScoreForGame(i)
-		if not score then break end
-		local year, month, day = getScoreDateParts(score)
-		if year == selectedYear and month == selectedMonth and day and day >= 1 and day <= monthDays then
-			counts[day] = counts[day] + 1
-			if counts[day] > maxCount then
-				maxCount = counts[day]
-			end
-		end
+	for day = 1, monthDays do
+		local scores = recentScoresByDate[formatDateKey(selectedYear, selectedMonth, day)]
+		counts[day] = scores and #scores or 0
+		maxCount = math.max(maxCount, counts[day])
 	end
 	return counts, maxCount, monthDays
 end
@@ -3949,7 +3933,8 @@ local statsOverlay = Def.ActorFrame {
 		end
 	end,
 	RefreshCommand = function(self)
-		SCOREMAN:SortRecentScoresForGame()
+		refreshRecentScores()
+		overallDerivedDataDirty = true
 		self:playcommand("Update")
 	end,
 	UpdateCommand = function(self)
@@ -4077,14 +4062,7 @@ local statsOverlay = Def.ActorFrame {
 			sessionScoreOffset = 0
 			lastSessionDisplayKey = selectedKey
 		end
-		selectedScoresForDisplay = {}
-		for i = 1, 512 do
-			local score = SCOREMAN:GetRecentScoreForGame(i)
-			if not score then break end
-			if getScoreDateKey(score) == selectedKey then
-				selectedScoresForDisplay[#selectedScoresForDisplay + 1] = score
-			end
-		end
+		selectedScoresForDisplay = recentScoresByDate[selectedKey] or {}
 		clampSessionScoreOffset()
 		activityMonthCounts, activityMonthMaxCount, activityMonthDayCount = getSelectedMonthActivity()
 		self:GetChild("Title"):settext("Session on " .. os.date("%d/%m/%Y", selectedDateTime))
