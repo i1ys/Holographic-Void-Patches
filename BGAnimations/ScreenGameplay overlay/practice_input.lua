@@ -7,15 +7,13 @@ end
 HV = HV or {}
 
 local prevZoom = 0.65
-local musicratio = 1
-local wodth = 300
-local hidth = 40
+local graphWidth = 300 * prevZoom
+local graphHeight = 40 * prevZoom
+local chartLength, timing = 0, nil
 local loopStartPos
 local loopEndPos
-local lastCoinPressAt = 0
-local lastCoinWasPaused = false
+local pausedCoinPress, previousBookmark
 local doubleCoinWindow = 0.35
-local graphWidth = wodth * prevZoom
 
 local function notify(message)
 	if ms and ms.ok then
@@ -34,20 +32,43 @@ local function getSongPos()
 		if ok and type(pos) == "number" then return pos end
 	end
 	local sp = GAMESTATE:GetSongPosition()
-	return sp and sp:GetMusicSeconds() or 0
+	return sp and sp:GetMusicSeconds()
+end
+
+local function updateChartBounds()
+	local steps = GAMESTATE:GetCurrentSteps()
+	chartLength = steps and math.max(0, steps:GetLastSecond()) or 0
+	timing = steps and steps:GetTimingData()
+end
+
+local function chartPosition(pos)
+	if type(pos) ~= "number" or pos ~= pos or math.abs(pos) == math.huge or chartLength <= 0 then return end
+	return math.max(0, math.min(pos, chartLength))
+end
+
+local function noteRow(pos)
+	-- Mirror Etterna's BeatToNoteRow for the bounds used by SetSongPosition.
+	local row = timing:GetBeatFromElapsedTime(pos) * 48
+	return row >= 0 and math.floor(row + 0.5) or math.ceil(row - 0.5)
+end
+
+local function isBeforeLoopEnd(pos, finish)
+	return pos < finish and (not timing or noteRow(pos) < noteRow(finish))
 end
 
 local function setSongPos(pos, unpause)
 	local top = getTop()
-	if not top then return end
-	pos = math.max(0, pos or 0)
+	pos = chartPosition(pos)
+	if not top or not pos then return false end
+	if loopEndPos and (pos < loopStartPos or not isBeforeLoopEnd(pos, loopEndPos)) then return false end
 	if unpause and top.SetSongPositionAndUnpause then
 		local ok = pcall(function() top:SetSongPositionAndUnpause(pos, 1, true) end)
-		if ok then return end
+		if ok then return true end
 	end
 	if top.SetSongPosition then
-		pcall(function() top:SetSongPosition(pos, 0, false) end)
+		return pcall(function() top:SetSongPosition(pos, 0, false) end)
 	end
+	return false
 end
 
 local function isPaused()
@@ -62,126 +83,69 @@ end
 -- Direct reference to the graph Hitbox, set once actors are ready
 local graphHitboxRef = nil
 
+local function graphMouseFraction(hitbox)
+	if not hitbox then return end
+	local width, height = hitbox:GetZoomedWidth(), hitbox:GetZoomedHeight()
+	if width <= 0 or height <= 0 then return end
+	local left = hitbox:GetTrueX() - width * hitbox:GetHAlign()
+	local top = hitbox:GetTrueY() - height * hitbox:GetVAlign()
+	local x, y = INPUTFILTER:GetMouseX() - left, INPUTFILTER:GetMouseY() - top
+	if x >= 0 and x <= width and y >= 0 and y <= height then return x / width end
+end
+
 local function isMouseOverGraph()
-	local hitbox = graphHitboxRef
-	if not hitbox then return false end
-	local width = hitbox:GetZoomedWidth()
-	local height = hitbox:GetZoomedHeight()
-	local left = hitbox:GetTrueX() - (width * hitbox:GetHAlign())
-	local topY = hitbox:GetTrueY() - (height * hitbox:GetVAlign())
-	local mouseX = INPUTFILTER:GetMouseX()
-	local mouseY = INPUTFILTER:GetMouseY()
-	return mouseX >= left and mouseX <= left + width and mouseY >= topY and mouseY <= topY + height
+	return graphMouseFraction(graphHitboxRef) ~= nil
 end
 
-local function setNativeLoopRegion()
+local function positionX(pos)
+	pos = chartPosition(pos)
+	return pos and pos / chartLength * graphWidth or 0
+end
+
+local function setRegion(startPos, endPos)
+	if endPos and not isBeforeLoopEnd(startPos, endPos) then
+		notify("Loop end must be after the start on a different note row.")
+		return false
+	end
+	if startPos == loopStartPos and endPos == loopEndPos then return true end
+
 	local top = getTop()
-	if not top then return end
-	if loopStartPos and loopEndPos and top.SetLoopRegion then
-		pcall(function() top:SetLoopRegion(loopStartPos, loopEndPos) end)
-	elseif top.ResetLoopRegion then
-		pcall(function() top:ResetLoopRegion() end)
+	if endPos then
+		if not top or not top.SetLoopRegion or not pcall(top.SetLoopRegion, top, startPos, endPos) then return false end
+	elseif loopEndPos then
+		if not top or not top.ResetLoopRegion or not pcall(top.ResetLoopRegion, top) then return false end
 	end
-end
 
-local function broadcastRegion(loopLength)
-	HV.PracticeLoopStart = loopStartPos or 0
-	HV.PracticeLoopEnd = loopEndPos or 0
-	if loopLength then
-		MESSAGEMAN:Broadcast("RegionSet", {loopLength = loopLength})
-	else
-		MESSAGEMAN:Broadcast("RegionSet")
-	end
+	loopStartPos, loopEndPos = startPos, endPos
+	HV.PracticeLoopStart, HV.PracticeLoopEnd = startPos or 0, endPos or 0
+	local length = endPos and endPos - startPos
+	MESSAGEMAN:Broadcast("RegionSet", length and {loopLength = length} or nil)
 	MESSAGEMAN:Broadcast("PracticeLoopChanged")
-end
-
-local function clearRegion()
-	loopStartPos = nil
-	loopEndPos = nil
-	HV.PracticeLoopStart = 0
-	HV.PracticeLoopEnd = 0
-	local top = getTop()
-	if top and top.ResetLoopRegion then
-		pcall(function() top:ResetLoopRegion() end)
-	end
-	broadcastRegion()
-end
-
-local function resetLoopToBookmark()
-	if not loopStartPos then return false end
-	loopEndPos = nil
-	local top = getTop()
-	if top and top.ResetLoopRegion then
-		pcall(function() top:ResetLoopRegion() end)
-	end
-	broadcastRegion()
 	return true
 end
 
-local function handleRegionSetting(positionGiven)
-	if not positionGiven or positionGiven < 0 then return end
-
-	if not loopStartPos and not loopEndPos then
-		loopStartPos = positionGiven
-		broadcastRegion()
-		return
-	end
-
-	if positionGiven == loopStartPos or positionGiven == loopEndPos then
-		loopEndPos = nil
-		loopStartPos = positionGiven
-		local top = getTop()
-		if top and top.ResetLoopRegion then
-			pcall(function() top:ResetLoopRegion() end)
-		end
-		broadcastRegion()
-		return
-	end
-
-	local startDiff = math.abs(positionGiven - loopStartPos)
-	local endDiff = startDiff + 0.1
-	if loopEndPos then
-		endDiff = math.abs(positionGiven - loopEndPos)
-	end
-
-	if not loopEndPos then
-		if loopStartPos < positionGiven then
-			loopEndPos = positionGiven
-		elseif loopStartPos > positionGiven then
-			loopEndPos = loopStartPos
-			loopStartPos = positionGiven
-		else
-			loopEndPos = nil
-			loopStartPos = positionGiven
-			local top = getTop()
-			if top and top.ResetLoopRegion then
-				pcall(function() top:ResetLoopRegion() end)
-			end
-			broadcastRegion()
-			return
-		end
-	elseif startDiff < endDiff then
-		loopStartPos = positionGiven
+local function handleRegionSetting(pos)
+	pos = chartPosition(pos)
+	if not pos then return end
+	if not loopStartPos or pos == loopStartPos or pos == loopEndPos then
+		setRegion(pos)
+	elseif not loopEndPos then
+		setRegion(math.min(pos, loopStartPos), math.max(pos, loopStartPos))
+	elseif math.abs(pos - loopStartPos) < math.abs(pos - loopEndPos) then
+		setRegion(pos, loopEndPos)
 	else
-		loopEndPos = positionGiven
+		setRegion(loopStartPos, pos)
 	end
-
-	setNativeLoopRegion()
-	broadcastRegion(loopEndPos - loopStartPos)
 end
 
 local function frameStep(delta)
 	local pos = getSongPos()
-	local dir = 1
+	if not pos then return end
 	local ps = GAMESTATE:GetPlayerState(PLAYER_1)
-	if ps and ps.GetCurrentPlayerOptions and ps:GetCurrentPlayerOptions():UsingReverse() then
-		dir = -1
-	end
-	local nextpos = pos + dir * delta
-	if loopEndPos and nextpos >= loopEndPos then
-		handleRegionSetting(nextpos + 1)
-	end
-	setSongPos(nextpos, false)
+	if ps and ps:GetCurrentPlayerOptions():UsingReverse() then delta = -delta end
+	local first = loopEndPos and loopStartPos or 0
+	local nextPos = chartPosition(math.max(first, pos + delta))
+	if nextPos and nextPos ~= pos then setSongPos(nextPos, false) end
 end
 
 local function togglePause()
@@ -204,14 +168,17 @@ local function handlePracticeCommand(name)
 	elseif name == "PracRestart" then
 		setSongPos(loopStartPos or 0, true)
 	elseif name == "PracLoopStart" then
-		handleRegionSetting(getSongPos())
-		notify(string.format("Loop Start: %.2fs", loopStartPos or 0))
+		local pos = chartPosition(getSongPos())
+		if pos and setRegion(pos, loopEndPos) then notify(string.format("Loop Start: %.2fs", pos)) end
 	elseif name == "PracLoopEnd" then
-		handleRegionSetting(getSongPos())
-		notify(string.format("Loop End: %.2fs", loopEndPos or loopStartPos or 0))
+		local pos = chartPosition(getSongPos())
+		if not loopStartPos then
+			notify("Set a loop start first.")
+		elseif pos and setRegion(loopStartPos, pos) then
+			notify(string.format("Loop End: %.2fs", pos))
+		end
 	elseif name == "PracLoopClear" then
-		clearRegion()
-		notify("Loop Cleared")
+		if setRegion(nil) then notify("Loop Cleared") end
 	elseif name == "PracClap" then
 		local cur = PREFSMAN:GetPreference("CenterClap")
 		PREFSMAN:SetPreference("CenterClap", not cur)
@@ -233,62 +200,52 @@ end
 
 local function duminput(event)
 	if event.type == "InputEventType_FirstPress" then
-		if event.DeviceInput and event.DeviceInput.button == "DeviceButton_right mouse button" then
+		local button = event.DeviceInput and event.DeviceInput.button
+		if button == "DeviceButton_right mouse button" then
 			if not isMouseOverGraph() then
 				togglePause()
 				return true
 			end
 		end
-		if event.DeviceInput and event.DeviceInput.button == "DeviceButton_backspace" then
-			if loopStartPos ~= nil then
-				setSongPos(loopStartPos, true)
-			end
+		if button == "DeviceButton_backspace" then
+			if loopStartPos ~= nil then return setSongPos(loopStartPos, true) end
 		elseif event.button == "Coin" then
-			local now = os.clock()
+			local now = GetTimeSinceStart()
 			local paused = isPaused()
-			if paused and lastCoinWasPaused and now - lastCoinPressAt <= doubleCoinWindow then
-				if resetLoopToBookmark() then
-					notify("Loop Reset to Bookmark")
-				end
-				lastCoinPressAt = 0
-				lastCoinWasPaused = false
+			if paused and pausedCoinPress and now - pausedCoinPress <= doubleCoinWindow then
+				local bookmark = previousBookmark or loopStartPos
+				if bookmark and setRegion(bookmark) then notify("Loop Reset to Bookmark") end
+				pausedCoinPress, previousBookmark = nil, nil
 			else
+				pausedCoinPress = paused and now or nil
+				previousBookmark = paused and loopStartPos or nil
 				handleRegionSetting(getSongPos())
-				lastCoinPressAt = now
-				lastCoinWasPaused = paused
 			end
-		elseif event.DeviceInput and event.DeviceInput.button == "DeviceButton_mousewheel up" then
-			if GAMESTATE:IsPaused() then frameStep(0.05) end
-		elseif event.DeviceInput and event.DeviceInput.button == "DeviceButton_mousewheel down" then
-			if GAMESTATE:IsPaused() then frameStep(-0.05) end
+			return true
+		elseif button == "DeviceButton_mousewheel up" or button == "DeviceButton_mousewheel down" then
+			if not isPaused() then return false end
+			frameStep(button == "DeviceButton_mousewheel up" and 0.05 or -0.05)
+			return true
 		end
 	end
 	return false
 end
 
 local function UpdatePreviewPos(self)
-	local top = getTop()
-	if not top then return end
-	local pos = getSongPos() / musicratio * prevZoom
-	local marker = self:GetChild("CurrentPos")
-	if marker then marker:x(pos) end
-
+	self:GetChild("CurrentPos"):x(positionX(getSongPos()))
+	local fraction = graphMouseFraction(graphHitboxRef)
 	local hoverMarker = self:GetChild("HoverMarker")
-	local hitbox = self:GetChild("Hitbox")
-	if hoverMarker and hitbox then
-		local width = hitbox:GetZoomedWidth()
-		local height = hitbox:GetZoomedHeight()
-		local left = hitbox:GetTrueX() - (width * hitbox:GetHAlign())
-		local topY = hitbox:GetTrueY() - (height * hitbox:GetVAlign())
-		local mouseX = INPUTFILTER:GetMouseX()
-		local mouseY = INPUTFILTER:GetMouseY()
+	hoverMarker:visible(fraction ~= nil)
+	if fraction then hoverMarker:x(fraction * graphWidth) end
+end
 
-		if mouseX >= left and mouseX <= left + width and mouseY >= topY and mouseY <= topY + height then
-			hoverMarker:visible(true):x(mouseX - left)
-		else
-			hoverMarker:visible(false)
-		end
-	end
+local function drawRegion(self)
+	self:visible(loopStartPos ~= nil)
+	if not loopStartPos then return end
+	local x = positionX(loopStartPos)
+	local width = loopEndPos and positionX(loopEndPos) - x or 2
+	local tint = loopEndPos and color(".7,.2,.7,0.5") or color(".2,.5,1,1")
+	self:x(x):zoomto(width, graphHeight):diffuse(tint)
 end
 
 local pm = Def.ActorFrame {
@@ -308,11 +265,8 @@ local pm = Def.ActorFrame {
 		end
 	end,
 	BeginCommand = function(self)
-		local steps = GAMESTATE:GetCurrentSteps()
-		if steps and steps.GetLastSecond then
-			musicratio = steps:GetLastSecond() / wodth
-			if musicratio <= 0 then musicratio = 1 end
-		end
+		updateChartBounds()
+		HV.PracticeLoopStart, HV.PracticeLoopEnd = 0, 0
 		-- Store direct reference to Hitbox for input hit-testing
 		graphHitboxRef = self:GetChild("Hitbox")
 		local top = getTop()
@@ -323,14 +277,17 @@ local pm = Def.ActorFrame {
 		self:queuecommand("GraphUpdate")
 	end,
 	EndCommand = function(self)
+		HV.PracticeLoopStart, HV.PracticeLoopEnd = 0, 0
 		PREFSMAN:SetPreference("ShowMouseCursor", false)
 	end,
 	PracticeModeReloadMessageCommand = function(self)
-		local steps = GAMESTATE:GetCurrentSteps()
-		if steps and steps.GetLastSecond then
-			musicratio = steps:GetLastSecond() / wodth
-			if musicratio <= 0 then musicratio = 1 end
-		end
+		updateChartBounds()
+		pausedCoinPress, previousBookmark = nil, nil
+		-- Native reload can adjust the loop independently. Keep a still-valid
+		-- bookmark and clear the loop so both the chart and engine agree.
+		local bookmark = chartLength > 0 and loopStartPos and loopStartPos < chartLength and loopStartPos or nil
+		setRegion(bookmark)
+		drawRegion(self:GetChild("BookmarkPos"))
 	end,
 	LoadActor("../_chorddensitygraph.lua") .. {
 		InitCommand = function(self)
@@ -340,65 +297,39 @@ local pm = Def.ActorFrame {
 	UIElements.QuadButton(1, 1) .. {
 		Name = "Hitbox",
 		InitCommand = function(self)
-			self:halign(0):valign(1):zoomto(wodth * prevZoom, hidth * prevZoom):diffusealpha(0):draworder(1099)
+			self:halign(0):valign(1):zoomto(graphWidth, graphHeight):diffusealpha(0):draworder(1099)
 		end,
 		MouseDownCommand = function(self, params)
 			local event = params.event or params.button
-			local width = self:GetZoomedWidth()
-			local left = self:GetTrueX() - (width * self:GetHAlign())
-			local pos = math.max(0, math.min(wodth, ((INPUTFILTER:GetMouseX() - left) / width) * wodth)) * musicratio
-			if event == "DeviceButton_left mouse button" then
-				if INPUTFILTER:IsControlPressed() then
-					handleRegionSetting(pos)
-				else
-					setSongPos(pos, false)
-				end
-			elseif event == "DeviceButton_right mouse button" then
+			local fraction = graphMouseFraction(self)
+			if not fraction then return end
+			local pos = fraction * chartLength
+			if event == "DeviceButton_right mouse button"
+				or (event == "DeviceButton_left mouse button" and INPUTFILTER:IsControlPressed()) then
 				handleRegionSetting(pos)
+			elseif event == "DeviceButton_left mouse button" then
+				if not setSongPos(pos, false) and loopEndPos then notify("Seek inside the loop, or clear it first.") end
 			end
 		end
 	},
 	Def.Quad {
 		Name = "BookmarkPos",
 		InitCommand = function(self)
-			self:zoomto(2, hidth * prevZoom):diffuse(color(".2,.5,1,1")):halign(0):valign(1):draworder(1100):visible(false)
+			self:zoomto(2, graphHeight):diffuse(color(".2,.5,1,1")):halign(0):valign(1):draworder(1100):visible(false)
 		end,
-		SetCommand = function(self)
-			if loopStartPos then
-				self:visible(true):zoomto(2, hidth * prevZoom):diffuse(color(".2,.5,1,1")):halign(0):valign(1):x(loopStartPos / musicratio * prevZoom)
-			else
-				self:visible(false)
-			end
-		end,
-		RegionSetMessageCommand = function(self, params)
-			if not params or not params.loopLength then
-				self:playcommand("Set")
-			else
-				self:visible(true):x(loopStartPos / musicratio * prevZoom):halign(0):valign(1):zoomto(params.loopLength / musicratio * prevZoom, hidth * prevZoom):diffuse(color(".7,.2,.7,0.5"))
-			end
-		end,
-		CurrentRateChangedMessageCommand = function(self)
-			if not loopEndPos and loopStartPos then
-				self:playcommand("Set")
-			elseif loopEndPos and loopStartPos then
-				self:playcommand("RegionSet", {loopLength = (loopEndPos - loopStartPos)})
-			end
-		end,
-		PracticeModeReloadMessageCommand = function(self)
-			self:playcommand("CurrentRateChanged")
-		end
+		RegionSetMessageCommand = drawRegion
 	},
 	Def.Quad {
 		Name = "CurrentPos",
 		InitCommand = function(self)
-			self:zoomto(2, hidth * prevZoom):diffuse(HVColor.Accent):halign(0.5):valign(1):draworder(1101)
+			self:zoomto(2, graphHeight):diffuse(HVColor.Accent):halign(0.5):valign(1):draworder(1101)
 		end
 	},
 	-- Custom hover marker that accounts for zoom
 	Def.Quad {
 		Name = "HoverMarker",
 		InitCommand = function(self)
-			self:zoomto(1, hidth * prevZoom):diffuse(color("1,1,1,0.5")):halign(0.5):valign(1):visible(false):draworder(1100)
+			self:zoomto(1, graphHeight):diffuse(color("1,1,1,0.5")):halign(0.5):valign(1):visible(false):draworder(1100)
 		end
 	}
 }
