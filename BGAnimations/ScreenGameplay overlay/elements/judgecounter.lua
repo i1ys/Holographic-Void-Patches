@@ -14,8 +14,8 @@ local function ratioText(value)
 	return value == math.huge and "inf:1" or string.format("%.2f:1", value)
 end
 
-local function offsetText(value)
-	return value == nil and "—" or string.format("%.2f", value)
+local function offsetText(value, format)
+	return value == nil and "—" or string.format(format or "%.2f", value)
 end
 
 if useRidiculous then
@@ -56,10 +56,11 @@ for _, hold in ipairs({
 end
 
 local metricRows = {
-	{label = "MA Ratio", initial = "0.00:1", value = function(stats) return ratioText(stats.maRatio) end},
-	{label = "PA Ratio", initial = "0.00:1", value = function(stats) return ratioText(stats.paRatio) end},
+	{label = "MA", initial = "0.00:1", value = function(stats) return ratioText(stats.maRatio) end},
+	{label = "PA", initial = "0.00:1", value = function(stats) return ratioText(stats.paRatio) end},
 	{label = "Longest", initial = "0", value = function(stats) return countText(stats.longest) end},
 	{label = "SD", initial = "0.00", value = function(stats) return offsetText(stats.stdDev) end},
+	{label = "Mean", initial = "+0.00", value = function(stats) return offsetText(stats.mean, "%+.2f") end},
 	{label = "Max", initial = "0.00", value = function(stats) return offsetText(stats.largest) end},
 }
 
