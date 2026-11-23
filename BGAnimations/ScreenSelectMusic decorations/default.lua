@@ -715,6 +715,10 @@ t[#t + 1] = Def.ActorFrame {
 				self:playcommand("Set")
 			end,
 			ToolTipCommand = function(self)
+				if (HV.ActiveTab or "") ~= "" then
+					TOOLTIP:Hide()
+					return
+				end
 				if isOver(self) then
 					if self.song and self.song:HasCDTitle() and self:GetVisible() then
 						TOOLTIP:SetText(GetCDTitleAuthor(self.song))
@@ -725,6 +729,7 @@ t[#t + 1] = Def.ActorFrame {
 				end
 			end,
 			MouseDownCommand = function(self, params)
+				if (HV.ActiveTab or "") ~= "" then return end
 				if params and params.button and params.button ~= "DeviceButton_left mouse button" then return end
 				local author = GetCDTitleAuthor(self.song)
 				if type(author) ~= "string" or author == "" or author:lower() == "none defined" then return end
@@ -739,6 +744,9 @@ t[#t + 1] = Def.ActorFrame {
 			end,
 			MouseOutCommand = function(self)
 				TOOLTIP:Hide()
+			end,
+			SelectMusicTabChangedMessageCommand = function(self, params)
+				if params.Tab and params.Tab ~= "" then TOOLTIP:Hide() end
 			end
 		}
 	},

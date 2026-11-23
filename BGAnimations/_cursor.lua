@@ -1,153 +1,123 @@
 --- Holographic Void: Custom Mouse Cursor
--- Adapted from Til Death's _cursor.lua pattern.
--- Should be loaded from screen overlays via LoadActor("_cursor").
--- Integrates with the _fallback BUTTON system for UIElements click support.
 
 local screenName = Var("LoadingScreen") or ...
-local topScreen
-local tooltipActor
-local pointerActor
-local clickWaveActor
--- ScreenTextEntry has its own visual cursor, but it must not touch the shared
--- BUTTON state.  Modal screens can inherit the caller's LoadingScreen value,
--- so resetting here would clear the caller's hover/cursor state.
-local currentScreen = SCREENMAN:GetTopScreen()
-local isTextEntry = screenName == "ScreenTextEntry"
-	 or (currentScreen and currentScreen:GetName() == "ScreenTextEntry")
-if not isTextEntry then
+local owner, registeredScreen
+local tooltipActor, pointerActor, clickWaveActor
+
+-- Modal text entry has a visual cursor. Keep the caller's buttons registered.
+if screenName and screenName ~= "ScreenTextEntry" then
 	BUTTON:ResetButtonTable(screenName)
 end
 
-local function UpdateLoop()
-	local mouseX = INPUTFILTER:GetMouseX()
-	local mouseY = INPUTFILTER:GetMouseY()
-	-- SetPosition intentionally returns early while the tooltip actor is being
-	-- recreated. The pointer is a separate actor, so update it directly too.
-	if pointerActor then
-		pcall(function() pointerActor:xy(mouseX, mouseY) end)
-	end
-	pcall(function() TOOLTIP:SetPosition(mouseX, mouseY) end)
-	if not isTextEntry then
-		BUTTON:UpdateMouseState()
-	end
-	return false
+local function hasFocus()
+	return owner ~= nil and owner == SCREENMAN:GetTopScreen()
 end
 
-local function updatePointerImmediately()
-	-- A screen can regain focus before its first update tick.  Reposition the
-	-- pointer here so returning from a sub-screen does not leave it at its old
-	-- coordinates until the next mouse event.
-	UpdateLoop()
-end
-
--- Actor update callbacks are paused while a screen is covered by a pushed
--- modal.  Reinstall the callback when that screen regains focus so the cursor
--- continues to follow the mouse after the one-time focus refresh.
-local function startUpdateLoop(self)
-	self:SetUpdateFunction(UpdateLoop)
-	local refreshRate = DISPLAY:GetDisplayRefreshRate()
-	if refreshRate and refreshRate > 0 then
-		self:SetUpdateFunctionInterval(1 / refreshRate)
-	end
-end
-
--- TOOLTIP is a singleton.  Every pushed screen creates its own tooltip and
--- pointer actors, which replaces these references.  Capture the live actor
--- references after this cursor has loaded, then restore them once a modal is
--- popped; otherwise the update loop addresses the detached modal pointer.
-local function captureTooltipActors()
-	tooltipActor = TOOLTIP.Actor
-	pointerActor = TOOLTIP.Pointer
-	clickWaveActor = TOOLTIP.ClickWave
-end
-
-local function activateTooltipActors()
+local function bindTooltip()
 	TOOLTIP.Actor = tooltipActor
 	TOOLTIP.Pointer = pointerActor
 	TOOLTIP.ClickWave = clickWaveActor
 end
 
--- ScreenTextEntry is pushed as a modal screen and is often popped from inside
--- its input callback.  In that case GainFocus can run before the screen stack
--- has finished changing, so the mouse position/button state is refreshed
--- against the text-entry screen instead of the screen underneath it.
-local function refreshAfterModalPop(self)
-	self:sleep(0):queuecommand("RefreshCursor")
+local function releaseTooltip()
+	if tooltipActor then tooltipActor:visible(false) end
+	if TOOLTIP.Actor == tooltipActor then
+		TOOLTIP.Actor, TOOLTIP.Pointer, TOOLTIP.ClickWave = nil, nil, nil
+	end
+end
+
+local function updateLoop()
+	if not hasFocus() then return end
+	bindTooltip()
+	TOOLTIP:SetPosition(INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY())
+	if screenName ~= "ScreenTextEntry" then BUTTON:UpdateMouseState() end
 end
 
 local function cursorCheck()
-	-- Show custom cursor in fullscreen (system cursor hidden)
-	-- In windowed mode, the system cursor is visible so hide ours
-	if not PREFSMAN:GetPreference("Windowed") and not PREFSMAN:GetPreference("FullscreenIsBorderlessWindow") then
-		TOOLTIP:ShowPointer()
-		if pointerActor then pointerActor:visible(true) end
-	else
-		TOOLTIP:HidePointer()
-		if pointerActor then pointerActor:visible(false) end
+	if not hasFocus() then return end
+	local fullscreen = not PREFSMAN:GetPreference("Windowed")
+		and not PREFSMAN:GetPreference("FullscreenIsBorderlessWindow")
+	pointerActor:visible(fullscreen)
+end
+
+local function handleInput(event)
+	if not hasFocus() or not event or not event.DeviceInput then return end
+	bindTooltip()
+	BUTTON.InputCallback(event)
+end
+
+local function activate(self)
+	if not hasFocus() then return end
+	bindTooltip()
+	if screenName ~= "ScreenTextEntry" and registeredScreen ~= owner then
+		owner:AddInputCallback(handleInput)
+		registeredScreen = owner
+	end
+	self:SetUpdateFunction(updateLoop)
+	local refreshRate = DISPLAY:GetDisplayRefreshRate()
+	if refreshRate and refreshRate > 0 then
+		self:SetUpdateFunctionInterval(1 / refreshRate)
+	end
+	cursorCheck()
+	updateLoop()
+end
+
+local function finish(self)
+	if not owner then return end
+	owner = nil
+	self:SetUpdateFunction(nil)
+	releaseTooltip()
+	if registeredScreen then
+		registeredScreen:RemoveInputCallback(handleInput)
+		registeredScreen = nil
+	end
+	if screenName and screenName ~= "ScreenTextEntry" then
+		BUTTON:ResetButtonTable(screenName)
 	end
 end
 
--- Registers (or re-registers) the BUTTON input callback on the current top screen.
--- Must be called both at init and whenever this screen regains focus after a
--- sub-screen is popped, because AddInputCallback only wires up a single screen handle.
-local function registerInputCallback()
-	if isTextEntry then return end
-	topScreen = SCREENMAN:GetTopScreen()
-	if topScreen then
-		topScreen:AddInputCallback(function(event)
-			if BUTTON and type(BUTTON.InputCallback) == "function" then
-				BUTTON.InputCallback(event)
-			end
-		end)
+-- Fallback's Init assigns to the global singleton. Capture the child from this
+-- frame and put the previous binding back until this screen is actually active.
+local function own(definition, field, assign)
+	local init = definition.InitCommand
+	definition.InitCommand = function(self)
+		local previous = TOOLTIP[field]
+		init(self)
+		TOOLTIP[field] = previous
+		assign(self)
 	end
+	definition.ReloadedScriptsMessageCommand = nil
+	return definition
 end
 
+local tooltip, pointer, clickWave = TOOLTIP:New()
 local t = Def.ActorFrame {
+	BeginCommand = function(self)
+		owner = SCREENMAN:GetTopScreen()
+		if owner then screenName = owner:GetName() end
+		self:queuecommand("RefreshCursor")
+	end,
 	OnCommand = function(self)
 		self:draworder(20000)
-		captureTooltipActors()
-		startUpdateLoop(self)
-		registerInputCallback()
-		cursorCheck()
+		activate(self)
 	end,
-	-- Re-register when a sub-screen (e.g. ScreenHVColorEdit) is popped and this
-	-- screen becomes the top screen again; the old topScreen handle is stale by then.
-	GainFocusCommand = function(self)
-		activateTooltipActors()
-		startUpdateLoop(self)
-		registerInputCallback()
-		cursorCheck()
-		updatePointerImmediately()
-		refreshAfterModalPop(self)
-	end,
-	RefreshCursorCommand = function(self)
-		activateTooltipActors()
-		startUpdateLoop(self)
-		registerInputCallback()
-		cursorCheck()
-		updatePointerImmediately()
-	end,
-	OffCommand = function(self)
-		if not isTextEntry then
-			BUTTON:ResetButtonTable(screenName)
-		end
-		pcall(function() TOOLTIP:Hide() end)
-	end,
-	CancelCommand = function(self)
-		self:playcommand("Off")
-	end,
-	WindowedChangedMessageCommand = function(self)
-		cursorCheck()
-	end,
+	GainFocusCommand = activate,
+	RefreshCursorCommand = activate,
+	LoseFocusCommand = releaseTooltip,
+	OffCommand = finish,
+	EndCommand = finish,
+	CancelCommand = finish,
+	WindowedChangedMessageCommand = cursorCheck,
 	ReloadedScriptsMessageCommand = function(self)
-		cursorCheck()
+		if hasFocus() then
+			bindTooltip()
+			cursorCheck()
+		end
 	end,
-}
 
--- Create tooltip + pointer + click wave actors from the _fallback system.
-tooltipActor, pointerActor, clickWaveActor = TOOLTIP:New()
-t[#t + 1] = tooltipActor
-t[#t + 1] = pointerActor
-t[#t + 1] = clickWaveActor
+	own(tooltip, "Actor", function(self) tooltipActor = self end),
+	own(pointer, "Pointer", function(self) pointerActor = self end),
+	own(clickWave, "ClickWave", function(self) clickWaveActor = self end),
+}
 
 return t
