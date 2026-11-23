@@ -69,6 +69,66 @@ local function finite(value)
 	return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
 
+function HV.Score.GetPlayedJudge(score)
+	local scale = score and score.GetJudgeScale and score:GetJudgeScale()
+	if type(scale) ~= "number" then return end
+	for judge = 1, 9 do
+		local candidate = ms.JudgeScalers[judge]
+		if candidate and math.abs(scale - candidate) < 0.005 then return judge end
+	end
+end
+
+function HV.Judgment.GetReplayHits(offsets, noteTypes, expectedHits)
+	if type(offsets) ~= "table" then return end
+	local typed = noteTypes and #noteTypes > 0
+	if typed and #noteTypes ~= #offsets then return end
+	local hits = {}
+	for i, offset in ipairs(offsets) do
+		local kind = noteTypes and noteTypes[i]
+		local isTap = not typed or kind == "TapNoteType_Tap"
+			or kind == "TapNoteType_HoldHead" or kind == "TapNoteType_Lift"
+		if isTap and finite(offset) and math.abs(offset) <= 180.001 then
+			hits[#hits + 1] = offset
+		end
+	end
+	-- A partial or incompatible replay cannot provide the judgment split.
+	if #hits == expectedHits then return hits end
+end
+
+function HV.Judgment.RescoreHits(hits, misses, judge, useRidiculous)
+	local windows = HV.Judgment.GetWindows(ms.JudgeScalers[judge], useRidiculous)
+	local counts = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = misses, Ridiculous = 0}
+	for _, offset in ipairs(hits) do
+		local judgment = HV.Judgment.ClassifyOffset(offset, windows)
+		counts[judgment] = counts[judgment] + 1
+	end
+	counts.W1 = counts.W1 + counts.Ridiculous
+	return counts
+end
+
+function HV.Score.GetSongBestGradeTier(song, chartGrades)
+	local best
+	for _, steps in ipairs(song:GetChartsMatchingFilter()) do
+		local chartKey = steps:GetChartKey()
+		local tier = chartGrades[chartKey]
+		if tier == nil then
+			tier = false
+			for _, rate in pairs(SCOREMAN:GetScoresByKey(chartKey) or {}) do
+				for _, score in ipairs(rate:GetScores()) do
+					local rank = tonumber(score:GetWifeGrade():match("Tier(%d+)"))
+					if rank and (not tier or rank < tier) then tier = rank end
+					if tier == 1 then break end
+				end
+				if tier == 1 then break end
+			end
+			chartGrades[chartKey] = tier
+		end
+		if tier and (not best or tier < best) then best = tier end
+		if best == 1 then break end
+	end
+	return best
+end
+
 function HV.Score.FormatEvaluationWifePercent(percent)
 	local precision = percent >= 99 and 4 or 2
 	local scale = 10 ^ precision
@@ -108,10 +168,11 @@ function HV.Score.BuildEvaluationLeaderboard(scores, currentRate, allRates, onli
 end
 
 function HV.Score.GetEvaluationWifePoints(score, chartMaximum)
-	if not score or chartMaximum <= 0 or PREFSMAN:GetPreference("SortBySSRNormPercent") then return end
+	if not score or chartMaximum <= 0 then return end
+	if PREFSMAN:GetPreference("SortBySSRNormPercent") and HV.Score.GetPlayedJudge(score) ~= 4 then return end
 	local earned = score:GetWifePoints()
 	local fraction = score:GetWifeScore()
-	if not finite(earned) or earned == 0 or not finite(fraction) then return end
+	if not finite(earned) or not finite(fraction) then return end
 	-- The saved points are played-judge points. Verify the chart maximum against the saved fraction.
 	if math.abs(earned / chartMaximum - fraction) <= 0.000001 then
 		return earned, chartMaximum

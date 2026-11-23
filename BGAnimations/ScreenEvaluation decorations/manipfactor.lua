@@ -355,7 +355,7 @@ t[#t + 1] = Def.ActorFrame {
         SetCommand = function(self)
             mf = {}
             key0Data, key1Data, key2Data, key3Data = false, false, false, false
-            self:settext("—"):diffuse(HVColor.TextSub)
+            self:settext("-"):diffuse(HVColor.TextSub)
             if not score or not steps or steps:GetNumColumns() ~= 4 then return end
             local replay = score:GetReplay()
             local rate = score:GetMusicRate()

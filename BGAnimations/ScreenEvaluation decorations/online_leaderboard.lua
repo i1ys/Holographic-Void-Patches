@@ -36,16 +36,9 @@ local function isOnlineScoreInvalid(score)
 	return not score:GetEtternaValid() or score:GetChordCohesion()
 end
 
-local function getJudge(score)
-	local scale = (score and type(score.GetJudgeScale) == "function") and score:GetJudgeScale() or 1.0
-	if not scale then return "J4" end
-	scale = math.floor(scale * 100 + 0.5) / 100
-	for k, v in pairs(ms.JudgeScalers) do
-		if math.floor(v * 100 + 0.5) / 100 == scale then
-			return "J" .. math.max(4, k)
-		end
-	end
-	return "J4"
+local function displayedJudge(score)
+	if PREFSMAN:GetPreference("SortBySSRNormPercent") then return 4 end
+	return HV.Score.GetPlayedJudge(score)
 end
 
 local function refreshScores(preferredKey)
@@ -134,10 +127,16 @@ local function scoreItem(i)
 		RefreshOnlineScoreboardMessageCommand = function(self) self:playcommand("UpdateRow") end,
 		UpdateRowCommand = function(self)
 			local idx = (curPage - 1) * scoresPerPage + i
-			if scoreList and scoreList[idx] then
+			local entry = scoreList[idx]
+			if entry then
 				self:visible(true)
 				self:stoptweening():diffusealpha(0):sleep(i * 0.05):linear(0.15):diffusealpha(1)
-				self:RunCommandsOnChildren(function(child) child:playcommand("SetScore", {index = idx}) end)
+				local judge = isLocal and displayedJudge(entry.score)
+				local tally, counts = HV.Score.GetDisplayTally(entry.score,
+					isLocal and PREFSMAN:GetPreference("SortBySSRNormPercent") and 4 or nil)
+				self:RunCommandsOnChildren(function(child)
+					child:playcommand("SetScore", {index = idx, judge = judge, tally = tally, counts = counts})
+				end)
 			else
 				self:visible(false)
 			end
@@ -174,8 +173,10 @@ local function scoreItem(i)
 			InitCommand = function(self) self:xy(220, 8):zoom(0.32):halign(0):diffuse(subText) end,
 			SetScoreCommand = function(self, params)
 				local s = scoreList[params.index].score
-				local ct = (not isLocal and isOnlineScoreInvalid(s)) and "Invalid" or getDetailedClearType(s)
-				self:settext(ct):diffuse(HVColor.GetClearTypeColor(ct))
+				local ct = "-"
+				if not isLocal and isOnlineScoreInvalid(s) then ct = "Invalid"
+				elseif params.tally ~= "-" then ct = getDetailedClearType(s, params.counts) end
+				self:settext(ct):diffuse(HVColor.GetClearTypeColor(ct) or subText)
 			end
 		},
 
@@ -185,11 +186,8 @@ local function scoreItem(i)
 			SetScoreCommand = function(self, params)
 				local s = scoreList[params.index].score
 				if isLocal then
-					local judgeStr = ""
-					if not PREFSMAN:GetPreference("SortBySSRNormPercent") then
-						judgeStr = " (" .. getJudge(s) .. ")"
-					end
-					self:settext(s:GetDate() .. judgeStr)
+					local judge = params.judge and (" (J" .. params.judge .. ")") or ""
+					self:settext(s:GetDate() .. judge)
 				else
 					local name = s:GetDisplayName()
 					if name and name ~= "" then
@@ -243,8 +241,7 @@ local function scoreItem(i)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:xy(SCREEN_CENTER_X - 50, 26):zoom(0.35):halign(1):diffuse(subText) end,
 			SetScoreCommand = function(self, params)
-				local s = scoreList[params.index].score
-				self:settext(HV.GetRidiculousTallyString(s))
+				self:settext(params.tally)
 			end
 		},
 

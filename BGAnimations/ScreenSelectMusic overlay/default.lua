@@ -1656,30 +1656,12 @@ local profileOverlay = Def.ActorFrame {
 					wife = score:GetWifeScore()
 					ssr = score:GetSkillsetSSR(self.isRecentMode and "Overall" or self.currentSkillset)
 					
-					local ct = getDetailedClearType(score)
-					local w1 = score:GetTapNoteScore("TapNoteScore_W1")
-					local w2 = score:GetTapNoteScore("TapNoteScore_W2")
-					local w3 = score:GetTapNoteScore("TapNoteScore_W3")
-					local w4 = score:GetTapNoteScore("TapNoteScore_W4")
-					local w5 = score:GetTapNoteScore("TapNoteScore_W5")
-					local m = score:GetTapNoteScore("TapNoteScore_Miss")
-					
-					-- Judge calculation
-					local jIndex = 4
-					if not PREFSMAN:GetPreference("SortBySSRNormPercent") and type(score.GetJudgeScale) == "function" then
-						local scale = score:GetJudgeScale()
-						if scale then
-							scale = math.floor(scale * 100 + 0.5) / 100
-							for k, v in pairs(ms.JudgeScalers) do
-								if math.floor(v * 100 + 0.5) / 100 == scale then
-									jIndex = k
-									if jIndex >= 4 then break end
-								end
-							end
-							jIndex = math.max(4, math.min(9, jIndex))
-						end
-					end
-					metadata = string.format("J%d  |  %s  |  %d/%d/%d/%d/%d/%d", jIndex, THEME:GetString("ClearTypes", ct), w1, w2, w3, w4, w5, m)
+					local normalized = PREFSMAN:GetPreference("SortBySSRNormPercent")
+					local judge = normalized and 4 or HV.Score.GetPlayedJudge(score)
+					local counts = HV.Score.GetDisplayJudgments(score, normalized and 4 or nil)
+					local ct = counts and THEME:GetString("ClearTypes", getDetailedClearType(score, counts)) or "-"
+					local tally = counts and table.concat({counts.W1, counts.W2, counts.W3, counts.W4, counts.W5, counts.Miss}, "/") or "-"
+					metadata = string.format("%s  |  %s  |  %s", judge and "J" .. judge or "-", ct, tally)
 					if isProfileScoreInvalid(score) then
 						metadata = "INVALID  |  " .. metadata
 					end

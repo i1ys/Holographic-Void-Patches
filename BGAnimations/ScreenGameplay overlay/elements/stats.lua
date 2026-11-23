@@ -84,7 +84,6 @@ local function collectOffset(message)
 
 	offset = offset * 1000
 	stats.lastOffset = offset
-	if replayPrefixMissing then return end
 	if useOffsets then
 		count = count + 1
 		local delta = offset - mean
@@ -92,7 +91,7 @@ local function collectOffset(message)
 		m2 = m2 + delta * (offset - mean)
 		maxOffset = math.max(maxOffset, math.abs(offset))
 	end
-	if useDelta then addHandOffset(message, offset) end
+	if useDelta and not replayPrefixMissing then addHandOffset(message, offset) end
 end
 
 local function ratio(numerator, denominator)
@@ -119,20 +118,22 @@ local function refreshNativeStats()
 	if useRidiculous and not replayPrefixMissing then
 		stats.ridiculous = gameplay.ridiculousCount
 	end
-	if fullCounter and not replayPrefixMissing then stats.longest = pss:MaxCombo() end
+	if fullCounter then stats.longest = pss:MaxCombo() end
 end
 
 local function refreshTimingStats()
-	if replayPrefixMissing then
-		stats.ridiculous, stats.longest = nil, nil
-		stats.mean, stats.stdDev, stats.largest = nil, nil, nil
-		stats.handScores, stats.handCounts = nil, nil
-		return
-	end
+	stats.replaySegment = replayPrefixMissing
 	stats.mean = mean
 	stats.stdDev = count > 1 and math.sqrt(math.max(0, m2 / (count - 1))) or 0
 	stats.largest = maxOffset
-	if useDelta then
+	if replayPrefixMissing then
+		-- Etterna resets its combo on resume. Continue this segment from live
+		-- judgments while native tap tallies retain their replay snapshot.
+		stats.ridiculous = nil
+		stats.handScores, stats.handCounts = nil, nil
+		if count == 0 then stats.mean, stats.largest, stats.longest = nil, nil, nil end
+		if count < 2 then stats.stdDev = nil end
+	elseif useDelta then
 		for i = 1, 3 do
 			stats.handScores[i] = handCounts[i] > 0 and sums[i] / (handCounts[i] * 2) or 0
 		end

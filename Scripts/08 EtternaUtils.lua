@@ -576,7 +576,7 @@ end
 ------------------------------------------------------------
 -- CLEAR TYPE (Detailed, from PSS)
 ------------------------------------------------------------
-function getDetailedClearType(obj)
+function getDetailedClearType(obj, counts)
 	if not obj then return "Failed" end
 	local miss, w5, w4, w3, w2, w1 = 0, 0, 0, 0, 0, 0
 	local missedHolds = 0
@@ -608,6 +608,9 @@ function getDetailedClearType(obj)
 		wifeScore = obj:GetWifeScore()
 	end
 
+	if counts then
+		w1, w2, w3, w4, w5, miss = counts.W1, counts.W2, counts.W3, counts.W4, counts.W5, counts.Miss
+	end
 	-- Check invalid mods FIRST: a failed invalid score should still be Invalid
 	if IsScoreInvalid(obj) then return "Invalid" end
 	if grade == "Grade_Failed" or grade == "Grade_None" then
@@ -633,7 +636,9 @@ function getDetailedClearType(obj)
 			else return "PFC" end
 		end
 		local ridiculous
-		if obj.GetTapNoteScores then
+		if counts then
+			ridiculous = HV.EmulateRidiculousEnabled() and counts.Ridiculous or nil
+		elseif obj.GetTapNoteScores then
 			local ok, offsets = pcall(function() return obj:GetOffsetVector() end)
 			local judgeScale = PREFSMAN:GetPreference("TimingWindowScale") or 1
 			ridiculous = ok and HV.EmulateRidiculousEnabled() and HV.GetRidiculousCountFromOffsets(offsets, judgeScale) or nil
@@ -1005,23 +1010,26 @@ function wife3(maxms, ts, version)
 	end								-- purpose of the scoring curve, which is to assign point values
 end
 
--- holy shit this is fugly
 function getRescoredWife3Judge(version, judgeScale, rst, useCurrent)
 	if type(rst) ~= "table" then return 0 end
 	local tso = ms.JudgeScalers
 	local ts = (tso and tso[judgeScale]) or 1.0
-	local totalPoints = 0.0
+	local totalPoints, replayMisses = 0, 0
 	local dvt = rst["dvt"]
 	
 	if type(dvt) == "table" then
 		for i = 1, #dvt do
 			local offset = tonumber(dvt[i])
-			if offset then
+			if offset and math.abs(offset) <= 180.001 then
 				totalPoints = totalPoints + wife3(math.abs(offset), ts, version)
+			elseif offset and math.abs(offset) >= 1000 and offset ~= -1100 then
+				replayMisses = replayMisses + 1
 			end
 		end
 	end
 	
+	totalPoints = totalPoints - math.max(replayMisses, tonumber(rst.misses) or 0) * 5.5
+
 	-- Penalize holds, rolls, and mines.
 	
 	totalPoints = totalPoints + (math.max(0, tonumber(rst["holdsMissed"]) or 0) * -4.5)
@@ -1043,7 +1051,7 @@ function getRescoredWife3Judge(version, judgeScale, rst, useCurrent)
 	if maxNotes <= 0 then return 0 end
 	local maxPoints = maxNotes * 2
 	
-	return math.min((totalPoints / maxPoints) * 100.0, 100)
+	return math.min((totalPoints / maxPoints) * 100.0, 100), totalPoints, maxPoints
 end
 
 function HV.IsReplayPlayback()
@@ -1138,7 +1146,7 @@ local function hvReplayVector(replay, methodName)
 	return {}
 end
 
-function getRescoreElements(pss, score)
+function getRescoreElements(pss, score, offsets)
 	local o = {}
 	
 	-- Base counts from PlayerStageStats (Live Stats)
@@ -1169,38 +1177,31 @@ function getRescoreElements(pss, score)
 		end
 	elseif score then
 		-- Use the Score-based retrieval (Moved from SelectMusic for global use)
-		return getRescoreElementsFromScore(score)
+		return getRescoreElementsFromScore(score, offsets)
 	end
 	
 	return o
 end
 
-function getRescoreElementsFromScore(score)
-	local o = {}
-	if not score or type(score.HasReplayData) ~= "function" then return nil end
-	local hasReplay = false
-	local hasReplayOk = pcall(function() hasReplay = score:HasReplayData() end)
-	if not hasReplayOk or not hasReplay then return nil end
-	if type(score.GetReplay) ~= "function" then return nil end
-	local replay = score:GetReplay()
-	local ok = pcall(function() replay:LoadAllData() end)
-	if not ok then return nil end
-	
-	local dvtTmp = hvReplayVector(replay, "GetOffsetVector")
-	local tvt = hvReplayVector(replay, "GetTapNoteTypeVector")
-	local dvt = {}
-	if tvt ~= nil and #tvt > 0 then
-		for i, d in ipairs(dvtTmp) do
-			local ty = tvt[i]
-			if ty == "TapNoteType_Tap" or ty == "TapNoteType_HoldHead" or ty == "TapNoteType_Lift" then
-				dvt[#dvt+1] = d
+function getRescoreElementsFromScore(score, offsets)
+	if not score then return end
+	if not offsets then
+		if not score.HasReplayData or not score:HasReplayData() or not score.GetReplay then return end
+		local replay = score:GetReplay()
+		if not replay or not replay:LoadAllData() then return end
+
+		local vector = hvReplayVector(replay, "GetOffsetVector")
+		local types = hvReplayVector(replay, "GetTapNoteTypeVector")
+		offsets = {}
+		for i, offset in ipairs(vector) do
+			local kind = types[i]
+			if #types == 0 or kind == "TapNoteType_Tap" or kind == "TapNoteType_HoldHead" or kind == "TapNoteType_Lift" then
+				offsets[#offsets + 1] = offset
 			end
 		end
-	else
-		dvt = dvtTmp
 	end
-	o["dvt"] = dvt
-	
+	local o = {dvt = offsets}
+
 	o["misses"] = hvTapCount(score, "TapNoteScore_Miss")
 	o["holdsMissed"] = hvHoldCount(score, "HoldNoteScore_LetGo") + hvHoldCount(score, "HoldNoteScore_MissedHold")
 	o["rollsMissed"] = 0
@@ -1213,7 +1214,7 @@ function getRescoreElementsFromScore(score)
 	o["tapsHit"] = hits
 	o["notesPassed"] = hits + o["misses"]
 	
-	local steps = GAMESTATE:GetCurrentSteps()
+	local steps = score.GetChartKey and SONGMAN:GetStepsByChartKey(score:GetChartKey())
 	local radar = steps and steps:GetRadarValues(PLAYER_1)
 	o["totalHolds"] = hvNonNegativeCount(radar and radar:GetValue("RadarCategory_Holds"))
 	if o["totalHolds"] <= 0 then
@@ -1232,166 +1233,38 @@ function getRescoreElementsFromScore(score)
 	return o
 end
 
-------------------------------------------------------------
--- SCORE COMMENTS
-------------------------------------------------------------
-HV.ScoreCommentsPath = HV.Config.SaveDirectory .. "/ScoreComments.lua"
-HV.ScoreComments = HV.ScoreComments or {}
-
-function HV.WrapScoreComment(text, maxCharacters)
-	local lines = {}
-	maxCharacters = math.max(1, tonumber(maxCharacters) or 40)
-	for paragraph in (tostring(text or "") .. "\n"):gmatch("([^\r\n]*)\r?\n") do
-		if paragraph ~= "" then
-			local line = ""
-			for word in paragraph:gmatch("%S+") do
-				local candidate = line == "" and word or (line .. " " .. word)
-				if line ~= "" and #candidate > maxCharacters then
-					lines[#lines + 1] = line
-					line = word
-				else
-					line = candidate
-				end
-			end
-			if line ~= "" then lines[#lines + 1] = line end
-		else
-			lines[#lines + 1] = ""
-		end
+local function readSavedJudgments(score)
+	local counts = {}
+	for _, key in ipairs(rescoredJudgmentKeys) do
+		counts[key] = score:GetTapNoteScore("TapNoteScore_" .. key) or 0
 	end
-	return table.concat(lines, "\n")
+	counts.Ridiculous = HV.GetRidiculousCountFromScore(score)
+	return counts
 end
 
-local function hvReadLuaTable(path)
-	if not FILEMAN:DoesFileExist(path) then return {} end
-	local file = RageFileUtil.CreateRageFile()
-	local result = {}
-	if file:Open(path, 1) then
-		local chunk = loadstring(file:Read())
-		if chunk then
-			local ok, data = pcall(chunk)
-			if ok and type(data) == "table" then result = data end
-		end
-		file:Close()
+function HV.Score.GetDisplayJudgments(score, judge)
+	if not judge or HV.Score.GetPlayedJudge(score) == judge then return readSavedJudgments(score) end
+	local rst = getRescoreElementsFromScore(score)
+	local hits = rst and HV.Judgment.GetReplayHits(rst.dvt, nil, rst.tapsHit)
+	if hits then
+		local emulate = HV.EmulateRidiculousEnabled()
+		local counts = HV.Judgment.RescoreHits(hits, rst.misses, judge, emulate)
+		if not emulate then counts.Ridiculous = nil end
+		return counts
 	end
-	file:destroy()
-	return result
 end
 
-local function hvEnsureSettingsDir()
-	if FILEMAN.CreateDir then FILEMAN:CreateDir(HV.Config.SaveDirectory) end
-end
-
-function HV.ScoreCommentKey(score)
-	if not score then return nil end
-	local function call(name, ...)
-		if type(score[name]) == "function" then
-			local ok, value = pcall(score[name], score, ...)
-			if ok and value ~= nil then return tostring(value) end
-		end
-		return tostring((select(1, ...)) or "")
+function HV.Score.GetDisplayTally(score, judge)
+	if not judge then return HV.GetRidiculousTallyString(score) end
+	local counts = HV.Score.GetDisplayJudgments(score, judge)
+	if not counts then return "-" end
+	local tally = {counts.W1, counts.W2, counts.W3, counts.W4, counts.W5, counts.Miss}
+	if counts.Ridiculous then
+		tally[1] = counts.W1 - counts.Ridiculous
+		table.insert(tally, 1, counts.Ridiculous)
 	end
-	-- Keep the old fields, but encode them unambiguously before hashing.  The
-	-- previous `a|b|c` key could alias when a value contained `|` (and made
-	-- the save file needlessly large).  A score does not expose a portable
-	-- UUID on every Etterna build, so this is the most compatible identity we
-	-- can make from the HighScore API.
-	local fields = {
-		-- GetDate() is not guaranteed to have the same representation when a
-		-- HighScore is reconstructed after restarting Etterna.  It must not be
-		-- part of the persistent score identity.
-		call("GetChartKey"), call("GetMusicRate", 1),
-		call("GetScore", 0), call("GetWifeScore", 0), call("GetMaxCombo", 0),
-		call("GetModifiers"), call("GetTapNoteScore", "TapNoteScore_W1"),
-		call("GetTapNoteScore", "TapNoteScore_W2"), call("GetTapNoteScore", "TapNoteScore_W3"),
-		call("GetTapNoteScore", "TapNoteScore_W4"), call("GetTapNoteScore", "TapNoteScore_W5"),
-		call("GetTapNoteScore", "TapNoteScore_Miss")
-	}
-	local canonical = "HVSC2\0"
-	for _, value in ipairs(fields) do
-		canonical = canonical .. #value .. ":" .. value
-	end
-
-	-- Two independent 32-bit rolling hashes.  The arithmetic stays below the
-	-- exact-integer range of Lua numbers, unlike a 64-bit multiplication.
-	local h1, h2 = 2166136261, 3144134277
-	for i = 1, #canonical do
-		local byte = string.byte(canonical, i)
-		h1 = (h1 * 31 + byte) % 4294967291
-		h2 = (h2 * 33 + byte) % 4294967279
-	end
-	return string.format("v2-%08x-%08x", h1, h2)
+	return table.concat(tally, " | "), counts
 end
-
-local function hvLegacyScoreCommentKey(score)
-	if not score then return nil end
-	local function call(name, ...)
-		if type(score[name]) == "function" then
-			local ok, value = pcall(score[name], score, ...)
-			if ok and value ~= nil then return tostring(value) end
-		end
-		return tostring((select(1, ...)) or "")
-	end
-	return table.concat({call("GetChartKey"), call("GetMusicRate", 1), call("GetDate"),
-		call("GetScore", 0), call("GetWifeScore", 0), call("GetMaxCombo", 0),
-		call("GetModifiers"), call("GetTapNoteScore", "TapNoteScore_W1"),
-		call("GetTapNoteScore", "TapNoteScore_W2"), call("GetTapNoteScore", "TapNoteScore_W3"),
-		call("GetTapNoteScore", "TapNoteScore_W4"), call("GetTapNoteScore", "TapNoteScore_W5"),
-		call("GetTapNoteScore", "TapNoteScore_Miss")}, "|")
-end
-
-function HV.LoadScoreComments()
-	local loaded = hvReadLuaTable(HV.ScoreCommentsPath)
-	HV.ScoreComments = type(loaded) == "table" and loaded or {}
-	HV.ScoreCommentsLoaded = true
-	return HV.ScoreComments
-end
-
-function HV.SaveScoreComments()
-	hvEnsureSettingsDir()
-	local file = RageFileUtil.CreateRageFile()
-	if file:Open(HV.ScoreCommentsPath, 2) then
-		file:Write("return {\n")
-		for key, value in pairs(HV.ScoreComments or {}) do
-			if type(key) == "string" and type(value) == "string" and value ~= "" then
-				file:Write(string.format("\t[%q] = %q,\n", key, value))
-			end
-		end
-		file:Write("}\n")
-		file:Close()
-	end
-	file:destroy()
-end
-
-function HV.GetScoreComment(score)
-	local key = HV.ScoreCommentKey(score)
-	if not key then return "" end
-	if HV.ScoreComments[key] then return HV.ScoreComments[key] end
-
-	-- Convert old entries as soon as their score is seen.  There is no score
-	-- index in the theme API that can enumerate every historical HighScore,
-	-- so lazy conversion is the only complete and safe migration strategy.
-	local legacyKey = hvLegacyScoreCommentKey(score)
-	local legacyComment = legacyKey and HV.ScoreComments[legacyKey]
-	if legacyComment then
-		HV.ScoreComments[key] = legacyComment
-		HV.ScoreComments[legacyKey] = nil
-		HV.SaveScoreComments()
-		return legacyComment
-	end
-	return ""
-end
-
-function HV.SetScoreComment(score, comment)
-	local key = HV.ScoreCommentKey(score)
-	if not key then return end
-	comment = tostring(comment or "")
-	if comment == "" then HV.ScoreComments[key] = nil else HV.ScoreComments[key] = comment end
-	HV.SaveScoreComments()
-end
-
--- Load once while the theme scripts are initialized, before any screen can
--- request a comment.  This also guarantees a table when the file is absent.
-if not HV.ScoreCommentsLoaded then HV.LoadScoreComments() end
 
 ------------------------------------------------------------
 -- OSU!MANIA TAP RESCORING
@@ -1491,47 +1364,21 @@ function HV.GetOsuManiaRescore(score, od, judgeByOldestNote)
 end
 
 function getJ4NormalizedPercentage(score)
-	if not score then return 0 end
-	
-	-- Detect if this is a live PlayerStageStats object (has GetTapNoteScores but not GetModifiers)
-	local isLivePSS = (type(score.GetTapNoteScores) == "function" and type(score.GetModifiers) ~= "function")
-	if isLivePSS then
-		-- For live gameplay: use raw wife score as best approximation
-		if type(score.GetWifeScore) == "function" then
-			local ok, value = pcall(score.GetWifeScore, score)
-			value = ok and tonumber(value) or nil
-			if value then return value * 100 end
-		end
-		return 0
+	if not score then return 0, false end
+	local wife = score:GetWifeScore() * 100
+	-- The native HighScore binding already returns its stored J4 value in this mode.
+	if PREFSMAN:GetPreference("SortBySSRNormPercent") or HV.Score.GetPlayedJudge(score) == 4 then
+		return wife, true
 	end
-	
-	-- 1. Engine method (Fastest, most reliable for newer Etterna)
-	if type(score.GetRescoredWifeScore) == "function" then
-		local ok, value = pcall(score.GetRescoredWifeScore, score, 4)
-		value = ok and tonumber(value) or nil
-		-- Only return if we actually got a non-zero rescored value.
-		-- Online scores often return 0 here because they lack replay data for rescoring.
-		if value and value ~= 0 then
-			return value * 100
-		end
-	end
-	
-	-- 2. Manual rescore if replay exists
+
 	local rst = getRescoreElementsFromScore(score)
-	if rst and rst.dvt and #rst.dvt > 0 then
-		local p = getRescoredWife3Judge(3, 4, rst)
-		if p and p ~= 0 then return p end
+	local hits = rst and HV.Judgment.GetReplayHits(rst.dvt, nil, rst.tapsHit)
+	if hits then
+		rst.dvt = hits
+		local percent = getRescoredWife3Judge(3, 4, rst)
+		return percent, true
 	end
-	
-	-- 3. Fallback to raw wife score (If used on J4 or no replay available)
-	if type(score.GetWifeScore) == "function" then
-		local ok, value = pcall(score.GetWifeScore, score)
-		value = ok and tonumber(value) or nil
-		if value then
-			return value * 100
-		end
-	end
-	return 0
+	return wife, false
 end
 
 ------------------------------------------------------------

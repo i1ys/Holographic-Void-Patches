@@ -59,7 +59,7 @@ local barPadding = 30
 local barW = wheelItemW - (barPadding * 2)
 local gradesToTrack = {
 	"Tier01", "Tier02", "Tier03", "Tier04", "Tier05", "Tier06", "Tier07", 
-	"Tier08", "Tier09", "Tier10", "Tier11", "Tier12", "Tier13", "Tier14", "Tier15",
+	"Tier08", "Tier09", "Tier10", "Tier11", "Tier12", "Tier13", "Tier14", "Tier15", "Tier16", "Tier17",
 }
 
 local function getGradeColor(tier)
@@ -88,6 +88,10 @@ local progressionBar = Def.ActorFrame {
 			if sa and sa.GetText then sectionName = sa:GetText() end
 		end
 
+		local normalized = PREFSMAN:GetPreference("SortBySSRNormPercent")
+		if not self.chartGrades or self.normalized ~= normalized then
+			self.chartGrades, self.normalized = {}, normalized
+		end
 		local songs = sectionName and sectionName ~= "" and SONGMAN:GetSongsInGroup(sectionName) or {}
 		local totalSongs = #songs
 		local gradeCounts = {}
@@ -96,12 +100,12 @@ local progressionBar = Def.ActorFrame {
 
 		if totalSongs > 0 then
 			for _, song in ipairs(songs) do
-				local bestGrade = song:GetHighestGrade()
-				if bestGrade and bestGrade ~= "Grade_None" and bestGrade ~= "Grade_Failed" then
-					totalCleared = totalCleared + 1
-					local tier = tostring(bestGrade):match("Tier%d+")
-					if tier and gradeCounts[tier] then
+				local best = HV.Score.GetSongBestGradeTier(song, self.chartGrades)
+				if best then
+					local tier = string.format("Tier%02d", best)
+					if gradeCounts[tier] then
 						gradeCounts[tier] = gradeCounts[tier] + 1
+						totalCleared = totalCleared + 1
 					end
 				end
 			end

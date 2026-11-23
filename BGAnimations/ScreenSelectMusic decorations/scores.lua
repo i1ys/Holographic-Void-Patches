@@ -38,7 +38,6 @@ local replayRequestToken = 0
 local filterCurrentRate = true
 local showInvalidScores = false
 local displayAsJ4 = PREFSMAN:GetPreference("SortBySSRNormPercent")
-local hoveredCommentScore = nil
 
 local function IsOnlineScoreInvalid(score)
 	if not score then return false end
@@ -278,51 +277,6 @@ local t = Def.ActorFrame {
 	OffCommand = function(self)
 		if scoresActor == self then scoresActor = nil end
 	end,
-	OnCommand = function(self)
-		self:SetUpdateFunction(function(actor)
-			if not actor:GetVisible() then
-				local tooltip = actor:GetChild("ScoreCommentTooltip")
-				if tooltip then tooltip:visible(false) end
-				return
-			end
-			local mx, my = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
-			local found = nil
-			for ri = 1, pageSize do
-				local ry = SCREEN_CENTER_Y + rowsStartY + (ri - 1) * rowH + rowH / 2
-				if mx >= SCREEN_CENTER_X - overlayW / 2 + 25 and mx <= SCREEN_CENTER_X + overlayW / 2 - 25
-					and my >= ry - rowH / 2 and my <= ry + rowH / 2 then
-					local entry = displayedScores[(currentPage - 1) * pageSize + ri]
-					found = entry and entry.score or nil
-					break
-				end
-			end
-			local tooltip = actor:GetChild("ScoreCommentTooltip")
-			local comment = found and HV.GetScoreComment(found) or ""
-			hoveredCommentScore = found
-			if tooltip then
-				local hasComment = comment ~= ""
-				tooltip:visible(hasComment)
-				if hasComment then
-					local text = tooltip:GetChild("Text")
-					local bg = tooltip:GetChild("Bg")
-					local wrappedComment = HV.WrapScoreComment(comment, 58)
-					text:settext(wrappedComment)
-					local textWidth = #comment * 0.32 * 8
-					if text.GetWidth then
-						local measuredWidth = text:GetWidth() * 0.32
-						if measuredWidth > 0 then textWidth = measuredWidth end
-					end
-					local lineCount = 1
-					for _ in wrappedComment:gmatch("\n") do lineCount = lineCount + 1 end
-					local tooltipWidth = math.max(140, math.min(520, textWidth + 24))
-					bg:zoomto(tooltipWidth, math.max(42, lineCount * 16 + 16))
-					-- Keep the tooltip attached to the cursor, even while the
-					-- cursor moves within the same score row.
-					tooltip:xy(mx - SCREEN_CENTER_X + 16, my - SCREEN_CENTER_Y + 16)
-				end
-			end
-		end)
-	end,
 	BeginCommand = function(self)
 		local screen = SCREENMAN:GetTopScreen()
 		if screen and screen.GetMusicWheel then whee = screen:GetMusicWheel() end
@@ -559,12 +513,6 @@ local t = Def.ActorFrame {
 				:settext(THEME:GetString("Scores", "ScoreHint"))
 		end,
 	},
-	Def.ActorFrame {
-		Name = "ScoreCommentTooltip",
-		InitCommand = function(self) self:visible(false):z(20) end,
-		Def.Quad { Name = "Bg", InitCommand = function(self) self:halign(0):valign(0):zoomto(140, 70):diffuse(color("0.01,0.01,0.01,0.90")) end },
-		LoadFont("Common Normal") .. { Name = "Text", InitCommand = function(self) self:halign(0):valign(0):xy(10, 8):zoom(0.32):diffuse(brightText) end }
-	},
 }
 
 -- Score rows
@@ -625,49 +573,31 @@ for i = 1, pageSize do
 				self:GetChild("Rank"):settext(tostring(idx))
 				self:GetChild("Date"):settext(entry.date)
 				local wifeFormat = entry.wife and (entry.wife >= 99.7 and "%.4f%%" or "%.2f%%")
-				self:GetChild("Wife"):settext(wifeFormat and string.format(wifeFormat, entry.wife) or "—")
-				self:GetChild("SSR"):settext(entry.ssr and string.format("%.2f", entry.ssr) or "—")
+				self:GetChild("Wife"):settext(wifeFormat and string.format(wifeFormat, entry.wife) or "-")
+				self:GetChild("SSR"):settext(entry.ssr and string.format("%.2f", entry.ssr) or "-")
 					:diffuse(entry.ssr and HVColor.GetMSDRatingColor(entry.ssr) or subText):visible(HV.ShowMSD())
 
 				if currentView == VIEW_LOCAL then
 					self:GetChild("Player"):settext(THEME:GetString("Common", "You"))
 					
-					-- Judgments
-					self:GetChild("Judgments"):settext(HV.GetRidiculousTallyString(s))
+					local judge = displayAsJ4 and 4 or HV.Score.GetPlayedJudge(s)
+					local tally, counts = HV.Score.GetDisplayTally(s, displayAsJ4 and 4 or nil)
+					self:GetChild("Judgments"):settext(tally)
+					self:GetChild("Judge"):settext(judge and ("J" .. judge) or "")
+						:diffuse(displayAsJ4 and accentColor or subText)
 
-					local norm = PREFSMAN:GetPreference("SortBySSRNormPercent")
-					local judgeIndex = ""
-					if displayAsJ4 then
-						judgeIndex = "J4"
-					elseif not norm and type(s.GetJudgeScale) == "function" then
-						local scale = s:GetJudgeScale()
-						if scale then
-							scale = math.floor(scale * 100 + 0.5) / 100
-							local j = 4
-							for k, v in pairs(ms.JudgeScalers) do
-								if math.floor(v * 100 + 0.5) / 100 == scale then
-									j = k
-									if j >= 4 then break end
-								end
-							end
-							j = math.max(4, math.min(9, j))
-							judgeIndex = "J" .. j
-						end
+					local grade = s:GetWifeGrade()
+					if displayAsJ4 and grade ~= "Grade_Failed" then
+						grade = entry.wife and GetGradeFromPercent(entry.wife / 100)
 					end
-					self:GetChild("Judge"):settext(judgeIndex)
-					if displayAsJ4 then
-						self:GetChild("Judge"):diffuse(accentColor)
-					else
-						self:GetChild("Judge"):diffuse(subText)
-					end
-
-					local gradeStr = ToEnumShortString(s:GetWifeGrade())
-					self:GetChild("Grade"):settext(HV.GetGradeName(gradeStr)):diffuse(HVColor.GetGradeColor(gradeStr))
+					self:GetChild("Grade"):settext(grade and HV.GetGradeName(ToEnumShortString(grade)) or "-")
+						:diffuse(grade and HVColor.GetGradeColor(ToEnumShortString(grade)) or subText)
 					self:GetChild("Rate"):settextf("%.2fx", s:GetMusicRate())
 
-					local ct = getDetailedClearType(s)
-					if IsLocalScoreInvalid(s) then ct = "Invalid" end
-					self:GetChild("Clear"):settext(ct):diffuse(HVColor.GetClearTypeColor(ct))
+					local ct = "-"
+					if IsLocalScoreInvalid(s) then ct = "Invalid"
+					elseif tally ~= "-" then ct = getDetailedClearType(s, counts) end
+					self:GetChild("Clear"):settext(ct):diffuse(HVColor.GetClearTypeColor(ct) or subText)
 
 					-- Chord Cohesion indicator
 					local cc = self:GetChild("CC")
@@ -720,7 +650,8 @@ local function UpdateDisplayedScores()
 			and (not currentRate or math.abs(score:GetMusicRate() - currentRate) < 0.001)) then
 			local wife
 			if isLocal and displayAsJ4 then
-				wife = getJ4NormalizedPercentage(score)
+				local percent, available = getJ4NormalizedPercentage(score)
+				if available ~= false then wife = percent end
 			else
 				local fraction = FiniteScoreValue(score:GetWifeScore())
 				wife = fraction and fraction * 100
@@ -744,7 +675,6 @@ t.RefreshScoresCommand = function(self)
 end
 
 t.RefreshScoreRowsCommand = function(self)
-	hoveredCommentScore = nil
 
 	local scores = displayedScores
 	local totalPages = math.max(1, math.ceil(#scores / pageSize))

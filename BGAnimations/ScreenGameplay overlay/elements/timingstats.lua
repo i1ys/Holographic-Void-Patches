@@ -2,7 +2,7 @@ local gameplay = ...
 local statType = HV.GetNotefieldStat()
 
 local function formatHandDelta(stats)
-	if not stats.handScores then return "—" end
+	if not stats.handScores then return "-" end
 	local score, count = stats.handScores, stats.handCounts
 	if not stats.hasMiddleColumn then
 		if count[1] == 0 or count[3] == 0 then return "0.0000%" end
@@ -26,12 +26,12 @@ local function formatStat(stats)
 		return stats.maRatio == math.huge and "∞" or string.format("%.2f:1", stats.maRatio)
 	end
 	if statType == "TapOffset" then
-		return stats.lastOffset == nil and "—" or string.format("%+.2fms", stats.lastOffset)
+		return stats.lastOffset == nil and "-" or string.format("%+.2fms", stats.lastOffset)
 	end
 	if statType == "DeltaHand" then return formatHandDelta(stats) end
 	local value = stats.mean
 	if statType == "StdDev" then value = stats.stdDev end
-	return value == nil and "—" or string.format("%.2fms", value)
+	return value == nil and "-" or string.format("%.2fms", value)
 end
 
 return Def.ActorFrame {

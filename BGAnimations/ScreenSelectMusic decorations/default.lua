@@ -27,86 +27,49 @@ local function styleModeSupportsSingleDoubleToggle()
 	return gameName == "dance" or gameName == "beat"
 end
 
-local function getPBJudgeRows(score, rst)
-	local ridic = nil
-	local w1 = 0
-	local w2 = 0
-	local w3 = 0
-	local w4 = 0
-	local w5 = 0
-	local miss = 0
+local function getPBView(frame)
+	local score = HV.CurrentSongData.pbScore
+	if not score then return end
+	local normalized = PREFSMAN:GetPreference("SortBySSRNormPercent")
+	local j4 = normalized or frame.isHovering
+	local cached = frame.pbView
+	if cached and cached.score == score and cached.j4 == j4 then return cached end
 
-	if rst then
-		local judgeScale = ms.JudgeScalers[4] or 1
-		w1 = getRescoredJudge(rst.dvt, 4, 1)
-		w2 = getRescoredJudge(rst.dvt, 4, 2)
-		w3 = getRescoredJudge(rst.dvt, 4, 3)
-		w4 = getRescoredJudge(rst.dvt, 4, 4)
-		w5 = getRescoredJudge(rst.dvt, 4, 5)
-		miss = getRescoredJudge(rst.dvt, 4, 6)
-		ridic = HV.EmulateRidiculousEnabled() and HV.GetRidiculousCountFromOffsets(rst.dvt, judgeScale) or nil
-	elseif score then
-		w1 = score:GetTapNoteScore("TapNoteScore_W1")
-		w2 = score:GetTapNoteScore("TapNoteScore_W2")
-		w3 = score:GetTapNoteScore("TapNoteScore_W3")
-		w4 = score:GetTapNoteScore("TapNoteScore_W4")
-		w5 = score:GetTapNoteScore("TapNoteScore_W5")
-		miss = score:GetTapNoteScore("TapNoteScore_Miss")
-		ridic = HV.GetRidiculousCountFromScore(score)
-	end
-
-	if ridic then
-		return {
-			{name = "Ridiculous", label = "RID", val = ridic},
-			{name = "W1", label = "MARV", val = w1 - ridic},
-			{name = "W2", label = "PERF", val = w2},
-			{name = "W3", label = "GREAT", val = w3},
-			{name = "W4", label = "GOOD", val = w4},
-			{name = "W5", label = "BAD", val = w5},
-			{name = "Miss", label = "MISS", val = miss}
-		}
-	end
-
-	return {
-		{name = "W1", label = "MARV", val = w1},
-		{name = "W2", label = "PERF", val = w2},
-		{name = "W3", label = "GREAT", val = w3},
-		{name = "W4", label = "GOOD", val = w4},
-		{name = "W5", label = "BAD", val = w5},
-		{name = "Miss", label = "MISS", val = miss}
+	local playedJudge = HV.Score.GetPlayedJudge(score)
+	local stats = {
+		score = score,
+		j4 = j4,
+		judge = j4 and 4 or playedJudge,
+		wife = score:GetWifeScore() * 100,
+		grade = score:GetWifeGrade(),
 	}
+	if j4 then
+		local percent, available = getJ4NormalizedPercentage(score)
+		stats.wife = available and percent or nil
+		if stats.grade ~= "Grade_Failed" then
+			stats.grade = stats.wife and GetGradeFromPercent(stats.wife / 100)
+		end
+	end
+	stats.counts = HV.Score.GetDisplayJudgments(score, stats.judge)
+	if stats.counts then stats.clear = getDetailedClearType(score, stats.counts) end
+	frame.pbView = stats
+	return stats
 end
 
-local function getPBRescoredClearType(rst)
-	local w1 = getRescoredJudge(rst.dvt, 4, 1)
-	local w2 = getRescoredJudge(rst.dvt, 4, 2)
-	local w3 = getRescoredJudge(rst.dvt, 4, 3)
-	local w4 = getRescoredJudge(rst.dvt, 4, 4)
-	local w5 = getRescoredJudge(rst.dvt, 4, 5)
-	local miss = getRescoredJudge(rst.dvt, 4, 6)
-	local pct = getRescoredWife3Judge(3, 4, rst) or 0
-	if pct <= 0 then return "Failed" end
-
-	local cb = miss + w5 + w4
-	if cb > 0 then
-		if cb == 1 then return "MF"
-		elseif cb < 10 then return "SDCB"
-		else return "Clear" end
-	elseif w3 > 0 then
-		if w3 == 1 then return "BF"
-		elseif w3 < 10 then return "SDG"
-		else return "FC" end
-	elseif w2 > 0 then
-		if w2 == 1 then return "WF"
-		elseif w2 < 10 then return "SDP"
-		else return "PFC" end
+local function getPBJudgeRows(counts)
+	local rows = {}
+	if counts and counts.Ridiculous then
+		rows[1] = {name = "Ridiculous", label = "RID", val = counts.Ridiculous}
 	end
-
-	local ridic = HV.EmulateRidiculousEnabled() and HV.GetRidiculousCountFromOffsets(rst.dvt, ms.JudgeScalers[4] or 1) or nil
-	if ridic and ridic == w1 then return "RFC"
-	elseif ridic and w1 - ridic == 1 then return "RF"
-	elseif ridic and w1 - ridic < 10 then return "SDM" end
-	return "MFC"
+	for _, entry in ipairs({
+		{"W1", "MARV"}, {"W2", "PERF"}, {"W3", "GREAT"}, {"W4", "GOOD"}, {"W5", "BAD"}, {"Miss", "MISS"},
+	}) do
+		local name, label = entry[1], entry[2]
+		local value = counts and counts[name]
+		if value and name == "W1" then value = value - (counts.Ridiculous or 0) end
+		rows[#rows + 1] = {name = name, label = label, val = value or "-"}
+	end
+	return rows
 end
 
 local root = Def.ActorFrame {
@@ -303,6 +266,7 @@ t[#t + 1] = Def.Actor {
 						local clearedSongs = 0
 						local packBins = {}
 						local stype = GAMESTATE:GetCurrentStyle():GetStepsType()
+						local chartGrades = {}
 						for _, s in ipairs(songs) do
 							local charts = s:GetStepsByStepsType(stype)
 							local highest = 0
@@ -321,8 +285,7 @@ t[#t + 1] = Def.Actor {
 							end
 							
 							-- Check clearing status
-							local grade = s:GetHighestGrade()
-							if grade and grade ~= "Grade_NoData" and grade ~= "Grade_Failed" then
+							if HV.Score.GetSongBestGradeTier(s, chartGrades) then
 								clearedSongs = clearedSongs + 1
 							end
 						end
@@ -1452,11 +1415,11 @@ local function GetDisplayScore()
 	local currentRateStr = getCurRateString()
 	local currentScores = rateTable[currentRateStr]
 	if currentScores and #currentScores > 0 then
-		-- Use J4-normalized comparison to find the best for this rate
+		-- The native percent follows the Normalize to J4 preference.
 		local bestOfRate = currentScores[1]
-		local bestOfRatePct = getJ4NormalizedPercentage(bestOfRate)
+		local bestOfRatePct = bestOfRate:GetWifeScore()
 		for i = 2, #currentScores do
-			local p = getJ4NormalizedPercentage(currentScores[i])
+			local p = currentScores[i]:GetWifeScore()
 			if p > bestOfRatePct then
 				bestOfRatePct = p
 				bestOfRate = currentScores[i]
@@ -1478,9 +1441,9 @@ local function GetDisplayScore()
 			
 			-- Find the best score for this specific rate first
 			local bestInThisRate = scores[1]
-			local bestInThisRatePct = getJ4NormalizedPercentage(bestInThisRate)
+			local bestInThisRatePct = bestInThisRate:GetWifeScore()
 			for i = 2, #scores do
-				local p = getJ4NormalizedPercentage(scores[i])
+				local p = scores[i]:GetWifeScore()
 				if p > bestInThisRatePct then
 					bestInThisRatePct = p
 					bestInThisRate = scores[i]
@@ -1493,7 +1456,7 @@ local function GetDisplayScore()
 				bestScore = bestInThisRate
 				bestScorePct = bestInThisRatePct
 			elseif math.abs(diff - minDiff) < 0.0001 then
-				-- If rates are equally close, pick the one with better J4 normalized percentage
+				-- If rates are equally close, pick the one with higher displayed Wife%
 				if bestInThisRatePct > bestScorePct then
 					bestScore = bestInThisRate
 					bestScorePct = bestInThisRatePct
@@ -1517,12 +1480,13 @@ t[#t + 1] = Def.ActorFrame {
 		self:queuecommand("Tick")
 	end,
 	DelayedChartUpdateMessageCommand = function(self)
+		self.pbView = nil
 		local data = HV.CurrentSongData
 		local isFolder = data.group and data.group ~= "" and not data.song
 		-- PackMSDGraph is a child of this frame, so keep the frame alive and
 		-- toggle only the song-specific Personal Best actors.
 		self:visible(true)
-		for _, name in ipairs({"PBHeader", "PBDate", "PBScoringSystem", "PBRate", "PBScore", "PBGrade", "PBClearType", "PBSSR", "PBCC", "PBJudgesFrame", "PBComment"}) do
+		for _, name in ipairs({"PBHeader", "PBDate", "PBScoringSystem", "PBRate", "PBScore", "PBGrade", "PBClearType", "PBSSR", "PBCC", "PBJudgesFrame"}) do
 			local child = self:GetChild(name)
 			if child then child:visible(not isFolder) end
 		end
@@ -1554,18 +1518,11 @@ t[#t + 1] = Def.ActorFrame {
 			self:playcommand("Set")
 		end,
 		SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
-			local isDifferentRate = score and math.abs(score:GetMusicRate() - getCurRateValue()) > 0.001
-			
-			if self:GetParent().isHovering then
-				self:settext(THEME:GetString("ScreenSelectMusic", "PersonalBest") .. " (J4)")
-				self:diffuse(color("#FF6666"))
-			else
-				self:settext(THEME:GetString("ScreenSelectMusic", "PersonalBest"))
-				-- Color header if it's a different rate to highlight why
-				self:diffuse(isDifferentRate and accentColor or accentColor)
-			end
-		end
+			local view = getPBView(self:GetParent())
+			local title = THEME:GetString("ScreenSelectMusic", "PersonalBest")
+			self:settext(view and view.j4 and title .. " (J4)" or title):diffuse(accentColor)
+		end,
+		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
 	LoadFont("Common Normal") .. {
@@ -1627,19 +1584,8 @@ t[#t + 1] = Def.ActorFrame {
 			self:halign(1):valign(0):x(panelW - 32):y(14):zoom(0.35):diffuse(mainText)
 		end,
 		SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
-			if score then
-				local r = score:GetMusicRate()
-				self:settext(string.format("%.2fx", r))
-				-- Color rate if it's NOT the current rate (Task 1)
-				if math.abs(r - getCurRateValue()) > 0.001 then
-					self:diffuse(accentColor)
-				else
-					self:diffuse(mainText)
-				end
-			else
-				self:settext("")
-			end
+			local view = getPBView(self:GetParent())
+			self:settext(view and (view.judge and string.format("Wife3 J%d", view.judge) or "Wife3") or "")
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
@@ -1650,21 +1596,11 @@ t[#t + 1] = Def.ActorFrame {
 			self:halign(0):valign(0):y(28):zoom(0.5):diffuse(brightText)
 		end,
 		SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
-			if score then
-				local wifePct = score:GetWifeScore() * 100
-				if self:GetParent().isHovering then
-					wifePct = getJ4NormalizedPercentage(score)
-				end
-				if wifePct >= 99 then
-					self:settext(string.format("%.4f%%", wifePct))
-				else
-					self:settext(string.format("%.2f%%", wifePct))
-				end
-				self:diffuse(brightText)
+			local view = getPBView(self:GetParent())
+			if view then
+				self:settext(view.wife and HV.Score.FormatEvaluationWifePercent(view.wife) or "-"):diffuse(brightText)
 			else
-				self:settext(THEME:GetString("ScreenSelectMusic", "NoScore"))
-				self:diffuse(dimText)
+				self:settext(THEME:GetString("ScreenSelectMusic", "NoScore")):diffuse(dimText)
 			end
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
@@ -1676,24 +1612,10 @@ t[#t + 1] = Def.ActorFrame {
 			self:halign(0):valign(0):x(115):y(28):zoom(0.5)
 		end,
 		SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
-			if score then
-				local gradeStr = score:GetWifeGrade()
-				local wifePct = score:GetWifeScore() * 100
-				if self:GetParent().isHovering then
-					wifePct = getJ4NormalizedPercentage(score)
-					gradeStr = GetGradeFromPercent(wifePct / 100)
-				end
-				
-				-- gradeStr may be "Grade_Tier09" or "Tier09"; normalize
-				if gradeStr and not gradeStr:find("^Grade_") then
-					gradeStr = "Grade_" .. gradeStr
-				end
-				self:settext(HV.GetGradeName(gradeStr))
-				self:diffuse(HVColor.GetGradeColor(gradeStr))
-			else
-				self:settext("")
-			end
+			local view = getPBView(self:GetParent())
+			local grade = view and view.grade
+			self:settext(grade and HV.GetGradeName(grade) or (view and "-" or ""))
+				:diffuse(grade and HVColor.GetGradeColor(grade) or dimText)
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
@@ -1704,35 +1626,10 @@ t[#t + 1] = Def.ActorFrame {
 			self:halign(1):valign(0):x(panelW - 32):y(28):zoom(0.4)
 		end,
 		SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
-			if score then
-				local ct = getDetailedClearType(score)
-				
-				if self:GetParent().isHovering then
-					local rst = getRescoreElementsFromScore(score)
-					if rst then
-						ct = getPBRescoredClearType(rst)
-					end
-				end
-				
-				local ctStr = THEME:GetString("ClearTypes", ct)
-				self:settext(ctStr)
-				self:diffuse(HVColor.GetClearTypeColor(ct))
-			else
-				self:settext("")
-			end
-		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
-	},
-
-	LoadFont("Common Normal") .. {
-		Name = "PBComment",
-		InitCommand = function(self) self:halign(0):valign(0):y(96):zoom(0.28):diffuse(subText) end,
-		SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
-			local comment = score and HV.GetScoreComment(score) or ""
-			self:settext(comment ~= "" and HV.WrapScoreComment(comment, 110) or "")
-			self:visible(comment ~= "")
+			local view = getPBView(self:GetParent())
+			local clear = view and view.clear
+			self:settext(clear and THEME:GetString("ClearTypes", clear) or (view and "-" or ""))
+				:diffuse(clear and HVColor.GetClearTypeColor(clear) or dimText)
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
@@ -1782,9 +1679,9 @@ t[#t + 1] = Def.ActorFrame {
 			self:y(68)
 		end,
 		SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
+			local view = getPBView(self:GetParent())
 			local blocks = self:GetChild("Blocks")
-			if not score then
+			if not view then
 				self:visible(false)
 				for i = 1, 7 do
 					local block = blocks and blocks:GetChild("Block_" .. i)
@@ -1793,15 +1690,8 @@ t[#t + 1] = Def.ActorFrame {
 				return
 			end
 			self:visible(true)
-			local judges = getPBJudgeRows(score)
-			
-			if self:GetParent().isHovering then
-				local rst = getRescoreElementsFromScore(score)
-				if rst then
-					judges = getPBJudgeRows(score, rst)
-				end
-			end
-			
+			local judges = getPBJudgeRows(view.counts)
+
 			local gap = 2
 			local blockW = (panelW - 32 - (gap * (#judges - 1))) / #judges
 			for i = 1, 7 do

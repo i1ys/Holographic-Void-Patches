@@ -7,7 +7,7 @@ local useRidiculous = HV.EmulateRidiculousEnabled()
 local judgmentRows = {}
 
 local function countText(value)
-	return value == nil and "—" or tostring(value)
+	return value == nil and "-" or tostring(value)
 end
 
 local function ratioText(value)
@@ -15,7 +15,7 @@ local function ratioText(value)
 end
 
 local function offsetText(value, format)
-	return value == nil and "—" or string.format(format or "%.2f", value)
+	return value == nil and "-" or string.format(format or "%.2f", value)
 end
 
 if useRidiculous then
@@ -33,7 +33,7 @@ for _, key in ipairs({"W1", "W2", "W3", "W4", "W5", "Miss"}) do
 		color = HVColor.GetJudgmentColor(judgment),
 		value = function(stats)
 			if useRidiculous and judgment == "W1" then
-				if stats.ridiculous == nil then return "—" end
+				if stats.ridiculous == nil then return "-" end
 				return countText(stats.taps.W1 - stats.ridiculous)
 			end
 			return countText(stats.taps[judgment])
@@ -58,10 +58,10 @@ end
 local metricRows = {
 	{label = "MA", initial = "0.00:1", value = function(stats) return ratioText(stats.maRatio) end},
 	{label = "PA", initial = "0.00:1", value = function(stats) return ratioText(stats.paRatio) end},
-	{label = "Longest", initial = "0", value = function(stats) return countText(stats.longest) end},
-	{label = "SD", initial = "0.00", value = function(stats) return offsetText(stats.stdDev) end},
-	{label = "Mean", initial = "+0.00", value = function(stats) return offsetText(stats.mean, "%+.2f") end},
-	{label = "Max", initial = "0.00", value = function(stats) return offsetText(stats.largest) end},
+	{label = "Longest", segment = true, initial = "0", value = function(stats) return countText(stats.longest) end},
+	{label = "SD", segment = true, initial = "0.00", value = function(stats) return offsetText(stats.stdDev) end},
+	{label = "Mean", segment = true, initial = "+0.00", value = function(stats) return offsetText(stats.mean, "%+.2f") end},
+	{label = "Max", segment = true, initial = "0.00", value = function(stats) return offsetText(stats.largest) end},
 }
 
 local function makeColumn(name, rows, x, valueX, valueColor, alpha)
@@ -71,13 +71,19 @@ local function makeColumn(name, rows, x, valueX, valueColor, alpha)
 		SetGameplayStatsCommand = function(self, stats)
 			for i, row in ipairs(rows) do
 				self:GetChild("Value" .. i):settext(row.value(stats))
+				if row.segment then
+					self:GetChild("Label" .. i):settext(row.label .. (stats.replaySegment and "*" or ""))
+				end
 			end
+			local scope = self:GetChild("ReplayScope")
+			if scope then scope:visible(stats.replaySegment == true) end
 		end,
 	}
 	for i, row in ipairs(rows) do
 		local entry = row
 		local y = (i - 1) * 16 + (entry.inset or 0)
 		column[#column + 1] = LoadFont("Common Normal") .. {
+			Name = "Label" .. i,
 			InitCommand = function(self)
 				self:halign(0):valign(0):y(y):zoom(0.34):diffuse(entry.color or gameplay.dimText):diffusealpha(alpha)
 				self:settext(entry.label)
@@ -111,7 +117,15 @@ local counter = Def.ActorFrame {
 	makeColumn("Column1_Judgments", judgmentRows, 0, 60, gameplay.mainText, 0.8),
 }
 if not simple then
-	counter[#counter + 1] = makeColumn("Column2_Metrics", metricRows, 70, 65, gameplay.subText, 1)
+	local metrics = makeColumn("Column2_Metrics", metricRows, 70, 65, gameplay.subText, 1)
+	metrics[#metrics + 1] = LoadFont("Common Normal") .. {
+		Name = "ReplayScope",
+		InitCommand = function(self)
+			self:halign(0):valign(0):y(#metricRows * 16):zoom(0.28):diffuse(gameplay.dimText)
+				:settext("* Since resume"):visible(false)
+		end,
+	}
+	counter[#counter + 1] = metrics
 end
 counter[#counter + 1] = MovableBorder(140, 100, 1, 70, 50)
 return counter
