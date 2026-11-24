@@ -10,6 +10,9 @@ local prevZoom = 0.65
 local graphWidth = 300 * prevZoom
 local graphHeight = 40 * prevZoom
 local chartLength, timing = 0, nil
+local practiceUsesMP3 = false
+local inputScreen
+local previousCursorPreference
 local loopStartPos
 local loopEndPos
 local pausedCoinPress, previousBookmark
@@ -37,8 +40,14 @@ end
 
 local function updateChartBounds()
 	local steps = GAMESTATE:GetCurrentSteps()
+	local song = GAMESTATE:GetCurrentSong()
 	chartLength = steps and math.max(0, steps:GetLastSecond()) or 0
 	timing = steps and steps:GetTimingData()
+	local path = steps and steps:GetPreviewMusicPath()
+	if song and (not path or path == "" or path == song:GetPreviewMusicPath()) then
+		path = song:GetMusicPath()
+	end
+	practiceUsesMP3 = path ~= nil and path:lower():match("%.mp3$") ~= nil
 end
 
 local function chartPosition(pos)
@@ -66,7 +75,8 @@ local function setSongPos(pos, unpause)
 		if ok then return true end
 	end
 	if top.SetSongPosition then
-		return pcall(function() top:SetSongPosition(pos, 0, false) end)
+		-- Etterna otherwise uses approximate MP3 seeking while Practice is paused.
+		return pcall(top.SetSongPosition, top, pos, 0, practiceUsesMP3 and GAMESTATE:IsPaused())
 	end
 	return false
 end
@@ -270,15 +280,23 @@ local pm = Def.ActorFrame {
 		-- Store direct reference to Hitbox for input hit-testing
 		graphHitboxRef = self:GetChild("Hitbox")
 		local top = getTop()
-		if top and top.AddInputCallback then
+		if not inputScreen and top and top.AddInputCallback then
 			top:AddInputCallback(duminput)
+			inputScreen = top
 		end
 		self:SortByDrawOrder()
 		self:queuecommand("GraphUpdate")
 	end,
 	EndCommand = function(self)
+		if inputScreen and inputScreen.RemoveInputCallback then
+			inputScreen:RemoveInputCallback(duminput)
+		end
+		inputScreen = nil
 		HV.PracticeLoopStart, HV.PracticeLoopEnd = 0, 0
-		PREFSMAN:SetPreference("ShowMouseCursor", false)
+		if previousCursorPreference ~= nil then
+			PREFSMAN:SetPreference("ShowMouseCursor", previousCursorPreference)
+			previousCursorPreference = nil
+		end
 	end,
 	PracticeModeReloadMessageCommand = function(self)
 		updateChartBounds()
@@ -336,6 +354,9 @@ local pm = Def.ActorFrame {
 
 local t = Def.ActorFrame {
 	OnCommand = function(self)
+		if previousCursorPreference == nil then
+			previousCursorPreference = PREFSMAN:GetPreference("ShowMouseCursor")
+		end
 		PREFSMAN:SetPreference("ShowMouseCursor", true)
 	end,
 	CodeMessageCommand = function(self, params)
