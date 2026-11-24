@@ -109,9 +109,10 @@ function HV.Score.GetChartBestGradeTier(chartKey, chartGrades)
 		for _, rate in pairs(SCOREMAN:GetScoresByKey(chartKey) or {}) do
 			for _, score in ipairs(rate:GetScores()) do
 				played = true
-				if (not score.GetEtternaValid or score:GetEtternaValid()) and not IsScoreInvalid(score) then
-					local tier = tonumber(score:GetWifeGrade():match("^Grade_Tier(%d+)$"))
-					if tier and (not best or tier < best) then best = tier end
+				local tier = tonumber(score:GetWifeGrade():match("^Grade_Tier(%d+)$"))
+				if tier and (not best or tier < best) and (not score.GetEtternaValid or score:GetEtternaValid())
+					and not IsScoreInvalid(score) then
+					best = tier
 				end
 				if best == 1 then break end
 			end

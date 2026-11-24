@@ -359,6 +359,12 @@ local t = Def.ActorFrame {
 		if hoverActive then showTooltips() end
 		if currentStep < TWEEN_STEPS then self:sleep(STEP_TIME):queuecommand("AnimateStep") end
 	end,
+	InstantChartUpdateMessageCommand = function(self)
+		if not selection.detailsReady then
+			self:stoptweening():visible(false)
+			hideTooltips()
+		end
+	end,
 	DelayedChartUpdateMessageCommand = function(self) self:stoptweening():queuecommand("Set") end,
 	TabChangedMessageCommand          = function(self) self:stoptweening():queuecommand("Set") end,
 	NoteFieldVisibleMessageCommand    = function(self) previewVisible = true;  self:visible(false) end,

@@ -1183,7 +1183,8 @@ local function createScoreBoard(pn, frameW, pad)
 				LoadFont("Common Normal") .. {
 					Name = "PlayerName",
 					InitCommand = function(self)
-						self:xy(65, 8):zoom(0.45):halign(0):maxwidth(((frameW - pad * 3) * 0.5 - 65) / 0.45)
+						local zoom = 0.50
+						self:xy(65, 17):zoom(zoom):halign(0):maxwidth(((frameW - pad * 3) * 0.5 - 65) / zoom)
 						self.showOnline = true
 						self.transitionDuration = 0.25
 						self.displayDuration = 3
@@ -1239,7 +1240,7 @@ local function createScoreBoard(pn, frameW, pad)
 				LoadFont("Common Large") .. {
 					Name = "PlayerRating",
 					InitCommand = function(self)
-						self:xy(65, 53):zoom(0.45):halign(0)
+						self:xy(65, 43):zoom(0.45):halign(0)
 						self.showOnline = true
 						self.transitionDuration = 0.25
 						self.onlineRating = DLMAN:IsLoggedIn() and DLMAN:GetSkillsetRating("Overall") or nil

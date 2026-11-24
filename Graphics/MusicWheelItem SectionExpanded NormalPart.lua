@@ -37,48 +37,51 @@ local function updateCount(self, summary)
 	count:diffuse(getCompletionColor(summary.progress))
 end
 
+local function refreshSection(self, cachedOnly)
+	local section = self.section
+	if not section then return end
+	local wheel = self:GetParent():GetParent()
+	local style = GAMESTATE:GetCurrentStyle()
+	local summary = HV.WheelData.GetSection(wheel, section, style and style:GetStepsType(), cachedOnly)
+	if not summary then
+		self:GetChild("ProgressionBar"):visible(false)
+		HV.WheelData.QueueRow(wheel, self, "UpdateSection", self.focused)
+		return
+	end
+	HV.WheelData.CancelRow(self)
+	updateCount(self, summary)
+	local bar = self:GetChild("ProgressionBar")
+	bar:visible(true)
+	if self.summary == summary then return end
+	self.summary = summary
+
+	local x, widthPerSong = -barW/2, barW / math.max(1, summary.count)
+	for tier = 1, 17 do
+		local width = (summary.grades[tier] or 0) * widthPerSong
+		bar:GetChild("Bar_" .. tier):x(x):zoomto(width, barH)
+		x = x + width
+	end
+	bar:GetChild("BarBG"):x(x):zoomto(math.max(0, barW/2 - x), barH)
+end
+
 local t = Def.ActorFrame {
 	SetMessageCommand = function(self, params)
 		local active = params and params.Type and self:GetName() == params.Type .. "NormalPart"
 		local section = active and params.Text
 		if not section or section == "" then
-			self.section = nil
-			self:stoptweening()
+			self.section, self.summary = nil, nil
+			HV.WheelData.CancelRow(self)
 			return
 		end
 
 		local row = self:GetParent()
 		local title = row:GetChild(params.Type)
 		if title then title:diffuse(HVColor.Accent):halign(0):x(-wheelItemW/2 + 12):y(0) end
-		if self.section ~= section then
-			self.section, self.summary = section, nil
-			self:GetChild("ProgressionBar"):visible(false)
-		end
-		self:stoptweening():sleep(0.08):queuecommand("UpdateSection")
+		self.section, self.focused = section, params.HasFocus
+		refreshSection(self, true)
 	end,
-	UpdateSectionCommand = function(self)
-		local section = self.section
-		if not section then return end
-		local wheel = self:GetParent():GetParent()
-		local style = GAMESTATE:GetCurrentStyle()
-		local summary = HV.WheelData.GetSection(wheel, section, style and style:GetStepsType())
-		updateCount(self, summary)
-		if self.summary == summary then return end
-		self.summary = summary
-
-		local bar = self:GetChild("ProgressionBar")
-		bar:visible(true)
-		local x, widthPerSong = -barW/2, barW / math.max(1, summary.count)
-		for tier = 1, 17 do
-			local width = (summary.grades[tier] or 0) * widthPerSong
-			bar:GetChild("Bar_" .. tier):x(x):zoomto(width, barH)
-			x = x + width
-		end
-		bar:GetChild("BarBG"):x(x):zoomto(math.max(0, barW/2 - x), barH)
-	end,
-	HV_WheelScoresChangedMessageCommand = function(self)
-		self:playcommand("UpdateSection")
-	end,
+	UpdateSectionCommand = function(self) refreshSection(self, false) end,
+	HV_WheelScoresChangedMessageCommand = function(self) refreshSection(self, true) end,
 	ColorThemeChangedMessageCommand = function(self)
 		if not self.section then return end
 		local row = self:GetParent()

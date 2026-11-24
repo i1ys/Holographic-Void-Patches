@@ -226,6 +226,29 @@ t[#t + 1] = Def.Quad {
 -- ============================================================
 -- SELECTION MANAGER (Centralized Logic)
 -- ============================================================
+local function getNativeWheel()
+	local screen = SCREENMAN:GetTopScreen()
+	return screen and screen.GetMusicWheel and screen:GetMusicWheel()
+end
+
+-- Etterna suspends wheel positioning while any descendant has a queued tween.
+t[#t + 1] = Def.ActorFrame {
+	Name = "WheelRowUpdates",
+	BeginCommand = function(self)
+		local screen = SCREENMAN:GetTopScreen()
+		local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+		if wheel then
+			self:SetUpdateFunction(function()
+				if SCREENMAN:GetTopScreen() == screen then HV.WheelData.RefreshNextRow(wheel) end
+			end)
+		end
+	end,
+	OffCommand = function(self)
+		self:SetUpdateFunction(nil)
+		HV.WheelData.ClearPendingRows()
+	end,
+}
+
 t[#t + 1] = Def.Actor {
 	Name = "SelectionManager",
 	BeginCommand = function(self)
@@ -238,13 +261,14 @@ t[#t + 1] = Def.Actor {
 		data.song = song
 		data.steps = song and GAMESTATE:GetCurrentSteps() or nil
 		data.rate = getCurRateValue() or 1
-		local screen = SCREENMAN:GetTopScreen()
-		local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+		local wheel = getNativeWheel()
 		data.group = nil
 		if not song and wheel and wheel:GetSelectedType() == "WheelItemDataType_Section" then
 			data.group = wheel:GetSelectedSection()
 		end
 		data.renderedSong = nil
+		data.detailsReady = false
+		data.hasSingle, data.hasDouble = false, false
 		data.pbScore, data.pbSSR, data.skillsetMSDs = nil, 0, {}
 		data.songCount, data.progress, data.avgMSD = 0, 0, 0
 		data.packMSDDistribution, data.packChartCount = {}, nil
@@ -256,8 +280,8 @@ t[#t + 1] = Def.Actor {
 		local data = selection
 		local style = GAMESTATE:GetCurrentStyle()
 		local stepsType = style and style:GetStepsType()
-		data.hasSingle = data.song and data.song:HasStepsType("StepsType_Dance_Single")
-		data.hasDouble = data.song and data.song:HasStepsType("StepsType_Dance_Double")
+		data.hasSingle = data.song ~= nil and data.song:HasStepsType("StepsType_Dance_Single")
+		data.hasDouble = data.song ~= nil and data.song:HasStepsType("StepsType_Dance_Double")
 
 		local grouped = {}
 		if data.song then
@@ -293,13 +317,13 @@ t[#t + 1] = Def.Actor {
 			data.pbScore = GetDisplayScore()
 			data.pbSSR = data.pbScore and data.pbScore:GetSkillsetSSR("Overall") or 0
 		elseif data.group and data.group ~= "" then
-			local screen = SCREENMAN:GetTopScreen()
-			local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
+			local wheel = getNativeWheel()
 			if not wheel then return end
 			local summary = HV.WheelData.GetSection(wheel, data.group, stepsType)
 			data.songCount, data.progress, data.avgMSD = summary.count, summary.progress * 100, summary.avgMSD
 			data.packMSDDistribution, data.packChartCount = summary.bins, summary.charts
 		end
+		data.detailsReady = true
 	end,
 
 	FilterResultsMessageCommand = function(self)
@@ -356,6 +380,11 @@ t[#t + 1] = Def.Actor {
 		MESSAGEMAN:Broadcast("InstantChartUpdate")
 	end,
 	TriggerDelayedUpdateCommand = function(self)
+		local wheel = getNativeWheel()
+		if wheel and not wheel:IsSettled() then
+			self:sleep(0.05):queuecommand("TriggerDelayedUpdate")
+			return
+		end
 		self:playcommand("UpdateHeavyData")
 		MESSAGEMAN:Broadcast("DelayedChartUpdate")
 	end,
@@ -451,6 +480,7 @@ t[#t + 1] = Def.ActorFrame {
 			self.lastPath = ""
 		end,
 		SetCommand = function(self)
+			self.song, self.group = selection.song, selection.group
 			local bnpath = GetCurrentBannerPath()
 
 			if bnpath and bnpath ~= "" then
@@ -463,6 +493,9 @@ t[#t + 1] = Def.ActorFrame {
 			else
 				self:visible(false)
 			end
+		end,
+		InstantChartUpdateMessageCommand = function(self)
+			if self.song ~= selection.song or self.group ~= selection.group then self:visible(false) end
 		end,
 		DelayedChartUpdateMessageCommand = function(self)
 			self:playcommand("Set")
@@ -624,6 +657,9 @@ t[#t + 1] = Def.ActorFrame {
 					local scale = math.min(maxDim / w, maxDim / h)
 					self:zoom(scale)
 				end
+			end,
+			InstantChartUpdateMessageCommand = function(self)
+				if self.song ~= selection.song then self:visible(false) end
 			end,
 			DelayedChartUpdateMessageCommand = function(self)
 				self:playcommand("Set")
@@ -877,6 +913,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:diffuse(dimText)
 			end
 		end,
+		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
@@ -946,6 +983,7 @@ t[#t + 1] = Def.ActorFrame {
 			c:GetChild("Img"):Load(path):visible(true)
 			c:GetChild("Lbl"):settext(name):visible(true)
 		end,
+		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	}
 }
@@ -1089,6 +1127,7 @@ t[#t + 1] = Def.ActorFrame {
 			local data = selection
 			self:visible(styleModeSupportsSingleDoubleToggle() and data.hasSingle and data.hasDouble)
 		end,
+		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		
 		LoadFont("Common Normal") .. {
@@ -1096,7 +1135,8 @@ t[#t + 1] = Def.ActorFrame {
 			InitCommand = function(self) self:x(0):zoom(0.28):settext("S") end,
 			SetCommand = function(self)
 				local data = selection
-				local isS = GAMESTATE:GetCurrentStyle():GetName() == "single"
+				local style = GAMESTATE:GetCurrentStyle()
+				local isS = style and style:GetName() == "single"
 				self:diffuse(isS and accentColor or dimText)
 				self:diffusealpha(data.hasSingle and 1 or 0.2)
 			end,
@@ -1107,7 +1147,8 @@ t[#t + 1] = Def.ActorFrame {
 			InitCommand = function(self) self:x(12):zoom(0.28):settext("D") end,
 			SetCommand = function(self)
 				local data = selection
-				local isD = GAMESTATE:GetCurrentStyle():GetName() == "double"
+				local style = GAMESTATE:GetCurrentStyle()
+				local isD = style and style:GetName() == "double"
 				self:diffuse(isD and accentColor or dimText)
 				self:diffusealpha(data.hasDouble and 1 or 0.2)
 			end,
@@ -1123,6 +1164,10 @@ for i = 1, maxVisibleCharts do
 		InitCommand = function(self)
 			self:xy(diffSelectorX, diffRowTop(i))
 		end,
+		InstantChartUpdateMessageCommand = function(self)
+			self:visible(selection.detailsReady == true)
+		end,
+		DelayedChartUpdateMessageCommand = function(self) self:visible(true) end,
 
 		Def.Quad {
 			Name = "Bg",
@@ -1312,16 +1357,20 @@ t[#t + 1] = Def.ActorFrame {
 	OnCommand = function(self)
 		self:queuecommand("Tick")
 	end,
+	InstantChartUpdateMessageCommand = function(self)
+		local show = selection.detailsReady == true and selection.song ~= nil
+		self:playcommand("SetSongDetailsVisible", {show = show})
+	end,
 	DelayedChartUpdateMessageCommand = function(self)
 		self.pbView = nil
-		local data = selection
-		local isFolder = data.group and data.group ~= "" and not data.song
-		-- PackMSDGraph is a child of this frame, so keep the frame alive and
-		-- toggle only the song-specific Personal Best actors.
-		self:visible(true)
+		self:playcommand("SetSongDetailsVisible", {show = selection.song ~= nil})
+	end,
+	SetSongDetailsVisibleCommand = function(self, params)
 		for _, name in ipairs({"PBHeader", "PBDate", "PBScoringSystem", "PBRate", "PBScore", "PBGrade", "PBClearType", "PBSSR", "PBCC", "PBJudgesFrame"}) do
 			local child = self:GetChild(name)
-			if child then child:visible(not isFolder) end
+			if child and (not params.show or (name ~= "PBCC" and name ~= "PBJudgesFrame")) then
+				child:visible(params.show)
+			end
 		end
 	end,
 	TickCommand = function(self)
@@ -1554,6 +1603,9 @@ t[#t + 1] = Def.ActorFrame {
 	Def.ActorFrame {
 		Name = "PackMSDGraph",
 		InitCommand = function(self) self:xy(-5, -4):visible(false) end,
+		InstantChartUpdateMessageCommand = function(self)
+			if selection.packChartCount == nil then self:visible(false) end
+		end,
 		DelayedChartUpdateMessageCommand = function(self)
 			if not self then return end
 			local data = selection
@@ -1649,7 +1701,8 @@ t[#t + 1] = Def.ActorFrame {
 	LoadFont("Common Normal") .. {
 		Name = "ProfileName",
 		InitCommand = function(self)
-			self:halign(0):valign(0):x(56):y(-4):zoom(0.40):diffuse(mainText)
+			local zoom = 0.44
+			self:halign(0):valign(0):x(56):y(6):zoom(zoom):maxwidth(80 / zoom):diffuse(mainText)
 			self.showOnline = true
 			self.transitionDuration = 0.25
 			self.displayDuration = 3
@@ -1756,11 +1809,11 @@ t[#t + 1] = Def.ActorFrame {
 		OnCommand = function(self) self:playcommand("Set") end
 	},
 
-	-- MSD/Rating (Bottom Left)
+	-- Rating
 	LoadFont("Common Large") .. {
 		Name = "Rating",
 		InitCommand = function(self)
-			self:halign(0):valign(1):x(56):y(53):zoom(0.35)
+			self:halign(0):valign(1):x(56):y(38):zoom(0.35)
 			self.transitionDuration = 0.25
 		end,
 		FadeOutCommand = function(self)

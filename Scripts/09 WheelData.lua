@@ -1,5 +1,6 @@
 local grades, sections = {}, {}
 local owner, profile, normalized, midGrades
+local pendingRows = {}
 
 HV.WheelData = {}
 local WheelData = HV.WheelData
@@ -12,6 +13,34 @@ function WheelData.ClearSections()
 	sections = {}
 end
 
+function WheelData.QueueRow(wheel, row, command, focused)
+	pendingRows[row] = {wheel = wheel, command = command, focused = focused}
+end
+
+function WheelData.CancelRow(row)
+	pendingRows[row] = nil
+end
+
+function WheelData.ClearPendingRows()
+	pendingRows = {}
+end
+
+function WheelData.RefreshNextRow(wheel)
+	if not next(pendingRows) or not wheel:IsSettled() then return end
+	local wanted, job
+	for row, entry in pairs(pendingRows) do
+		if entry.wheel ~= wheel then
+			pendingRows[row] = nil
+		elseif not wanted or entry.focused then
+			wanted, job = row, entry
+			if entry.focused then break end
+		end
+	end
+	if not wanted then return end
+	pendingRows[wanted] = nil
+	wanted:playcommand(job.command)
+end
+
 local function refreshScoreContext(wheel)
 	local currentProfile = PROFILEMAN:GetProfile(PLAYER_1)
 	local currentNormalization = PREFSMAN:GetPreference("SortBySSRNormPercent")
@@ -22,21 +51,25 @@ local function refreshScoreContext(wheel)
 	end
 end
 
-function WheelData.GetChartGrade(wheel, steps)
+function WheelData.GetChartGrade(wheel, steps, cachedOnly)
 	refreshScoreContext(wheel)
-	if not profile then return end
-	local tier = HV.Score.GetChartBestGradeTier(steps:GetChartKey(), grades)
-	if tier then return string.format("Grade_Tier%02d", tier) end
+	if not profile then return nil, true end
+	local key = steps:GetChartKey()
+	if cachedOnly and not grades[key] then return nil, false end
+	local tier = HV.Score.GetChartBestGradeTier(key, grades)
+	return tier and string.format("Grade_Tier%02d", tier) or nil, true
 end
 
-function WheelData.GetSection(wheel, name, style)
+function WheelData.GetSection(wheel, name, style, cachedOnly)
 	refreshScoreContext(wheel)
 	local showPlayed = PREFSMAN:GetPreference("PackProgressInWheel")
+	local sort = GAMESTATE:GetSortOrder()
 	local cached = sections[name]
-	if cached and cached.style == style and cached.showPlayed == showPlayed then return cached end
+	if cached and cached.style == style and cached.showPlayed == showPlayed and cached.sort == sort then return cached end
+	if cachedOnly then return end
 
 	local songs = wheel:GetSongsInGroup(name)
-	local summary = {style = style, showPlayed = showPlayed, count = #songs, cleared = 0, played = 0, grades = {}, bins = {}, charts = 0, avgMSD = 0}
+	local summary = {style = style, sort = sort, showPlayed = showPlayed, count = #songs, cleared = 0, played = 0, grades = {}, bins = {}, charts = 0, avgMSD = 0}
 	local msdTotal, ratedSongs = 0, 0
 	local filterActive = FILTERMAN:AnyActiveFilter()
 	for _, song in ipairs(songs) do
