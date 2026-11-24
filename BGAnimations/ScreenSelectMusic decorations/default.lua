@@ -1,4 +1,5 @@
 local ThemePrefs = HV.LegacyPrefs
+local chartDensity = LoadActor("../ChartDensity.lua")
 
 --- Holographic Void: ScreenSelectMusic Decorations
 
@@ -849,51 +850,22 @@ t[#t + 1] = Def.ActorFrame {
 			self:xy(panelW * 0.65 + 28, 0)
 		end,
 		SetCommand = function(self)
-			local data = HV.CurrentSongData
-			if data.steps then
-				local rate = math.max(0.05, getCurRateValue())
-				local vectors = data.steps:GetCDGraphVectors(rate)
-				if vectors and vectors[1] and #vectors[1] > 0 then
-					local npsV = vectors[1]
-					local maxNPS = 0
-					local startMaxNPS = 0
-					local weightedNPS = 0
-					local includedWeight = 0
-					local length = (data.steps.GetLengthSeconds and data.steps:GetLengthSeconds() or 0) / rate
-					local firstCount = length > 0 and math.max(1, math.ceil(#npsV * math.min(20, length) / length)) or #npsV
-					for i = 1, #npsV do
-						local nps = npsV[i] or 0
-						if nps > maxNPS then maxNPS = nps end
-						if i <= firstCount and nps > startMaxNPS then startMaxNPS = nps end
-					end
-					local sectionWeight = length > 0 and length / #npsV or 1
-					local npsFloor = maxNPS * 0.5
-					for i = 1, #npsV do
-						local nps = npsV[i] or 0
-						if nps >= npsFloor then
-							weightedNPS = weightedNPS + nps * sectionWeight
-							includedWeight = includedWeight + sectionWeight
-						end
-					end
-					local averageNPS = includedWeight > 0 and weightedNPS / includedWeight or 0
-					if maxNPS >= 2 then
-						self:GetChild("Start"):settextf("%.0f", startMaxNPS):diffuse(accentColor)
-						self:GetChild("Max"):settextf("%.0f", maxNPS):diffuse(accentColor)
-						self:GetChild("Average"):settextf("%.0f", averageNPS):diffuse(accentColor)
-					else
-						self:GetChild("Start"):settext("--"):diffuse(dimText)
-						self:GetChild("Max"):settext("--"):diffuse(dimText)
-						self:GetChild("Average"):settext("--"):diffuse(dimText)
-					end
-				else
-					self:GetChild("Start"):settext("--"):diffuse(dimText)
-					self:GetChild("Max"):settext("--"):diffuse(dimText)
-					self:GetChild("Average"):settext("--"):diffuse(dimText)
-				end
+			local steps = HV.CurrentSongData.steps
+			local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
+			if steps ~= self.densitySteps or rate ~= self.densityRate then
+				self.densitySteps, self.densityRate = steps, rate
+				self.densityStats = steps and chartDensity.Summarize(steps:GetCDGraphVectors(rate))
+			end
+
+			local stats = self.densityStats
+			if stats then
+				self:GetChild("Start"):settextf("%.0f", stats.openingPeak):diffuse(accentColor)
+				self:GetChild("Max"):settextf("%.0f", stats.peak):diffuse(accentColor)
+				self:GetChild("Average"):settextf("%.0f", stats.denseMean):diffuse(accentColor)
 			else
-				self:GetChild("Start"):settext("--"):diffuse(dimText)
-				self:GetChild("Max"):settext("--"):diffuse(dimText)
-				self:GetChild("Average"):settext("--"):diffuse(dimText)
+				self:GetChild("Start"):settext("-"):diffuse(dimText)
+				self:GetChild("Max"):settext("-"):diffuse(dimText)
+				self:GetChild("Average"):settext("-"):diffuse(dimText)
 			end
 		end,
 		DelayedChartUpdateMessageCommand = function(self)

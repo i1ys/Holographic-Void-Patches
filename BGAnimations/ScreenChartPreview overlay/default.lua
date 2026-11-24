@@ -1,7 +1,7 @@
 -- Holographic Void: ScreenChartPreview Overlay
 -- Integrated sc-wh logic with HV Aesthetics (Glassmorphism, Accents, OLED Blacks).
--- oh yea the hovering on CDgraph is broken. i might or might not fix it
 
+local chartDensity = LoadActor("../ChartDensity.lua")
 local pn = PLAYER_1
 local song = GAMESTATE:GetCurrentSong()
 local steps = GAMESTATE:GetCurrentSteps()
@@ -9,7 +9,8 @@ local steps = GAMESTATE:GetCurrentSteps()
 local ssm
 local musicLength = 0
 local loadedRate
-local densityVectors
+local densityVectors, densityStats
+local densityGraphWidth = SCREEN_WIDTH - 120
 
 -- Safe fallbacks for engine globals that may not exist in all contexts
 local function getCurRateValue()
@@ -57,6 +58,16 @@ local readyAt = 0
 local lastDirection
 local lastDirectionAt
 
+local function hoveredChartPosition()
+	local clickArea = cdgFrameRef and cdgFrameRef:GetChild("ClickArea")
+	if not clickArea or not isOver(clickArea) then return end
+	local width = clickArea:GetZoomedWidth()
+	if width <= 0 then return end
+	local left = clickArea:GetTrueX() - width * clickArea:GetHAlign()
+	local fraction = (INPUTFILTER:GetMouseX() - left) / width
+	return math.max(0, math.min(1, fraction)) * musicLength
+end
+
 local function applyPreviewPosition(pos)
 	local proportion = pos / musicLength
 
@@ -67,7 +78,7 @@ local function applyPreviewPosition(pos)
 	if cdgFrameRef then
 		local seek = cdgFrameRef:GetChild("ProgressMarker")
 		if seek then
-			seek:x((proportion - 0.5) * (SCREEN_WIDTH - 120))
+			seek:x((proportion - 0.5) * densityGraphWidth)
 		end
 	end
 end
@@ -199,12 +210,6 @@ end
 ------------------------------------------------------------
 -- AUDIO CONTROL & SYNC
 ------------------------------------------------------------
-local function npsAt(proportion)
-	local bins = densityVectors and densityVectors[1]
-	if not bins or #bins == 0 then return nil end
-	return bins[math.min(#bins, math.floor(proportion * #bins) + 1)]
-end
-
 local function bpmAt(position, rate)
 	local timing = steps:GetTimingData()
 	local beat = timing:GetBeatFromElapsedTime(position)
@@ -227,60 +232,27 @@ local function updateSync()
 	local pos = previewPosition
 	applyPreviewPosition(pos)
 
-	-- CDG hover + info bar update
-	local cdgX = SCREEN_CENTER_X - (SCREEN_WIDTH - 120)/2
-	local cdgY = SCREEN_HEIGHT - 60 - 40  -- frame center minus half height
-	local cdgW = SCREEN_WIDTH - 120
-	local cdgH = 80
-	local mx, my = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
-	local inGraph = mx >= cdgX and mx <= cdgX + cdgW and my >= cdgY and my <= cdgY + cdgH
+	local hovered = hoveredChartPosition()
+	local chartTime = hovered or pos
+	-- Sample Music Position and the seek API use chart seconds. Density bins use playback seconds.
+	local playbackTime = loadedRate and chartTime / loadedRate
+	local nps = playbackTime and chartDensity.At(densityVectors, playbackTime)
+	local npsText = nps and string.format("%.1f NPS", nps) or "-"
 
-	-- Update NPS tooltip (floating)
-	if npsTooltipActor and rootRef and rootRef:GetVisible() and steps then
-		if inGraph then
-			npsTooltipActor:visible(true)
-			npsTooltipActor:xy(mx + 15, my - 35)
-			
-			local relX = mx - cdgX
-			local p = math.max(0, math.min(1, relX / cdgW))
-			
-			local nps = npsAt(p)
-			local textActor = npsTooltipActor:GetChild("NPSText")
-			if textActor then
-				textActor:settext(nps and string.format("%.1f NPS", nps) or "no data")
-			end
-		else
-			npsTooltipActor:visible(false)
-		end
-	elseif npsTooltipActor then
-		npsTooltipActor:visible(false)
-	end
-
-	-- Update info bar below CDG
-	if cdgInfoTimeRef and cdgInfoBPMRef and cdgInfoNPSRef and steps then
-		local displayRate = math.max(MIN_MUSIC_RATE, getCurRateValue())
-		if inGraph then
-			-- Hover mode: show hovered timestamp, BPM, and NPS in accent color
-			local relX    = mx - cdgX
-			local p       = math.max(0, math.min(1, relX / cdgW))
-			local hoverT  = p * musicLength
-			local hoverBPM = bpmAt(hoverT, displayRate)
-			local hoverNPS = npsAt(p) or 0
-
-			cdgInfoTimeRef:settextf("%s",         formatTime(hoverT / displayRate)):diffuse(accentColor)
-			cdgInfoBPMRef :settextf("%.0f BPM",   hoverBPM):diffuse(accentColor)
-			cdgInfoNPSRef :settextf("%.1f NPS",   hoverNPS):diffuse(accentColor)
-		else
-			-- Normal mode: show current playback values in dim colors
-			local curBPM = bpmAt(pos, displayRate)
-			local curNPS = npsAt(pos / musicLength) or 0
-
-			cdgInfoTimeRef:settextf("%s",         formatTime(pos / displayRate)):diffuse(textDim)
-			cdgInfoBPMRef :settextf("%.0f BPM",   curBPM):diffuse(textSub)
-			cdgInfoNPSRef :settextf("%.1f NPS",   curNPS):diffuse(textSub)
+	if npsTooltipActor then
+		npsTooltipActor:visible(hovered ~= nil)
+		if hovered then
+			npsTooltipActor:xy(INPUTFILTER:GetMouseX() + 15, INPUTFILTER:GetMouseY() - 35)
+			npsTooltipActor:GetChild("NPSText"):settext(npsText)
 		end
 	end
-	
+
+	if steps and playbackTime and cdgInfoTimeRef and cdgInfoBPMRef and cdgInfoNPSRef then
+		cdgInfoTimeRef:settext(formatTime(playbackTime)):diffuse(hovered and accentColor or textDim)
+		cdgInfoBPMRef:settextf("%.0f BPM", bpmAt(chartTime, loadedRate)):diffuse(hovered and accentColor or textSub)
+		cdgInfoNPSRef:settext(npsText):diffuse(hovered and accentColor or textSub)
+	end
+
 	-- MSD Tooltip hover check
 	if msdTooltipActor and rootRef and rootRef:GetVisible() then
 		local rightSidebar = rootRef:GetChild("RightSidebar")
@@ -378,24 +350,16 @@ local function input(event)
 			end
 		end
 
-		-- Seek on CDG
-		if cdgFrameRef then
-			local clickArea = cdgFrameRef:GetChild("ClickArea")
-			if isOver(clickArea) then
-				local mx = INPUTFILTER:GetMouseX()
-				local fx = cdgFrameRef:GetTrueX() - (SCREEN_WIDTH - 120)/2
-				local p = (mx - fx) / (SCREEN_WIDTH - 120)
-				p = math.max(0, math.min(1, p))
-				local pos = p * musicLength
-				if isPaused then
-					previewPosition = pos
-				else
-					playFrom(pos)
-					updateNoteDisplay()
-				end
-				applyPreviewPosition(previewPosition)
-				return true
+		local position = hoveredChartPosition()
+		if position then
+			if isPaused then
+				previewPosition = position
+			else
+				playFrom(position)
+				updateNoteDisplay()
 			end
+			applyPreviewPosition(previewPosition)
+			return true
 		end
 	end
 
@@ -655,60 +619,48 @@ local function radarPanelComp()
 end
 
 -- 3. CHORD DENSITY GRAPH
-local peak70LineActor = nil
-local tooltipActor = nil
-local showTooltip = false
-
 local function densityGraphComp()
 	return Def.ActorFrame {
 		Name = "CDGFrame",
 		InitCommand = function(self) self:xy(SCREEN_CENTER_X, SCREEN_HEIGHT - 60); cdgFrameRef = self end,
 		ReloadCommand = function(self) self:RunCommandsOnChildren(function(c) c:playcommand("Reload") end) end,
 		-- BG
-		Def.Quad { InitCommand = function(self) self:zoomto(SCREEN_WIDTH - 120, 80):diffuse(bgCard):diffusealpha(0.9) end },
+		Def.Quad { InitCommand = function(self) self:zoomto(densityGraphWidth, 80):diffuse(bgCard):diffusealpha(0.9) end },
 		
-		Def.Quad { Name = "ClickArea", InitCommand = function(self) self:zoomto(SCREEN_WIDTH - 120, 80):diffusealpha(0) end },
+		Def.Quad { Name = "ClickArea", InitCommand = function(self) self:zoomto(densityGraphWidth, 80):diffusealpha(0) end },
 
 		-- Graph (AMV)
 		Def.ActorMultiVertex {
 			Name = "GraphAMV",
 			ReloadCommand = function(self)
-				local vectors = densityVectors
-				if not vectors or not vectors[1] or #vectors[1] == 0 then
-					self:SetVertices({}):SetDrawState({Mode="DrawMode_Quads", First=1, Num=0})
-					return
-				end
-				
-				local npsV = vectors[1]
-				local nRows = #npsV
-				local gW = SCREEN_WIDTH - 120
-				local gH = 40
-				local rW = gW / nRows
-				local mNPS = 0
-				for i=1, #npsV do
-					if npsV[i] > mNPS then mNPS = npsV[i] end
-				end
-				
-				local mHeight = gH / math.max(1, mNPS)
-				local verts, nCols = {}, steps:GetNumColumns()
-				
-				for d=1, nCols do
-					local chordVector = vectors[d] or {}
-					for r=1, nRows do
-						local count = chordVector[r] or 0
-						if count > 0 then
-							local val = 0.2 + (nCols - (d-1)) * (0.6 / nCols)
-							local c = color(val..","..val..","..val..",1")
-							local x, y = -(gW/2) + (r-1)*rW, gH/2 +20
-							local bh, bw = rW, -(count*2*mHeight)
-							verts[#verts+1] = {{x, y, 0}, c}
-							verts[#verts+1] = {{x+bh, y, 0}, c}
-							verts[#verts+1] = {{x+bh, y+bw, 0}, c}
-							verts[#verts+1] = {{x, y+bw, 0}, c}
+				local verts = {}
+				if densityStats and densityStats.peak > 0 then
+					local bins = #densityVectors[1]
+					local binWidth = densityGraphWidth / (musicLength / loadedRate)
+					local heightPerNote = 80 / densityStats.peak
+					local columns = steps:GetNumColumns()
+
+					for chordSize = 1, columns do
+						local vector = densityVectors[chordSize] or {}
+						local brightness = 0.2 + (columns - chordSize + 1) * 0.6 / columns
+						local tint = color(brightness .. "," .. brightness .. "," .. brightness .. ",1")
+						for bin = 1, bins do
+							local left = (bin - 1) * binWidth
+							if left >= densityGraphWidth then break end
+							local count = vector[bin] or 0
+							if count > 0 then
+								local x = left - densityGraphWidth / 2
+								local right = math.min(densityGraphWidth, bin * binWidth) - densityGraphWidth / 2
+								local y = 40 - count * heightPerNote
+								verts[#verts + 1] = {{x, 40, 0}, tint}
+								verts[#verts + 1] = {{right, 40, 0}, tint}
+								verts[#verts + 1] = {{right, y, 0}, tint}
+								verts[#verts + 1] = {{x, y, 0}, tint}
+							end
 						end
 					end
 				end
-				self:SetVertices(verts):SetDrawState({Mode="DrawMode_Quads", First=1, Num=#verts})
+				self:SetVertices(verts):SetDrawState({Mode = "DrawMode_Quads", First = 1, Num = #verts})
 			end
 		},
 
@@ -716,46 +668,16 @@ local function densityGraphComp()
 		Def.ActorFrame {
 			Name = "MeanNPSContainer",
 			InitCommand = function(self)
-				self:xy(-(SCREEN_WIDTH - 120)/2, 0)
+				self:xy(-(densityGraphWidth)/2, 0)
 				self:halign(0)
 				self:z(1000)  -- Ensure it's above all other elements
 			end,
 			ReloadCommand = function(self)
-				if steps then
-					local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
-					local vectors = densityVectors
-					if vectors and vectors[1] then
-						local npsV = vectors[1]
-						local mNPS = 0
-						for i=1, #npsV do if npsV[i] > mNPS then mNPS = npsV[i] end end
-						if mNPS >= 2 then
-							local chartLength = steps.GetLengthSeconds and (steps:GetLengthSeconds() or 0) / rate or 0
-							local sectionWeight = chartLength > 0 and chartLength / #npsV or 1
-							local npsFloor = mNPS * 0.5
-							local weightedNPS, includedWeight = 0, 0
-							for i=1, #npsV do
-								local nps = npsV[i] or 0
-								if nps >= npsFloor then
-									weightedNPS = weightedNPS + nps * sectionWeight
-
-									includedWeight = includedWeight + sectionWeight
-								end
-							end
-							local meanNPS = includedWeight > 0 and weightedNPS / includedWeight or 0
-							local yPos = 40 - (meanNPS / mNPS) * 80
-							self:y(yPos)
-							self:visible(true)
-							-- Update the text with the actual 70% NPS value
-							local textActor = self:GetChild("MeanNPSText")
-							if textActor then
-								textActor:settextf("%.1f", meanNPS)
-							end
-						else
-							self:visible(false)
-						end
-					else
-						self:visible(false)
-					end
+				local show = densityStats ~= nil and densityStats.peak > 0
+				self:visible(show)
+				if show then
+					self:y(40 - densityStats.denseMean / densityStats.peak * 80)
+					self:GetChild("MeanNPSText"):settextf("%.1f", densityStats.denseMean)
 				end
 			end,
 
@@ -763,7 +685,7 @@ local function densityGraphComp()
 			Def.Quad {
 				Name = "MeanNPSLine",
 				InitCommand = function(self)
-					self:zoomto(SCREEN_WIDTH - 120, 2)
+					self:zoomto(densityGraphWidth, 2)
 					self:diffuse(accentColor)
 					self:diffusealpha(0.6)
 					self:halign(0)
@@ -785,21 +707,9 @@ local function densityGraphComp()
 		},
 
 		-- ProgressMarker drawn AFTER the graph so it renders on top
-		Def.Quad { Name = "ProgressMarker", InitCommand = function(self) self:x(-(SCREEN_WIDTH-120)/2):zoomto(2, 80):diffuse(accentColor) end },
+		Def.Quad { Name = "ProgressMarker", InitCommand = function(self) self:x(-(densityGraphWidth)/2):zoomto(2, 80):diffuse(accentColor) end },
 
-		-- Hover Tooltip Area (invisible but captures mouse)
-		Def.Quad {
-			Name = "TooltipArea",
-			InitCommand = function(self)
-				self:zoomto(SCREEN_WIDTH - 120, 80)
-				self:xy(-(SCREEN_WIDTH - 120)/2, 40)
-				self:halign(0):valign(1)
-				self:diffusealpha(0)
-				self:z(400)
-			end
-		},
-
-		-- Tooltip Display (positioned in updateSync) -- kept for compatibility but hidden in favor of info bar
+		-- Floating density value for the hovered playback second.
 		Def.ActorFrame {
 			Name = "NPSTooltip",
 			InitCommand = function(self)
@@ -978,7 +888,7 @@ local function closePreview(self, restoreAudio)
 	audioPath = nil
 	requestedPosition = nil
 	lastDirection = nil
-	densityVectors = nil
+	densityVectors, densityStats = nil, nil
 	loadedRate = nil
 	self:visible(false)
 
@@ -995,7 +905,7 @@ local function reloadPreviewChart(self)
 		closePreview(self, true)
 		return
 	end
-	local rate = getCurRateValue()
+	local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
 	if selected == steps and loadedRate == rate then return end
 	if selected ~= steps then hasNoteFrame = false end
 	steps, loadedRate = selected, rate
@@ -1008,10 +918,11 @@ local function reloadPreviewChart(self)
 		chartPreviewPath = path
 		if not isPaused then playNativePreview() end
 	end
-	densityVectors = nil
+	densityVectors, densityStats = nil, nil
 	local radar = steps:GetRadarValues(PLAYER_1)
 	if radar and radar:GetValue("RadarCategory_TapsAndHolds") > 0 then
 		densityVectors = steps:GetCDGraphVectors(rate)
+		densityStats = chartDensity.Summarize(densityVectors)
 	end
 	self:RunCommandsOnChildren(function(child) child:playcommand("Reload") end)
 	updateNoteDisplay()
