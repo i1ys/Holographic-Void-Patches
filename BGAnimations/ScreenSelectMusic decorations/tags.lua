@@ -110,6 +110,7 @@ local function ToggleTag(tagName)
 	
 	TAGMAN:set_dirty()
 	TAGMAN:save()
+	if isFiltering and filterTags[tagName] then filterChanged = true end
 	RefreshData()
 	if tagsActor then tagsActor:playcommand("RefreshTags") end
 end

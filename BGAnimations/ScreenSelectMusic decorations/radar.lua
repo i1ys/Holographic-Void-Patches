@@ -1,3 +1,4 @@
+local selection = ...
 local pn = GAMESTATE:GetEnabledPlayers()[1]
 
 local RADAR_X, RADAR_Y = 0, 0
@@ -174,7 +175,8 @@ end
 
 -- radar calculation
 
-local function calculateRadarValues(steps, song)
+local function calculateRadarValues()
+	local steps, song = selection.steps, selection.song
 	if not steps or not song then
 		rawValues, hellBreakdown = {0,0,0,0,0,0}, {mines=0, lifts=0, rolls=0, fakes=0}
 		return {0,0,0,0,0,0}
@@ -191,14 +193,15 @@ local function calculateRadarValues(steps, song)
 	local hands  = rv:GetValue('RadarCategory_Hands')
 	local length = math.max(steps:GetLengthSeconds(), 1)
 
-	local rate       = HV.CurrentSongData.rate or 1
-	local overall    = steps:GetMSD(rate, 1) or 0
-	local jumpstream = steps:GetMSD(rate, 3) or 0
-	local handstream = steps:GetMSD(rate, 4) or 0
-	local stamina    = steps:GetMSD(rate, 5) or 0
-	local jackspeed  = steps:GetMSD(rate, 6) or 0
-	local chordjack  = steps:GetMSD(rate, 7) or 0
-	local technical  = steps:GetMSD(rate, 8) or 0
+	local rate = selection.rate
+	local msds = selection.skillsetMSDs
+	local overall = msds[1] or 0
+	local jumpstream = msds[3] or 0
+	local handstream = msds[4] or 0
+	local stamina = msds[5] or 0
+	local jackspeed = msds[6] or 0
+	local chordjack = msds[7] or 0
+	local technical = msds[8] or 0
 
 	local truejumps, truehands, truequads = 0, 0, 0
 	local gv = steps:GetCDGraphVectors(rate)
@@ -321,13 +324,13 @@ local t = Def.ActorFrame {
 		refreshCategoryColors()
 		if previewVisible then self:visible(false); return end
 
-		local song, steps = GAMESTATE:GetCurrentSong(), GAMESTATE:GetCurrentSteps()
+		local song, steps = selection.song, selection.steps
 		if not (song and steps) then self:visible(false); return end
 
 		for i = 1, 6 do oldValues[i] = displayedValues[i] end
 		for i = 1, 4 do oldColor[i] = displayedColor[i] end
 
-		targetValues = calculateRadarValues(steps, song)
+		targetValues = calculateRadarValues()
 		
 		-- Find the highest radar category from the calculated target values
 		-- Apply its mapped category color to the radar fill and outline

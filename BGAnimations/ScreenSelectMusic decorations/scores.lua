@@ -721,6 +721,8 @@ t[#t + 1] = Def.ActorFrame {
 							local score = entry and entry.score
 							if score and type(score) ~= "table" and type(score.ToggleEtternaValidation) == "function" then
 								score:ToggleEtternaValidation()
+								HV.WheelData.Reset()
+								MESSAGEMAN:Broadcast("HV_WheelScoresChanged")
 								ms.ok(score:GetEtternaValid() and "Score validated" or "Score invalidated")
 								scoresActor:playcommand("RefreshScores")
 								return true

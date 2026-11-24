@@ -103,27 +103,24 @@ function HV.Judgment.RescoreHits(hits, misses, judge)
 	return counts
 end
 
-function HV.Score.GetSongBestGradeTier(song, chartGrades)
-	local best
-	for _, steps in ipairs(song:GetChartsMatchingFilter()) do
-		local chartKey = steps:GetChartKey()
-		local tier = chartGrades[chartKey]
-		if tier == nil then
-			tier = false
-			for _, rate in pairs(SCOREMAN:GetScoresByKey(chartKey) or {}) do
-				for _, score in ipairs(rate:GetScores()) do
-					local rank = tonumber(score:GetWifeGrade():match("Tier(%d+)"))
-					if rank and (not tier or rank < tier) then tier = rank end
-					if tier == 1 then break end
+function HV.Score.GetChartBestGradeTier(chartKey, chartGrades)
+	if chartGrades[chartKey] == nil then
+		local best, played = false, false
+		for _, rate in pairs(SCOREMAN:GetScoresByKey(chartKey) or {}) do
+			for _, score in ipairs(rate:GetScores()) do
+				played = true
+				if (not score.GetEtternaValid or score:GetEtternaValid()) and not IsScoreInvalid(score) then
+					local tier = tonumber(score:GetWifeGrade():match("^Grade_Tier(%d+)$"))
+					if tier and (not best or tier < best) then best = tier end
 				end
-				if tier == 1 then break end
+				if best == 1 then break end
 			end
-			chartGrades[chartKey] = tier
+			if best == 1 then break end
 		end
-		if tier and (not best or tier < best) then best = tier end
-		if best == 1 then break end
+		chartGrades[chartKey] = {tier = best, played = played}
 	end
-	return best
+	local result = chartGrades[chartKey]
+	return result.tier, result.played
 end
 
 function HV.Score.FormatEvaluationWifePercent(percent)

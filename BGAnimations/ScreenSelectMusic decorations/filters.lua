@@ -17,21 +17,37 @@ local active = false
 local hoverAlpha = 0.6
 local textzoom = 0.40
 local spacingY = 25
-local numbershers = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"}
-
--- Active numeric input state
-local ActiveSS = 0
-local activebound = 0 -- 0 = lower, 1 = upper
-local SSQuery = {}
-SSQuery[0] = {}
-SSQuery[1] = {}
-for i = 1, #ms.SkillSets + 2 do
-	SSQuery[0][i] = "0"
-	SSQuery[1][i] = "0"
-end
-local numbersafterthedecimal = 0
-
 local totalRows = #ms.SkillSets + 2
+local ActiveSS, activebound = 0, 0
+local boundText = ""
+local filterRefreshActor
+
+local function refreshWheel(defer)
+	filterRefreshActor:stoptweening()
+	if defer then
+		filterRefreshActor:sleep(0.12):queuecommand("RefreshWheel")
+	else
+		filterRefreshActor:playcommand("RefreshWheel")
+	end
+end
+
+local function formatBound(value)
+	return string.format("%.3f", value):gsub("0+$", ""):gsub("%.$", "")
+end
+
+local function beginEdit(row, bound)
+	ActiveSS, activebound = row, bound
+	boundText = formatBound(FILTERMAN:GetSSFilter(row, bound))
+	MESSAGEMAN:Broadcast("HV_NumericInputActive")
+	SCREENMAN:set_input_redirected(PLAYER_1, true)
+end
+
+local function setBoundLabel(self, row, bound)
+	local editing = ActiveSS == row and activebound == bound
+	local value = FILTERMAN:GetSSFilter(row, bound)
+	self:settext(editing and boundText or formatBound(value))
+	self:diffuse(value <= 0 and not editing and dimText or brightText)
+end
 
 local function releaseFilterInputRedirection()
 	if (HV.ActiveTab or "") ~= "" then return end
@@ -41,61 +57,47 @@ end
 
 -- Numeric input handler (runs when a filter cell is being edited)
 local function FilterInput(event)
-	if event.type ~= "InputEventType_Release" and ActiveSS > 0 and active then
-		local shouldUpdate = false
-		if event.button == "Start" or event.button == "Back" then
-			ActiveSS = 0
-			MESSAGEMAN:Broadcast("HV_NumericInputEnded")
-			releaseFilterInputRedirection()
-			return true
-		elseif event.DeviceInput.button == "DeviceButton_backspace" then
-			SSQuery[activebound][ActiveSS] = SSQuery[activebound][ActiveSS]:sub(1, -2)
-			shouldUpdate = true
-		elseif event.DeviceInput.button == "DeviceButton_delete" then
-			SSQuery[activebound][ActiveSS] = ""
-			shouldUpdate = true
-		else
-			for i = 1, #numbershers do
-				if event.DeviceInput.button == "DeviceButton_" .. numbershers[i] then
-					shouldUpdate = true
-					if SSQuery[activebound][ActiveSS] == "0" then
-						SSQuery[activebound][ActiveSS] = ""
-					end
-					SSQuery[activebound][ActiveSS] = SSQuery[activebound][ActiveSS] .. numbershers[i]
-					-- Clamp lengths: 2 digits for MSD skillsets, 3 for length, 5 for %
-					if (ActiveSS < #ms.SkillSets + 1 and #SSQuery[activebound][ActiveSS] > 2)
-						or (ActiveSS < #ms.SkillSets + 2 and #SSQuery[activebound][ActiveSS] > 3)
-						or #SSQuery[activebound][ActiveSS] > 5 then
-						SSQuery[activebound][ActiveSS] = numbershers[i]
-					end
-				end
-			end
-		end
-		if SSQuery[activebound][ActiveSS] == "" then
-			shouldUpdate = true
-			SSQuery[activebound][ActiveSS] = "0"
-		end
-		if shouldUpdate then
-			local num = 0
-			if ActiveSS == #ms.SkillSets + 2 then
-				local q = SSQuery[activebound][ActiveSS]
-				numbersafterthedecimal = 0
-				if #q > 2 then
-					numbersafterthedecimal = #q - 2
-					local n = tonumber(q) / (10 ^ (#q - 2))
-					n = notShit.round(n, numbersafterthedecimal)
-					num = n
-				else
-					num = tonumber(q)
-				end
+	if event.type == "InputEventType_Release" or ActiveSS == 0 or not active then return end
+	local button = event.DeviceInput.button or ""
+	if event.button == "Start" or event.button == "Back" or button == "DeviceButton_escape" then
+		ActiveSS = 0
+		refreshWheel(false)
+		MESSAGEMAN:Broadcast("HV_NumericInputEnded")
+		releaseFilterInputRedirection()
+		return
+	end
+
+	local text = boundText
+	if button == "DeviceButton_backspace" then
+		text = text:sub(1, -2)
+	elseif button == "DeviceButton_delete" then
+		text = ""
+	else
+		local digit = button:match("^DeviceButton_(%d)$") or button:match("^DeviceButton_kp (%d)$")
+		local decimal = ActiveSS == totalRows and (button == "DeviceButton_period" or event.char == ".")
+		if decimal and not text:find(".", 1, true) then
+			text = (text == "" and "0" or text) .. "."
+		elseif digit then
+			if text == "0" then text = "" end
+			text = text .. digit
+			if ActiveSS < totalRows then
+				local limit = ActiveSS <= #ms.SkillSets and 2 or 3
+				if #text > limit then text = digit end
 			else
-				num = tonumber(SSQuery[activebound][ActiveSS])
+				local fraction = text:match("%.(%d*)$")
+				if tonumber(text) > 100 or (fraction and #fraction > 3) then return end
 			end
-			FILTERMAN:SetSSFilter(num, ActiveSS, activebound)
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
-			MESSAGEMAN:Broadcast("HV_FilterUpdated")
+		else
+			return
 		end
 	end
+	boundText = text
+	local value = tonumber(text) or 0
+	if value ~= FILTERMAN:GetSSFilter(ActiveSS, activebound) then
+		FILTERMAN:SetSSFilter(value, ActiveSS, activebound)
+		refreshWheel(true)
+	end
+	MESSAGEMAN:Broadcast("HV_FilterUpdated")
 end
 
 -- Layout constants
@@ -108,6 +110,11 @@ local maxColX = minColX + cellW + 16
 
 -- Build the UI
 local t = Def.ActorFrame {
+	Def.Actor {
+		InitCommand = function(self) filterRefreshActor = self end,
+		RefreshWheelCommand = function() if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end end,
+		OffCommand = function(self) self:stoptweening() end,
+	},
 	Name = "FiltersOverlay",
 	InitCommand = function(self)
 		filtersActor = self
@@ -251,10 +258,7 @@ local function CreateFilterInputBox(i)
 			end,
 			MouseDownCommand = function(self, params)
 				if params.event == "DeviceButton_left mouse button" and active then
-					ActiveSS = i
-					activebound = 0
-					MESSAGEMAN:Broadcast("HV_NumericInputActive")
-					SCREENMAN:set_input_redirected(PLAYER_1, true)
+					beginEdit(i, 0)
 				end
 			end,
 			MouseOverCommand = function(self)
@@ -276,25 +280,7 @@ local function CreateFilterInputBox(i)
 			InitCommand = function(self)
 				self:halign(0.5):valign(0.5):x(minColX):y(spacingY / 2):zoom(0.38):maxwidth(cellW / 0.38 - 4)
 			end,
-			SetCommand = function(self)
-				local fval = notShit.round(FILTERMAN:GetSSFilter(i, 0), numbersafterthedecimal)
-				local fmtstr
-				if i == #ms.SkillSets + 2 then
-					if numbersafterthedecimal > 0 then
-						fmtstr = "%5." .. numbersafterthedecimal .. "f"
-					else
-						fmtstr = "%02d."
-					end
-				else
-					fmtstr = "%d"
-				end
-				self:settextf(fmtstr, fval)
-				if fval <= 0 and ActiveSS ~= i then
-					self:diffuse(dimText)
-				else
-					self:diffuse(brightText)
-				end
-			end,
+			SetCommand = function(self) setBoundLabel(self, i, 0) end,
 			HV_FilterUpdatedMessageCommand = function(self) self:playcommand("Set") end,
 			HV_NumericInputActiveMessageCommand = function(self) self:playcommand("Set") end,
 			HV_NumericInputEndedMessageCommand = function(self) self:playcommand("Set") end,
@@ -315,10 +301,7 @@ local function CreateFilterInputBox(i)
 			end,
 			MouseDownCommand = function(self, params)
 				if params.event == "DeviceButton_left mouse button" and active then
-					ActiveSS = i
-					activebound = 1
-					MESSAGEMAN:Broadcast("HV_NumericInputActive")
-					SCREENMAN:set_input_redirected(PLAYER_1, true)
+					beginEdit(i, 1)
 				end
 			end,
 			MouseOverCommand = function(self)
@@ -340,25 +323,7 @@ local function CreateFilterInputBox(i)
 			InitCommand = function(self)
 				self:halign(0.5):valign(0.5):x(maxColX):y(spacingY / 2):zoom(0.38):maxwidth(cellW / 0.38 - 4)
 			end,
-			SetCommand = function(self)
-				local fval = notShit.round(FILTERMAN:GetSSFilter(i, 1), numbersafterthedecimal)
-				local fmtstr
-				if i == #ms.SkillSets + 2 then
-					if numbersafterthedecimal > 0 then
-						fmtstr = "%5." .. numbersafterthedecimal .. "f"
-					else
-						fmtstr = "%02d."
-					end
-				else
-					fmtstr = "%d"
-				end
-				self:settextf(fmtstr, fval)
-				if fval <= 0 and ActiveSS ~= i then
-					self:diffuse(dimText)
-				else
-					self:diffuse(brightText)
-				end
-			end,
+			SetCommand = function(self) setBoundLabel(self, i, 1) end,
 			HV_FilterUpdatedMessageCommand = function(self) self:playcommand("Set") end,
 			HV_NumericInputActiveMessageCommand = function(self) self:playcommand("Set") end,
 			HV_NumericInputEndedMessageCommand = function(self) self:playcommand("Set") end,
@@ -407,11 +372,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 		if params.event == "DeviceButton_left mouse button" and active then
 			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() + 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		elseif params.event == "DeviceButton_right mouse button" and active then
 			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() - 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		end
 	end,
 }
@@ -439,11 +404,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 		if params.event == "DeviceButton_left mouse button" and active then
 			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() + 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		elseif params.event == "DeviceButton_right mouse button" and active then
 			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() - 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		end
 	end,
 }
@@ -480,7 +445,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			FILTERMAN:ToggleFilterMode()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		end
 	end,
 }
@@ -526,7 +491,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			FILTERMAN:ToggleHighestSkillsetsOnly()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		end
 	end,
 }
@@ -572,7 +537,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			FILTERMAN:ToggleHighestDifficultyOnly()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		end
 	end,
 }
@@ -614,11 +579,6 @@ t[#t + 1] = UIElements.TextButton(1, 1, "Common Normal") .. {
 		if params.update ~= "OnMouseDown" then return end
 		if params.event == "DeviceButton_left mouse button" and active then
 			FILTERMAN:ResetAllFilters()
-			for idx = 1, totalRows do
-				SSQuery[0][idx] = "0"
-				SSQuery[1][idx] = "0"
-			end
-			numbersafterthedecimal = 0
 			activebound = 0
 			ActiveSS = 0
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
@@ -626,7 +586,7 @@ t[#t + 1] = UIElements.TextButton(1, 1, "Common Normal") .. {
 			MESSAGEMAN:Broadcast("HV_NumericInputEnded")
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			releaseFilterInputRedirection()
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch() end
+			refreshWheel(false)
 		end
 	end,
 }

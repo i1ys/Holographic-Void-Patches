@@ -44,6 +44,7 @@ local inputDebugActor = nil
 local searchString = ""
 local appliedSearch = ""
 local searchHasMatches = true
+local searchRefreshActor
 
 -- Online top-score entries are not guaranteed to be native HighScore objects;
 -- some Etterna versions return plain tables.  Keep the validation indicator
@@ -104,11 +105,17 @@ local function refreshMusicSearch()
 	end
 end
 
-local function setSearchText(query, apply)
+local function setSearchText(query, apply, debounce)
 	searchString = query
 	if apply then
+		if searchRefreshActor then searchRefreshActor:stoptweening() end
 		appliedSearch = query
-		refreshMusicSearch()
+		if debounce and searchRefreshActor then
+			searchRefreshActor:sleep(0.12):queuecommand("ApplySearch")
+			apply = false
+		else
+			refreshMusicSearch()
+		end
 	end
 	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = apply})
 end
@@ -119,6 +126,7 @@ end
 HV.GetMusicSearchQuery = function() return searchString end
 HV.RefreshMusicSearch = function(onlyIfActive)
 	if onlyIfActive and appliedSearch == "" then return end
+	if searchRefreshActor then searchRefreshActor:stoptweening() end
 	refreshMusicSearch()
 	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = true})
 end
@@ -166,6 +174,19 @@ local function IsSelectMusicBackgroundClickArea()
 	return true
 end
 
+local function selectRandomSong(screen)
+	if not searchHasMatches or GAMESTATE:GetSortOrder() == "SortOrder_ModeMenu" then return end
+	local wheel = screen:GetMusicWheel()
+	if not wheel then return end
+	local songs = wheel:GetSongs()
+	while #songs > 0 do
+		local index = math.random(#songs)
+		if wheel:SelectSong(songs[index]) then return end
+		songs[index] = songs[#songs]
+		songs[#songs] = nil
+	end
+end
+
 local function ApplyNativeMusicWheelHoldTransform(p)
 	local screen = SCREENMAN:GetTopScreen()
 	local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
@@ -175,6 +196,11 @@ local function ApplyNativeMusicWheelHoldTransform(p)
 end
 
 local main_af = Def.ActorFrame {
+	Def.Actor {
+		InitCommand = function(self) searchRefreshActor = self end,
+		ApplySearchCommand = function() HV.RefreshMusicSearch() end,
+		OffCommand = function(self) self:stoptweening() end,
+	},
 	InitCommand = function(self)
 		self:SetUpdateFunction(function(af)
 			-- Hover Logic
@@ -617,20 +643,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 						local target = tabName:upper()
 						
 						if target == "RANDOM" then
-							local groups = SONGMAN:GetSongGroupNames()
-							if groups and #groups > 0 then
-								local group = groups[math.random(#groups)]
-								local songs = SONGMAN:GetSongsInGroup(group)
-								if songs and #songs > 0 then
-									local song = songs[math.random(#songs)]
-									if song then
-										local whee = screen:GetMusicWheel()
-										if whee then
-											whee:SelectSong(song)
-										end
-									end
-								end
-							end
+							selectRandomSong(screen)
 							return true
 						end
 
@@ -714,34 +727,18 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				-- --- MUSIC WHEEL SELECTION ---
 				-- If no tab is active, handle clicking on music wheel items
 				if HV.ActiveTab == "" then
-					-- MusicWheel is on the right side. 
-					-- metrics.ini: MusicWheelX=SCREEN_WIDTH-180, MusicWheelItem width=280
-					-- Hitbox: [SCREEN_WIDTH-320, SCREEN_WIDTH-40]
-					if virtualX >= SCREEN_WIDTH - 325 and virtualX <= SCREEN_WIDTH - 35 then
-						local mw = screen:GetMusicWheel()
-						if mw then
-							-- Calculate offset relative to center (SCREEN_CENTER_Y)
-							-- Spacing is 40px per item (from metrics ItemTransformFunction)
-							local offset = math.floor((virtualY - SCREEN_CENTER_Y) / 40 + 0.5)
-							
-							if offset == 0 then
-								-- Clicked the center: Start the song
-								screen:PostScreenMessage("SM_BeginStart", 0) -- Native Start() may be too aggressive
-								-- or just call Select() on the wheel
-								-- most themes use screen:SelectCurrent() or Start()
-								screen:queuecommand("Start") 
-							else
-								-- Clicked another item: Scroll to it
-								local dir = offset > 0 and 1 or -1
-								local steps_to_move = math.abs(offset)
-								
-								-- Stop any existing wheel movement first
-								mw:Move(0)
-								
-								-- Move item by item
-								for i=1, steps_to_move do
-									mw:Move(dir)
-									mw:Move(0)
+					local wheel = screen:GetMusicWheel()
+					if wheel and math.abs(virtualX - wheel:GetTrueX()) <= 140 then
+						local y = virtualY - wheel:GetTrueY()
+						local offset = math.floor(y / 40 + 0.5)
+						if math.abs(offset) <= 5 and math.abs(y - offset * 40) <= 19 then
+							if offset == 0 and (wheel:IsSettled() or wheel:IsRouletting()) then
+								if not screen:IsTransitioning() then screen:SelectCurrent() end
+							elseif wheel:IsSettled() then
+								local direction = offset > 0 and 1 or -1
+								for _ = 1, math.abs(offset) do
+									wheel:Move(direction)
+									wheel:Move(0)
 								end
 							end
 							return true
@@ -793,6 +790,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				
 				if HV.ActiveTab ~= "SEARCH" and (evType == "InputEventType_FirstPress" or evType == "InputEventType_Repeat") then
 					if btn == "DeviceButton_mousewheel up" or btn == "DeviceButton_mousewheel down" then
+						if HV.CapturesDifficultyScroll and HV.CapturesDifficultyScroll(btn) then return false end
 						local now = (GetTimeSinceStart and GetTimeSinceStart()) or os.clock()
 						if now - lastWheelMove < wheelLockTime then return true end
 						
@@ -820,13 +818,13 @@ main_af[#main_af + 1] = Def.ActorFrame {
 						if searchString == "" then
 							MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
 						else
-							setSearchText(searchString:gsub("[^\128-\191][\128-\191]*$", ""), instant)
+							setSearchText(searchString:gsub("[^\128-\191][\128-\191]*$", ""), instant, true)
 						end
 					end
 					return true
 				end
 				if button == "devicebutton_delete" then
-					if editing then setSearchText("", instant) end
+					if editing then setSearchText("", instant, true) end
 					return true
 				end
 
@@ -851,7 +849,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 					if editing and evType == "InputEventType_FirstPress" and button == "devicebutton_v"
 						and Arch and Arch.getClipboard then
 						local clip = Arch.getClipboard()
-						if clip then setSearchText(searchString .. clip:gsub("%c", " "), instant) end
+						if clip then setSearchText(searchString .. clip:gsub("%c", " "), instant, true) end
 					end
 					return true
 				end
@@ -861,7 +859,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 					local character = event.char
 					if not character or character == "" then character = DeviceBtnToChar(btn, shifted) end
 					if character and character ~= "" and not character:find("%c") then
-						setSearchText(searchString .. character, instant)
+						setSearchText(searchString .. character, instant, true)
 					end
 					return true
 				end
@@ -904,21 +902,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "GOALS"})
 						return true
 					elseif btn == "DeviceButton_7" then
-						-- Random Song action
-						local groups = SONGMAN:GetSongGroupNames()
-						if groups and #groups > 0 then
-							local group = groups[math.random(#groups)]
-							local songs = SONGMAN:GetSongsInGroup(group)
-							if songs and #songs > 0 then
-								local song = songs[math.random(#songs)]
-								if song then
-									local whee = screen:GetMusicWheel()
-									if whee then
-										whee:SelectSong(song)
-									end
-								end
-							end
-						end
+						selectRandomSong(screen)
 						return true
 					elseif btn == "DeviceButton_0" then
 						MESSAGEMAN:Broadcast("ToggleInputDebugger")
@@ -1476,6 +1460,8 @@ local profileOverlay = Def.ActorFrame {
 						local score = self.currentScore
 						if not score or type(score) == "table" then return end
 						score:ToggleEtternaValidation()
+						HV.WheelData.Reset()
+						MESSAGEMAN:Broadcast("HV_WheelScoresChanged")
 						if score:GetEtternaValid() then
 							ms.ok("Score validated")
 						else
