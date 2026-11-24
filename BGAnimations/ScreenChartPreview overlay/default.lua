@@ -34,7 +34,6 @@ local function changeMusicRate(delta)
 end
 
 -- References for sync
-local progressRef = nil
 local cdgFrameRef = nil
 local noteCanvas
 local noteSprite
@@ -47,11 +46,13 @@ local cdgInfoNPSRef  = nil
 local npsTooltipActor
 local msdTooltipActor
 local isPaused = false
+local reachedEnd = false
 local previewPosition = 0
-local chartPreviewPath
-local audioPath
+local previewAudioPath
+local previewEnd
 local requestedPosition
 local requestedAt
+local lastPositionAt
 local previousRedirection
 local returnScreen
 local readyAt = 0
@@ -71,10 +72,6 @@ end
 local function applyPreviewPosition(pos)
 	local proportion = pos / musicLength
 
-	if progressRef then
-		progressRef:stoptweening():zoomto(proportion * (SCREEN_WIDTH - 40), 2)
-	end
-
 	if cdgFrameRef then
 		local seek = cdgFrameRef:GetChild("ProgressMarker")
 		if seek then
@@ -91,39 +88,49 @@ local function validMusicPath(path)
 	return path and path ~= "" and FILEMAN:DoesFileExist(path)
 end
 
-local function playFrom(position)
-	local path = chartPreviewPath
+local function getPreviewAudioPath(song, steps)
+	local path = steps:GetPreviewMusicPath()
 	local songMusic = song:GetMusicPath()
 	if path == song:GetPreviewMusicPath() and validMusicPath(songMusic) then
-		path = songMusic
+		return songMusic
 	end
-	local limit = musicLength
-	if path == songMusic then
-		local soundLength = song:MusicLengthSeconds()
-		if soundLength > 0 then limit = math.min(limit, soundLength) end
-	end
-	local start = math.max(0, math.min(position, limit - 0.05))
-	previewPosition = start
-	audioPath = path
-	requestedPosition = start
-	requestedAt = GetTimeSinceStart()
-	-- Queue an offset in the new play request so it never refers to the old sound.
-	SOUND:PlayMusicPart(path, start, limit - start, 0, 0, true, true, false)
+	return path
 end
 
-local function playNativePreview()
-	local start = song:GetSampleStart()
-	if start < 0 or musicLength - start < 1 then
-		playFrom(0)
+local function getPreviewEnd()
+	if previewAudioPath == song:GetMusicPath() then
+		local soundLength = song:MusicLengthSeconds()
+		if soundLength > 0 then return math.min(musicLength, soundLength) end
+	end
+	return musicLength
+end
+
+local function finishPreview()
+	previewPosition = previewEnd
+	requestedPosition = nil
+	reachedEnd = true
+	SOUND:StopMusic()
+end
+
+local function playFrom(position)
+	local start = math.max(0, math.min(position, previewEnd))
+	if previewEnd - start <= 0.05 * getCurRateValue() then
+		finishPreview()
 		return
 	end
-	audioPath = chartPreviewPath
+	reachedEnd = false
+	previewPosition = start
 	requestedPosition = start
 	requestedAt = GetTimeSinceStart()
-	previewPosition = start
-	-- Force a reload if the same file is already playing as a short wheel sample.
-	SOUND:StopMusic()
-	ssm:PlayCurrentSongSampleMusic(true, true)
+	lastPositionAt = nil
+	-- Queue an offset in the new play request so it never refers to the old sound.
+	SOUND:PlayMusicPart(previewAudioPath, start, previewEnd - start, 0, 0, false, true, false)
+end
+
+local function playPreview()
+	local start = song:GetSampleStart()
+	if start < 0 or previewEnd - start < 1 then start = 0 end
+	playFrom(start)
 end
 
 -- Helper: format seconds as m:ss.x
@@ -151,8 +158,8 @@ local innerPadding = 10
 local frameWidth = SCREEN_WIDTH - (sidePanelWidth * 2) - (innerPadding * 4)
 local frameHeight = SCREEN_HEIGHT - headerHeight - footerHeight - (innerPadding * 4)
 
-local function updateNoteDisplay()
-	local drawing = not isPaused and not requestedPosition
+local function updateNoteDisplay(synchronized)
+	local drawing = synchronized ~= false and not isPaused and not reachedEnd and not requestedPosition
 	noteCanvas:visible(drawing)
 	noteSprite:visible(hasNoteFrame)
 end
@@ -216,19 +223,39 @@ local function bpmAt(position, rate)
 	return timing:GetBPMAtBeat(beat) * rate
 end
 
+local function updatePlaybackPosition()
+	if isPaused or reachedEnd or SOUND:GetMusicPath() ~= previewAudioPath then return false end
+
+	local position = ssm:GetSampleMusicPosition()
+	local now, rate = GetTimeSinceStart(), getCurRateValue()
+	if requestedPosition then
+		local expectedPosition = requestedPosition + (now - requestedAt) * rate
+		if SOUND:IsTimingDelayed() or position < requestedPosition or position > expectedPosition + 0.5 then
+			-- A very short tail can finish before the first accurate clock sample.
+			if position >= previewEnd and expectedPosition >= previewEnd + 0.5 then finishPreview() end
+			return false
+		end
+		requestedPosition = nil
+	end
+	if position < previewPosition then
+		-- Etterna can loop files with "loop" in their path even without force loop.
+		if lastPositionAt and previewPosition + (now - lastPositionAt) * rate >= previewEnd then
+			finishPreview()
+		end
+		return false
+	end
+	if position >= previewEnd then
+		finishPreview()
+		return false
+	end
+	previewPosition, lastPositionAt = position, now
+	return true
+end
+
 local function updateSync()
 	if not ownsPreview() then return end
 
-	if not isPaused and audioPath and SOUND:GetMusicPath() == audioPath then
-		local position = ssm:GetSampleMusicPosition()
-		local expected = not requestedPosition or (position >= requestedPosition
-			and position - requestedPosition <= 0.5 + (GetTimeSinceStart() - requestedAt) * getCurRateValue())
-		if expected then
-			previewPosition = math.max(0, math.min(position, musicLength))
-			requestedPosition = nil
-		end
-	end
-	updateNoteDisplay()
+	updateNoteDisplay(updatePlaybackPosition())
 	local pos = previewPosition
 	applyPreviewPosition(pos)
 
@@ -353,7 +380,7 @@ local function input(event)
 		local position = hoveredChartPosition()
 		if position then
 			if isPaused then
-				previewPosition = position
+				previewPosition = math.min(position, previewEnd)
 			else
 				playFrom(position)
 				updateNoteDisplay()
@@ -364,16 +391,18 @@ local function input(event)
 	end
 
 	if btn == "DeviceButton_right mouse button" then
-		isPaused = not isPaused
-		if isPaused then
-			if audioPath and not requestedPosition and SOUND:GetMusicPath() == audioPath then
-				previewPosition = math.max(0, math.min(ssm:GetSampleMusicPosition(), musicLength))
-			end
-			audioPath = nil
-			requestedPosition = nil
-			SOUND:StopMusic()
-		else
+		if reachedEnd then
+			playFrom(0)
+		elseif isPaused then
+			isPaused = false
 			playFrom(previewPosition)
+		else
+			updatePlaybackPosition()
+			if not reachedEnd then
+				isPaused = true
+				requestedPosition = nil
+				SOUND:StopMusic()
+			end
 		end
 		updateNoteDisplay()
 		local text = rootRef:GetChild("NoteFieldContainer"):GetChild("PausedText")
@@ -885,7 +914,6 @@ local function closePreview(self, restoreAudio)
 	local screen = ssm
 	HV.ChartPreviewActive = false
 	ssm = nil
-	audioPath = nil
 	requestedPosition = nil
 	lastDirection = nil
 	densityVectors, densityStats = nil, nil
@@ -909,14 +937,16 @@ local function reloadPreviewChart(self)
 	if selected == steps and loadedRate == rate then return end
 	if selected ~= steps then hasNoteFrame = false end
 	steps, loadedRate = selected, rate
-	local path = steps:GetPreviewMusicPath()
-	if path ~= chartPreviewPath then
+	local path = getPreviewAudioPath(song, steps)
+	if path ~= previewAudioPath then
 		if not validMusicPath(path) then
 			closePreview(self, true)
 			return
 		end
-		chartPreviewPath = path
-		if not isPaused then playNativePreview() end
+		previewAudioPath = path
+		previewEnd = getPreviewEnd()
+		if isPaused then previewPosition = math.min(previewPosition, previewEnd)
+		else playPreview() end
 	end
 	densityVectors, densityStats = nil, nil
 	local radar = steps:GetRadarValues(PLAYER_1)
@@ -969,11 +999,12 @@ local t = Def.ActorFrame {
 		local wheel = screen:GetMusicWheel()
 		if not wheel:IsSettled() or wheel:GetSelectedType() ~= "WheelItemDataType_Song" then return end
 
-		local path = selectedSteps:GetPreviewMusicPath()
+		local path = getPreviewAudioPath(selectedSong, selectedSteps)
 		local length = selectedSong:GetLastSecond()
 		if not validMusicPath(path) or length <= 0 then return end
 
-		ssm, song, musicLength, chartPreviewPath = screen, selectedSong, length, path
+		ssm, song, musicLength, previewAudioPath = screen, selectedSong, length, path
+		previewEnd = getPreviewEnd()
 		returnScreen = nil
 		loadedRate = nil
 		isPaused = false
@@ -985,7 +1016,7 @@ local t = Def.ActorFrame {
 		self:GetChild("NoteFieldContainer"):GetChild("PausedText"):diffusealpha(0)
 		self:visible(true)
 		MESSAGEMAN:Broadcast("ChartPreviewOn")
-		playNativePreview()
+		playPreview()
 		reloadPreviewChart(self)
 	end,
 	PreviewInputCommand = function(self, event)
@@ -1077,12 +1108,6 @@ local t = Def.ActorFrame {
 		
 		-- ANALYSIS (Radar) - Far Right
 		radarPanelComp() .. { InitCommand = function(self) self:x(-sidePanelWidth/2) end },
-	},
-
-	-- Bottom Global Progress (Tiny line)
-	Def.Quad {
-		Name = "GlobalProgressBar",
-		InitCommand = function(self) self:xy(SCREEN_CENTER_X, SCREEN_HEIGHT - 2):zoomto(0, 2):diffuse(accentColor):diffusealpha(0.8); progressRef = self end
 	},
 
 	-- Tooltip (drawn last for z-order)

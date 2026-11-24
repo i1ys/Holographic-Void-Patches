@@ -17,8 +17,6 @@ HV.UI = HV.UI or {}
 
 
 HV.ActiveTab = "" -- Tracks the currently open song select overlay (SCORES, FILTERS, etc.)
-HV.AlarmTimerSeconds = 0 -- Global alarm timer state (deprecated for logic, used for UI)
-HV.AlarmTimerEndTime = 0 -- Target completion time for timer
 
 -- Screen dimensions (cached for convenience)
 HV.ScreenWidth = SCREEN_WIDTH

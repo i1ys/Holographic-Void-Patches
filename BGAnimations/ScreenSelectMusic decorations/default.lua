@@ -840,7 +840,7 @@ t[#t + 1] = Def.ActorFrame {
 		Name = "NPSLabel",
 		InitCommand = function(self)
 			self:halign(0):valign(0):x(panelW * 0.65):zoom(0.35):diffuse(dimText)
-			self:settext("Avg NPS")
+			self:settext("NPS")
 		end
 	},
 	LoadFont("Common Normal") .. {

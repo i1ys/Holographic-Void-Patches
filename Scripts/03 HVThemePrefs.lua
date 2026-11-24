@@ -308,17 +308,6 @@ local HVPrefs = {
 		Values = {"Off", "Quotes", "Tips"}
 	},
 
-	-- Alarm System Preferences
-	HV_AlarmActive = {Default = false, Choices = {"Off", "On"}, Values = {false, true}},
-	HV_AlarmType = {
-		Default = "Timer",
-		Choices = {"Time", "Timer"},
-		Values = {"Time", "Timer"}
-	},
-	HV_AlarmTime = { Default = "12:00" },
-	HV_AlarmTimerDuration = { Default = 5 },
-	HV_AlarmShowInGameplay = {Default = true, Choices = {"Off", "On"}, Values = {false, true}},
-
 	-- Gameplay Customization: HUD Elements
 	HV_ShowJudgment = {
 		Default = true,
