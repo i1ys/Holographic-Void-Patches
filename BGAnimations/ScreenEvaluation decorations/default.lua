@@ -81,10 +81,25 @@ local stageOffsets = {
 	offsets = pss:GetOffsetVector(),
 	taps = pss:GetTotalTaps(),
 }
-local stageRadar = {}
-for _, kind in ipairs({"Holds", "Rolls", "Lifts", "Mines"}) do
-	local key = "RadarCategory_" .. kind
-	stageRadar[key] = pss:GetRadarActual():GetValue(key)
+local stageRadar
+local noteTypeRadars = {"RadarCategory_Holds", "RadarCategory_Rolls", "RadarCategory_Lifts", "RadarCategory_Mines"}
+if (isReplay and openingScore) or (not isReplay and HV.GameplaySessionValid == true) then
+	stageRadar = {actual = {}, possible = {}}
+	local actual, possible = pss:GetRadarActual(), pss:GetRadarPossible()
+	for _, radar in ipairs(noteTypeRadars) do
+		stageRadar.actual[radar] = actual:GetValue(radar)
+		stageRadar.possible[radar] = possible:GetValue(radar)
+	end
+	for _, radar in ipairs({"RadarCategory_Notes", "RadarCategory_TapsAndHolds"}) do
+		stageRadar.possible[radar] = possible:GetValue(radar)
+	end
+end
+
+local function openingStageRadar()
+	if not stageRadar then return end
+	if curScore == openingScore or (curScore and openingScore and curScore:GetScoreKey() == openingScore:GetScoreKey()) then
+		return stageRadar
+	end
 end
 
 local function evaluationWifeScore()
@@ -612,6 +627,31 @@ end
 
 local songTotalNotes = steps:GetRadarValues(pn):GetValue("RadarCategory_Notes")
 local songMaxPoints = songTotalNotes * 2
+
+local function failedProgressText()
+	local count = 0
+	for _, name in ipairs({"W1", "W2", "W3", "W4", "W5", "Miss"}) do
+		count = count + evaluationTapCount("TapNoteScore_" .. name)
+	end
+
+	-- Combo segments can weight the saved judgments, so they cannot give a
+	-- percentage of unweighted chart notes or rows.
+	for _, segment in ipairs(steps:GetTimingData():GetCombos(true)) do
+		if segment[2] ~= 1 or segment[3] ~= 1 then return string.format("%d weighted judgments", count) end
+	end
+
+	local rowJudgments
+	if curScore then
+		rowJudgments = curScore:GetChordCohesion()
+	else
+		rowJudgments = not GAMESTATE:CountNotesSeparately()
+	end
+	local radar = rowJudgments and "RadarCategory_TapsAndHolds" or "RadarCategory_Notes"
+	local stage = openingStageRadar()
+	local total = stage and stage.possible[radar] or steps:GetRadarValues(pn):GetValue(radar)
+	if total <= 0 or count > total then return string.format("%d tap judgments", count) end
+	return string.format("%.2f%% %s judged", 100 * count / total, rowJudgments and "rows" or "notes")
+end
 
 local function evaluationWifePoints()
 	if isOnlineEvaluation() or usingCustomWindows or isManiaModeEnabled() then return end
@@ -1797,48 +1837,20 @@ local function createScoreBoard(pn, frameW, pad)
 			}
 		},
 
-		-- Chart Progress (Percentage completion on fail)
-		Def.ActorFrame {
-			Name = "ChartProgressWrapper",
-			InitCommand = function(self) self:xy(110, 29):visible(false) end,
-			OnCommand = function(self)
-				local grade = evaluationGrade()
-				self:visible(grade == "Grade_Failed")
-				if grade == "Grade_Failed" then
-					local totalNotes = songTotalNotes or steps:GetRadarValues(pn):GetValue("RadarCategory_Notes")
-					local encounteredNotes = 0
-					for index, j in ipairs(judges) do
-						-- Ridiculous is emulated by the theme and is not a valid
-						-- TapNoteScore enum for PlayerStageStats.
-						encounteredNotes = encounteredNotes + getEvaluationJudgeCount(j, index)
-					end
-					
-					local progress = (totalNotes > 0) and (encounteredNotes / totalNotes) or 0
-					local targetProgress = progress * 100
-					local duration = 0.8
-					local curTime = 0
-
-					self:visible(true):stoptweening():diffusealpha(0):sleep(0.4):linear(0.2):diffusealpha(1)
-					
-					local label = self:GetChild("ProgressLabel")
-					self:SetUpdateFunction(function(self, delta)
-						curTime = curTime + delta
-						local animProgress = math.min(1, curTime / duration)
-						local displayPct = targetProgress * math.sin(animProgress * (math.pi / 2)) -- Ease out Sine
-						
-						label:settextf("%.2f%% completed", math.min(displayPct, 100))
-						
-						if animProgress >= 1 then
-							self:SetUpdateFunction(nil)
-						end
-					end)
-				end
+		-- Share of chart notes or rows judged on a failed play.
+		LoadFont("Common Normal") .. {
+			Name = "FailedProgress",
+			InitCommand = function(self)
+				self:xy(110, 29):halign(0):valign(0):zoom(0.4):diffuse(accentColor):visible(false)
 			end,
-
-			LoadFont("Common Normal") .. {
-				Name = "ProgressLabel",
-				InitCommand = function(self) self:halign(0):valign(0):zoom(0.4):diffuse(accentColor) end,
-			}
+			BeginCommand = function(self)
+				self:playcommand("UpdateResult"):diffusealpha(0):sleep(0.4):linear(0.2):diffusealpha(1)
+			end,
+			ScoreChangedMessageCommand = function(self) self:playcommand("UpdateResult") end,
+			UpdateResultCommand = function(self)
+				local failed = evaluationGrade() == "Grade_Failed"
+				self:visible(failed):settext(failed and failedProgressText() or "")
+			end,
 		},
 		-- DP (WifeDP)
 		Def.ActorFrame {
@@ -2239,8 +2251,15 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 			self:stoptweening():sleep(0.6):linear(0.2):diffusealpha(1)
 		end
 	}
-	local holdLabels = {"Hold OK", "Hold NG", "Mines Hit"}
-	for i, label in ipairs(holdLabels) do
+	local holdStats = {
+		{"Hold OK", function() return evaluationHoldCount("HoldNoteScore_Held") end},
+		{"Hold NG", function()
+			return evaluationHoldCount("HoldNoteScore_LetGo") + evaluationHoldCount("HoldNoteScore_MissedHold")
+		end},
+		{"Mines Hit", function() return evaluationTapCount("TapNoteScore_HitMine") end},
+	}
+	for i, stat in ipairs(holdStats) do
+		local label, getCount = stat[1], stat[2]
 		local hy = statsStartY + 28 + (i - 1) * rowH
 		board[#board + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(0):xy(col2X, hy):zoom(0.42):diffuse(subText):settext(label .. ":"):diffusealpha(0) end,
@@ -2249,13 +2268,13 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 			end
 		}
 		board[#board + 1] = LoadFont("Common Normal") .. {
+			Name = label .. "Count",
 			InitCommand = function(self) self:halign(1):xy(frameW - pad, hy):zoom(0.45):diffuse(mainText):diffusealpha(0) end,
-			OnCommand = function(self)
-				if i == 1 then self:settext(evaluationHoldCount("HoldNoteScore_Held"))
-				elseif i == 2 then self:settext(evaluationHoldCount("HoldNoteScore_LetGo") + evaluationHoldCount("HoldNoteScore_MissedHold"))
-				elseif i == 3 then self:settext(evaluationTapCount("TapNoteScore_HitMine")) end
-				self:stoptweening():sleep(0.65 + i * 0.05):linear(0.2):diffusealpha(1)
-			end
+			BeginCommand = function(self)
+				self:playcommand("UpdateResult"):sleep(0.65 + i * 0.05):linear(0.2):diffusealpha(1)
+			end,
+			ScoreChangedMessageCommand = function(self) self:playcommand("UpdateResult") end,
+			UpdateResultCommand = function(self) self:settext(getCount()) end,
 		}
 	end
 
@@ -2286,32 +2305,30 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 
 	-- Column 2: Note Types
 	local ntStartY = statsStartY + 20 + (7 * rowH)
-	local noteTypeLabels = {"Holds", "Rolls", "Lifts", "Mines"}
-	local noteTypeRadars = {"RadarCategory_Holds", "RadarCategory_Rolls", "RadarCategory_Lifts", "RadarCategory_Mines"}
+	local noteTypeLabels = {"Holds", "Rolls", "Lifts", "Mines Avoided"}
 	for ni, nlabel in ipairs(noteTypeLabels) do
+		local radar = noteTypeRadars[ni]
 		local ny = ntStartY + (ni - 1) * 16
 		board[#board + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(0):xy(col2X, ny - 7):zoom(0.4):diffuse(subText):settext(nlabel .. ":"):diffusealpha(0) end,
-			OnCommand = function(self)
+			BeginCommand = function(self)
 				self:sleep(0.8 + ni * 0.03):linear(0.15):diffusealpha(1)
 			end
 		}
 		board[#board + 1] = LoadFont("Common Normal") .. {
+			Name = nlabel .. "Radar",
 			InitCommand = function(self) self:halign(1):xy(frameW - pad, ny -7):zoom(0.43):diffuse(mainText):diffusealpha(0) end,
-			OnCommand = function(self)
-				if steps then
-					local possible = steps:GetRadarValues(pn):GetValue(noteTypeRadars[ni])
-					local radar = noteTypeRadars[ni]
-					local actual = curScore and curScore:GetRadarValues():GetValue(radar) or -1
-					if actual < 0 and curScore == openingScore then actual = stageRadar[radar] end
-					if actual >= 0 then
-						self:settextf("%d/%d", actual, possible)
-					else
-						self:settextf("-/%d", possible)
-					end
-				end
-				self:sleep(0.8 + ni * 0.03):linear(0.15):diffusealpha(1)
-			end
+			BeginCommand = function(self)
+				self:playcommand("UpdateResult"):sleep(0.8 + ni * 0.03):linear(0.15):diffusealpha(1)
+			end,
+			ScoreChangedMessageCommand = function(self) self:playcommand("UpdateResult") end,
+			UpdateResultCommand = function(self)
+				local stage = openingStageRadar()
+				local actual = curScore and curScore:GetRadarValues():GetValue(radar) or -1
+				if actual < 0 and stage then actual = stage.actual[radar] end
+				local possible = stage and stage.possible[radar] or steps:GetRadarValues(pn):GetValue(radar)
+				self:settextf("%s/%s", actual >= 0 and actual or "-", possible >= math.max(0, actual) and possible or "-")
+			end,
 		}
 	end
 end
