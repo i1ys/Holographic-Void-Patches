@@ -29,7 +29,7 @@ end
 local function updateCount(self, summary)
 	local row = self:GetParent()
 	local count = row:GetChild("SectionCount")
-	if PREFSMAN:GetPreference("PackProgressInWheel") then
+	if summary.showPlayed then
 		count:settextf("%d/%d", summary.played, summary.count)
 	else
 		count:settext(tostring(summary.count))
@@ -43,14 +43,19 @@ local function refreshSection(self, cachedOnly)
 	local wheel = self:GetParent():GetParent()
 	local style = GAMESTATE:GetCurrentStyle()
 	local summary = HV.WheelData.GetSection(wheel, section, style and style:GetStepsType(), cachedOnly)
+	local bar = self:GetChild("ProgressionBar")
 	if not summary then
-		self:GetChild("ProgressionBar"):visible(false)
-		HV.WheelData.QueueRow(wheel, self, "UpdateSection", self.focused)
+		if self.summary then
+			self.summary = nil
+			for tier = 1, 17 do bar:GetChild("Bar_" .. tier):zoomto(0, barH) end
+			bar:GetChild("BarBG"):x(-barW/2):zoomto(barW, barH)
+		end
+		bar:visible(true)
+		HV.WheelData.QueueRow(wheel, self, "UpdateSection", self.focused, section)
 		return
 	end
 	HV.WheelData.CancelRow(self)
 	updateCount(self, summary)
-	local bar = self:GetChild("ProgressionBar")
 	bar:visible(true)
 	if self.summary == summary then return end
 	self.summary = summary
@@ -69,7 +74,8 @@ local t = Def.ActorFrame {
 		local active = params and params.Type and self:GetName() == params.Type .. "NormalPart"
 		local section = active and params.Text
 		if not section or section == "" then
-			self.section, self.summary = nil, nil
+			self.section = nil
+			self:GetChild("ProgressionBar"):visible(false)
 			HV.WheelData.CancelRow(self)
 			return
 		end
@@ -111,14 +117,14 @@ for tier = 1, 17 do
 	bar[#bar + 1] = Def.Quad {
 		Name = "Bar_" .. tier,
 		InitCommand = function(self)
-			self:halign(0):valign(1):diffuse(HVColor.GetGradeColor(string.format("Grade_Tier%02d", tier)))
+			self:halign(0):valign(1):zoomto(0, barH):diffuse(HVColor.GetGradeColor(string.format("Grade_Tier%02d", tier)))
 		end,
 	}
 end
 bar[#bar + 1] = Def.Quad {
 	Name = "BarBG",
 	InitCommand = function(self)
-		self:halign(0):valign(1):diffuse(color("0.3,0.3,0.3,1")):diffusealpha(0.4)
+		self:halign(0):valign(1):x(-barW/2):zoomto(barW, barH):diffuse(color("0.3,0.3,0.3,1")):diffusealpha(0.4)
 	end,
 }
 t[#t + 1] = bar

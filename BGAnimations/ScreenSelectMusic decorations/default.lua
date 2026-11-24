@@ -103,11 +103,7 @@ selection = {
 	song = nil,
 	steps = nil,
 	group = nil,
-	avgMSD = 0,
-	packMSDDistribution = {}, -- Histogram of every chart's overall MSD in the selected pack
-	packChartCount = 0,
-	songCount = 0,
-	progress = 0,
+	packSummary = nil,
 	rate = 1.0,
 	displayCharts = {},    -- List of {steps=steps, difficulty=string, isPlaceholder=bool}
 	hasSingle = false,
@@ -231,6 +227,15 @@ local function getNativeWheel()
 	return screen and screen.GetMusicWheel and screen:GetMusicWheel()
 end
 
+local chartListSong, chartListType
+
+local function getPackSummary(wheel, cachedOnly)
+	local group = selection.group
+	if not wheel or not group or group == "" then return end
+	local style = GAMESTATE:GetCurrentStyle()
+	return HV.WheelData.GetSection(wheel, group, style and style:GetStepsType(), cachedOnly)
+end
+
 -- Etterna suspends wheel positioning while any descendant has a queued tween.
 t[#t + 1] = Def.ActorFrame {
 	Name = "WheelRowUpdates",
@@ -239,7 +244,13 @@ t[#t + 1] = Def.ActorFrame {
 		local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
 		if wheel then
 			self:SetUpdateFunction(function()
-				if SCREENMAN:GetTopScreen() == screen then HV.WheelData.RefreshNextRow(wheel) end
+				if SCREENMAN:GetTopScreen() ~= screen then return end
+				local updated = HV.WheelData.RefreshNextRow(wheel)
+				local data = selection
+				if data.group and data.group ~= "" and data.renderedGroup == data.group and not data.packSummary then
+					data.packSummary = getPackSummary(wheel, updated or not wheel:IsSettled())
+					if data.packSummary then MESSAGEMAN:Broadcast("PackDetailsUpdate") end
+				end
 			end)
 		end
 	end,
@@ -262,24 +273,26 @@ t[#t + 1] = Def.Actor {
 		data.steps = song and GAMESTATE:GetCurrentSteps() or nil
 		data.rate = getCurRateValue() or 1
 		local wheel = getNativeWheel()
-		data.group = nil
+		local group
 		if not song and wheel and wheel:GetSelectedType() == "WheelItemDataType_Section" then
-			data.group = wheel:GetSelectedSection()
+			group = wheel:GetSelectedSection()
 		end
+		if data.group ~= group then data.packSummary = nil end
+		data.group = group
 		data.renderedSong = nil
 		data.detailsReady = false
-		data.hasSingle, data.hasDouble = false, false
 		data.pbScore, data.pbSSR, data.skillsetMSDs = nil, 0, {}
-		data.songCount, data.progress, data.avgMSD = 0, 0, 0
-		data.packMSDDistribution, data.packChartCount = {}, nil
 
 		data.length, data.nps = nil, nil
 	end,
 
-	UpdateHeavyDataCommand = function()
+	UpdateChartListCommand = function()
 		local data = selection
 		local style = GAMESTATE:GetCurrentStyle()
 		local stepsType = style and style:GetStepsType()
+		data.renderedSong, data.renderedRate = data.song, data.rate
+		if chartListSong == data.song and chartListType == stepsType and #data.displayCharts > 0 then return end
+		chartListSong, chartListType = data.song, stepsType
 		data.hasSingle = data.song ~= nil and data.song:HasStepsType("StepsType_Dance_Single")
 		data.hasDouble = data.song ~= nil and data.song:HasStepsType("StepsType_Dance_Double")
 
@@ -309,25 +322,22 @@ t[#t + 1] = Def.Actor {
 		end
 		data.displayCharts = charts
 		data.chartOffset = math.min(data.chartOffset, math.max(0, #charts - maxVisibleCharts))
-		data.renderedSong = data.song
-		data.renderedRate = data.rate
+	end,
 
+	UpdateHeavyDataCommand = function()
+		local data = selection
 		if data.steps then
 			for i = 1, 8 do data.skillsetMSDs[i] = data.steps:GetMSD(data.rate, i) end
 			data.pbScore = GetDisplayScore()
 			data.pbSSR = data.pbScore and data.pbScore:GetSkillsetSSR("Overall") or 0
-		elseif data.group and data.group ~= "" then
-			local wheel = getNativeWheel()
-			if not wheel then return end
-			local summary = HV.WheelData.GetSection(wheel, data.group, stepsType)
-			data.songCount, data.progress, data.avgMSD = summary.count, summary.progress * 100, summary.avgMSD
-			data.packMSDDistribution, data.packChartCount = summary.bins, summary.charts
 		end
 		data.detailsReady = true
 	end,
 
 	FilterResultsMessageCommand = function(self)
 		HV.WheelData.ClearSections()
+		chartListSong, chartListType = nil, nil
+		selection.packSummary, selection.renderedGroup = nil, nil
 		self:stoptweening():sleep(0.05):queuecommand("RefreshSelection")
 	end,
 	RefreshSelectionCommand = function(self)
@@ -335,12 +345,17 @@ t[#t + 1] = Def.Actor {
 		self:playcommand("TriggerInstantUpdate")
 		self:playcommand("TriggerDelayedUpdate")
 	end,
-	HV_WheelScoresChangedMessageCommand = function(self) self:playcommand("RefreshSelection") end,
+	HV_WheelScoresChangedMessageCommand = function(self)
+		selection.packSummary, selection.renderedGroup = nil, nil
+		self:playcommand("RefreshSelection")
+	end,
 	ReloadedCurrentSongMessageCommand = function(self) self:playcommand("ResetWheelData") end,
 	ReloadedCurrentPackMessageCommand = function(self) self:playcommand("ResetWheelData") end,
 	DFRFinishedMessageCommand = function(self) self:playcommand("ResetWheelData") end,
 	ResetWheelDataCommand = function(self)
 		HV.WheelData.Reset()
+		chartListSong, chartListType = nil, nil
+		selection.packSummary, selection.renderedGroup = nil, nil
 		selection.renderedSong = nil
 		self:stoptweening():sleep(0.05):queuecommand("RefreshReloadedWheel")
 	end,
@@ -371,6 +386,9 @@ t[#t + 1] = Def.Actor {
 		self:sleep(0.15):queuecommand("TriggerDelayedUpdate")
 	end,
 	TriggerInstantUpdateCommand = function(self)
+		self:playcommand("UpdateChartList")
+		selection.renderedGroup = selection.group
+		selection.packSummary = getPackSummary(getNativeWheel(), true)
 		local steps = selection.steps
 		if steps then
 			selection.length = steps:GetLengthSeconds()
@@ -378,6 +396,7 @@ t[#t + 1] = Def.Actor {
 			if notes >= 0 then selection.nps = notes / math.max(1, selection.length) end
 		end
 		MESSAGEMAN:Broadcast("InstantChartUpdate")
+		MESSAGEMAN:Broadcast("ChartListUpdate")
 	end,
 	TriggerDelayedUpdateCommand = function(self)
 		local wheel = getNativeWheel()
@@ -556,16 +575,16 @@ t[#t + 1] = Def.ActorFrame {
 				:diffuse(subText)
 		end,
 		SetCommand = function(self)
-			local data = selection
-			if not data.song and data.group and data.group ~= "" and data.packChartCount ~= nil then
-				self:settextf("%d Songs\nProgress: %.1f%%", data.songCount, data.progress)
+			local summary = selection.packSummary
+			if summary then
+				self:settextf("%d Songs\nProgress: %.1f%%", summary.count, summary.progress * 100)
 				self:visible(true)
 			else
 				self:visible(false)
 			end
 		end,
 		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end
+		PackDetailsUpdateMessageCommand = function(self) self:playcommand("Set") end
 	},
 
 	-- Artist
@@ -901,8 +920,8 @@ t[#t + 1] = Def.ActorFrame {
 			local data = selection
 			local msd = data.skillsetMSDs[1] -- Overall
 			
-			if not data.song and data.avgMSD > 0 then
-				msd = data.avgMSD
+			if data.packSummary then
+				msd = data.packSummary.avgMSD
 			end
 			
 			if msd and msd > 0 then
@@ -915,6 +934,7 @@ t[#t + 1] = Def.ActorFrame {
 		end,
 		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		PackDetailsUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
 	-- Top 3 Skillsets Displays
@@ -1127,8 +1147,7 @@ t[#t + 1] = Def.ActorFrame {
 			local data = selection
 			self:visible(styleModeSupportsSingleDoubleToggle() and data.hasSingle and data.hasDouble)
 		end,
-		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		ChartListUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		
 		LoadFont("Common Normal") .. {
 			Name = "Single",
@@ -1140,7 +1159,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:diffuse(isS and accentColor or dimText)
 				self:diffusealpha(data.hasSingle and 1 or 0.2)
 			end,
-			DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+			ChartListUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		},
 		LoadFont("Common Normal") .. {
 			Name = "Double",
@@ -1152,7 +1171,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:diffuse(isD and accentColor or dimText)
 				self:diffusealpha(data.hasDouble and 1 or 0.2)
 			end,
-			DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+			ChartListUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		}
 	}
 }
@@ -1162,12 +1181,9 @@ for i = 1, maxVisibleCharts do
 	t[#t + 1] = Def.ActorFrame {
 		Name = "DiffSlot_" .. i,
 		InitCommand = function(self)
-			self:xy(diffSelectorX, diffRowTop(i))
+			self:xy(diffSelectorX, diffRowTop(i)):visible(false)
 		end,
-		InstantChartUpdateMessageCommand = function(self)
-			self:visible(selection.detailsReady == true)
-		end,
-		DelayedChartUpdateMessageCommand = function(self) self:visible(true) end,
+		ChartListUpdateMessageCommand = function(self) self:visible(true) end,
 
 		Def.Quad {
 			Name = "Bg",
@@ -1199,7 +1215,7 @@ for i = 1, maxVisibleCharts do
 					end
 				end
 			end,
-			DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+			ChartListUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		},
 
 		LoadFont("Common Normal") .. {
@@ -1215,7 +1231,7 @@ for i = 1, maxVisibleCharts do
 				self:settext(entry and (diffShort[entry.difficulty] or "??") or "")
 				self:diffusealpha(entry and entry.isPlaceholder and 0.2 or 1)
 			end,
-			DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+			ChartListUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		},
 
 		LoadFont("Common Normal") .. {
@@ -1234,7 +1250,7 @@ for i = 1, maxVisibleCharts do
 				end
 				self:settext(entry.author)
 			end,
-			DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+			ChartListUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		},
 
 		LoadFont("Common Normal") .. {
@@ -1267,7 +1283,7 @@ for i = 1, maxVisibleCharts do
 					self:diffuse(mainText)
 				end
 			end,
-			DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+			ChartListUpdateMessageCommand = function(self) self:playcommand("Set") end,
 		}
 	}
 end
@@ -1331,7 +1347,7 @@ t[#t + 1] = Def.ActorFrame {
 
 			if canScrollDifficultySelector(btn) then
 				data.chartOffset = data.chartOffset + (btn == "DeviceButton_mousewheel down" and 1 or -1)
-				MESSAGEMAN:Broadcast("DelayedChartUpdate")
+				MESSAGEMAN:Broadcast("ChartListUpdate")
 				return true
 			end
 
@@ -1603,25 +1619,24 @@ t[#t + 1] = Def.ActorFrame {
 	Def.ActorFrame {
 		Name = "PackMSDGraph",
 		InitCommand = function(self) self:xy(-5, -4):visible(false) end,
-		InstantChartUpdateMessageCommand = function(self)
-			if selection.packChartCount == nil then self:visible(false) end
-		end,
-		DelayedChartUpdateMessageCommand = function(self)
-			if not self then return end
+		InstantChartUpdateMessageCommand = function(self) self:playcommand("SetPackGraph") end,
+		PackDetailsUpdateMessageCommand = function(self) self:playcommand("SetPackGraph") end,
+		SetPackGraphCommand = function(self)
 			local data = selection
-			local show = data.group and data.group ~= "" and not data.song and data.packChartCount ~= nil
-			self:visible(not not show)
-			if not show then return end
-			local bins = data.packMSDDistribution or {}
+			local show = data.group ~= nil and data.group ~= ""
+			self:visible(show)
+			if not show or self.summary == data.packSummary then return end
+			self.summary = data.packSummary
+			local summary = data.packSummary
+			local bins = summary and summary.bins or {}
 			local maxCount = 1
 			for i = 1, 40 do maxCount = math.max(maxCount, bins[i] or 0) end
-			self:GetChild("Title"):settext(string.format("PACK MSD DISTRIBUTION ACROSS %d CHARTS", data.packChartCount or 0))
+			self:GetChild("Title"):settext(summary and string.format("PACK MSD DISTRIBUTION ACROSS %d CHARTS", summary.charts) or "")
 			local bars = self:GetChild("Bars")
 			for i = 1, 40 do
 				local bar, count = bars:GetChild("Bar_" .. i), bins[i] or 0
 				bar:GetChild("Fill"):zoomy(48 * count / maxCount)
 				bar:GetChild("Value"):settext(count > 0 and tostring(count) or "")
-				bar:GetChild("Label"):settext(i == 1 and "0" or (i % 5 == 0 and tostring(i) or ""))
 			end
 		end,
 		LoadFont("Common Normal") .. { Name = "Title", InitCommand = function(self) self:halign(0):valign(0):xy(5, 6):zoom(0.40):diffuse(accentColor) end },
@@ -1633,7 +1648,7 @@ t[#t + 1] = Def.ActorFrame {
 					Name = "Bar_" .. i, InitCommand = function(self) self:x((i - 1) * (barW + gap)) end,
 					Def.Quad { Name = "Fill", InitCommand = function(self) self:halign(0):valign(1):xy(0, baseY):zoomto(barW, 0):diffuse(HVColor.GetMSDRatingColor(math.max(1, i + 0.5))) end },
 					LoadFont("Common Normal") .. { Name = "Value", InitCommand = function(self) self:halign(0.5):valign(1):xy(barW / 2, baseY - 62):zoom(0.28):diffuse(mainText) end },
-					LoadFont("Common Normal") .. { Name = "Label", InitCommand = function(self) self:halign(0.5):valign(0):xy(barW / 2, baseY + 4):zoom(0.28):diffuse(subText) end }
+					LoadFont("Common Normal") .. { Name = "Label", InitCommand = function(self) self:halign(0.5):valign(0):xy(barW / 2, baseY + 4):zoom(0.28):diffuse(subText):settext(i == 1 and "0" or (i % 5 == 0 and tostring(i) or "")) end }
 				}
 			end
 			return graph
@@ -1813,7 +1828,7 @@ t[#t + 1] = Def.ActorFrame {
 	LoadFont("Common Large") .. {
 		Name = "Rating",
 		InitCommand = function(self)
-			self:halign(0):valign(1):x(56):y(38):zoom(0.35)
+			self:halign(0):valign(1):x(56):y(30):zoom(0.35)
 			self.transitionDuration = 0.25
 		end,
 		FadeOutCommand = function(self)

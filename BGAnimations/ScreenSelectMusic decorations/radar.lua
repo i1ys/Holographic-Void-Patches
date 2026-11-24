@@ -53,6 +53,7 @@ local oldColor       = {1,1,1,1}
 local targetColor    = {1,1,1,1}
 
 local currentStep, previewVisible, hoverActive = 0, false, false
+local preparedMSDs
 local tooltipActors, hellBreakdownActors = {}, {}
 local hellBaseX, hellBaseY = 0, 0
 
@@ -149,7 +150,7 @@ local displayFn = {
 -- tooltip hover
 
 local function showTooltips()
-	if not HV.ShowMSD() then return end
+	if not HV.ShowMSD() or not selection.detailsReady or preparedMSDs ~= selection.skillsetMSDs then return end
 	hoverActive = true
 	for i = 1, 6 do
 		if tooltipActors[i] then
@@ -320,17 +321,24 @@ local t = Def.ActorFrame {
 	Name = "ChartRadar",
 	InitCommand = function(self) self:xy(0,0):visible(false) end,
 	BeginCommand = function(self) self:queuecommand("Set") end,
+	SetGraphVisibilityCommand = function(self)
+		local show = not previewVisible and selection.song ~= nil and selection.steps ~= nil
+		local ready = show and selection.detailsReady == true and preparedMSDs == selection.skillsetMSDs
+		self:visible(show)
+		self:GetChild("RadarFill"):visible(ready)
+		self:GetChild("RadarOutline"):visible(ready)
+		if not ready then hideTooltips() end
+	end,
 	SetCommand = function(self)
 		refreshCategoryColors()
-		if previewVisible then self:visible(false); return end
-
-		local song, steps = selection.song, selection.steps
-		if not (song and steps) then self:visible(false); return end
+		self:playcommand("SetGraphVisibility")
+		if previewVisible or not selection.song or not selection.steps or not selection.detailsReady then return end
 
 		for i = 1, 6 do oldValues[i] = displayedValues[i] end
 		for i = 1, 4 do oldColor[i] = displayedColor[i] end
 
 		targetValues = calculateRadarValues()
+		preparedMSDs = selection.skillsetMSDs
 		
 		-- Find the highest radar category from the calculated target values
 		-- Apply its mapped category color to the radar fill and outline
@@ -348,7 +356,7 @@ local t = Def.ActorFrame {
 		for i = 1, 4 do targetColor[i] = nc[i] end
 		if not hoverActive then hideTooltips() end
 		currentStep = 0
-		self:visible(true):stoptweening():queuecommand("AnimateStep")
+		self:stoptweening():queuecommand("AnimateStep")
 	end,
 	AnimateStepCommand = function(self)
 		currentStep = currentStep + 1
@@ -356,19 +364,20 @@ local t = Def.ActorFrame {
 		for i = 1, 6 do displayedValues[i] = oldValues[i] + (targetValues[i]-oldValues[i])*p end
 		for i = 1, 4 do displayedColor[i] = oldColor[i] + (targetColor[i]-oldColor[i])*p end
 		self:queuecommand("UpdateRadar")
+		if currentStep == 1 then self:playcommand("SetGraphVisibility") end
 		if hoverActive then showTooltips() end
 		if currentStep < TWEEN_STEPS then self:sleep(STEP_TIME):queuecommand("AnimateStep") end
 	end,
 	InstantChartUpdateMessageCommand = function(self)
 		if not selection.detailsReady then
-			self:stoptweening():visible(false)
-			hideTooltips()
+			self:stoptweening()
 		end
+		self:playcommand("SetGraphVisibility")
 	end,
 	DelayedChartUpdateMessageCommand = function(self) self:stoptweening():queuecommand("Set") end,
 	TabChangedMessageCommand          = function(self) self:stoptweening():queuecommand("Set") end,
-	NoteFieldVisibleMessageCommand    = function(self) previewVisible = true;  self:visible(false) end,
-	ChartPreviewOnMessageCommand      = function(self) previewVisible = true;  self:visible(false) end,
+	NoteFieldVisibleMessageCommand    = function(self) previewVisible = true; self:playcommand("SetGraphVisibility") end,
+	ChartPreviewOnMessageCommand      = function(self) previewVisible = true; self:playcommand("SetGraphVisibility") end,
 	ChartPreviewOffMessageCommand     = function(self) previewVisible = false; self:stoptweening():queuecommand("Set") end,
 }
 
@@ -385,8 +394,8 @@ t[#t+1] = UIElements.QuadButton(1, 1) .. {
 for i = 1, 6 do
 	local ni = i%6 + 1
 	t[#t+1] = Def.ActorMultiVertex {
-		InitCommand = function(self) self:xy(RADAR_X, RADAR_Y) end,
-		SetCommand = function(self)
+		InitCommand = function(self)
+			self:xy(RADAR_X, RADAR_Y)
 			local x1, y1 = getHexPoint(i,  RADAR_RADIUS, 0, 0)
 			local x2, y2 = getHexPoint(ni, RADAR_RADIUS, 0, 0)
 			self:SetDrawState{Mode="DrawMode_Triangles"}
@@ -398,8 +407,8 @@ for i = 1, 6 do
 		end,
 	}
 	t[#t+1] = Def.ActorMultiVertex {
-		InitCommand = function(self) self:xy(RADAR_X, RADAR_Y) end,
-		SetCommand = function(self)
+		InitCommand = function(self)
+			self:xy(RADAR_X, RADAR_Y)
 			local x, y = getHexPoint(i, RADAR_RADIUS, 0, 0)
 			self:SetDrawState{Mode="DrawMode_LineStrip"}
 			self:SetVertices({{{0,0,0}, color("0.12,0.12,0.12,1")}, {{x,y,0}, color("0.12,0.12,0.12,1")}})
@@ -409,8 +418,8 @@ end
 
 -- hex border
 t[#t+1] = Def.ActorMultiVertex {
-	InitCommand = function(self) self:xy(RADAR_X, RADAR_Y) end,
-	SetCommand = function(self)
+	InitCommand = function(self)
+		self:xy(RADAR_X, RADAR_Y)
 		local verts = {}
 		for i = 1, 7 do
 			local x, y = getHexPoint((i-1)%6+1, RADAR_RADIUS, 0, 0)

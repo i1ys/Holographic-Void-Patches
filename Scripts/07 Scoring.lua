@@ -103,11 +103,13 @@ function HV.Judgment.RescoreHits(hits, misses, judge)
 	return counts
 end
 
-function HV.Score.GetChartBestGradeTier(chartKey, chartGrades)
+function HV.Score.GetChartBestGradeTier(chartKey, chartGrades, checkpoint)
 	if chartGrades[chartKey] == nil then
 		local best, played = false, false
 		for _, rate in pairs(SCOREMAN:GetScoresByKey(chartKey) or {}) do
+			if checkpoint then checkpoint() end
 			for _, score in ipairs(rate:GetScores()) do
+				if checkpoint then checkpoint() end
 				played = true
 				local tier = tonumber(score:GetWifeGrade():match("^Grade_Tier(%d+)$"))
 				if tier and (not best or tier < best) and (not score.GetEtternaValid or score:GetEtternaValid())
