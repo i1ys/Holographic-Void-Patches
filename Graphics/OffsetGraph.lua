@@ -1135,11 +1135,19 @@ t[#t+1] = Def.ActorMultiVertex{
 			for i, event in ipairs(plotEvents) do
 				if not plotEvents[i + 1] or plotEvents[i + 1].time ~= event.time then
 					local stats = rangeStats(1, i)
-					local grade = stats.wife and getWifeGradeTier(stats.wife)
-					local clear = not setMania and getClearTypeFromCounts(stats.judgments)
+					local grade = (metric == "grade" or colorMode == "grade") and stats.wife
+						and GetGradeFromPercent(stats.wife / 100)
+					local clear = (metric == "clear" or colorMode == "clear") and not setMania
+						and getClearTypeFromCounts(stats.judgments)
 					local value = metricValue(metric, stats, grade, clear)
 					if finite(value) then
-						points[#points + 1] = {x = xForTime(event.time), value = value, grade = grade, clear = clear}
+						local tint = accentColor
+						if colorMode == "grade" and grade then
+							tint = HVColor.GetGradeColor(grade)
+						elseif colorMode == "clear" and clear then
+							tint = getClearTypeColor(clear) or accentColor
+						end
+						points[#points + 1] = {x = xForTime(event.time), value = value, color = {tint[1], tint[2], tint[3], 0.92}}
 						lo, hi = math.min(lo, value), math.max(hi, value)
 					end
 				end
@@ -1165,12 +1173,9 @@ t[#t+1] = Def.ActorMultiVertex{
 		end
 		for i = 2, #points do
 			local from, to = points[i - 1], points[i]
-			local tint = accentColor
-			if colorMode == "grade" and to.grade then tint = HVColor.GetGradeColor(to.grade) end
-			if colorMode == "clear" and to.clear then tint = getClearTypeColor(to.clear) or accentColor end
-			local color = {tint[1], tint[2], tint[3], 0.92}
-			segment(from.x, y(from.value), to.x, y(from.value), color)
-			segment(to.x, y(from.value), to.x, y(to.value), color)
+			local fromY, toY = y(from.value), y(to.value)
+			segment(from.x, fromY, to.x, fromY, from.color)
+			segment(to.x, fromY, to.x, toY, to.color)
 		end
 
 		self:SetVertices(verts)
