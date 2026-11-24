@@ -58,7 +58,6 @@ local defaultCustomColors = {
 		BF      = "#B898CF",
 		SDG     = "#A0CFAB",
 		FC      = "#A0CFAB",
-		NGFC    = "#80C0CF",
 		MF      = "#CF9898",
 		SDCB    = "#80C0CF",
 		Clear   = "#5ABAFF",
@@ -323,7 +322,7 @@ function HVCustomColors.GetElements(category)
 		judgment = { "W1", "W2", "W3", "W4", "W5", "Miss", "Held", "LetGo" },
 		difficulty = { "Beginner", "Easy", "Medium", "Hard", "Challenge", "Edit" },
 		clearType = {
-			"MFC", "WF", "SDP", "PFC", "BF", "SDG", "FC", "NGFC", "MF", "SDCB",
+			"MFC", "WF", "SDP", "PFC", "BF", "SDG", "FC", "MF", "SDCB",
 			"Clear", "Failed", "NoPlay", "Invalid", "None",
 		},
 	}

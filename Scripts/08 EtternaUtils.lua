@@ -279,7 +279,7 @@ end
 local clearTypeNames = {
 	[4]="ClearType_MFC", [5]="ClearType_WF", [6]="ClearType_SDP",
 	[7]="ClearType_PFC", [8]="ClearType_BF", [9]="ClearType_SDG",
-	[10]="ClearType_FC", [11]="ClearType_NGFC", [12]="ClearType_MF", [13]="ClearType_SDCB",
+	[10]="ClearType_FC", [12]="ClearType_MF", [13]="ClearType_SDCB",
 	[14]="ClearType_EXHC", [15]="ClearType_HClear", [16]="ClearType_Clear",
 	[17]="ClearType_EClear", [18]="ClearType_AClear", [19]="ClearType_Failed",
 	[20]="ClearType_Invalid", [21]="ClearType_Noplay", [22]="ClearType_None",
@@ -480,19 +480,12 @@ function getDetailedClearType(score, counts, expectedTaps)
 		return "Invalid"
 	end
 
-	local getHoldScore = score.GetHoldNoteScore or score.GetHoldNoteScores
-	local getTapScore = score.GetTapNoteScore or score.GetTapNoteScores
-	local droppedHolds = (getHoldScore(score, "HoldNoteScore_LetGo") or 0)
-		+ (getHoldScore(score, "HoldNoteScore_MissedHold") or 0)
-	local hitMines = getTapScore(score, "TapNoteScore_HitMine") or 0
 	if tapBreaks > 0 then
-		local breaks = tapBreaks + droppedHolds
-		if breaks == 1 then return "MF" end
-		if breaks < 10 then return "SDCB" end
+		if tapBreaks == 1 then return "MF" end
+		if tapBreaks < 10 then return "SDCB" end
 		return "Clear"
 	end
 
-	if droppedHolds > 0 or hitMines > 0 then return "NGFC" end
 	if counts.W3 == 1 then return "BF" end
 	if counts.W3 > 0 then return counts.W3 < 10 and "SDG" or "FC" end
 	if counts.W2 == 1 then return "WF" end

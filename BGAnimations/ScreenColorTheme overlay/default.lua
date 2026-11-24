@@ -788,15 +788,15 @@ t[#t+1] = Def.ActorFrame {
 	Def.ActorFrame {
 		InitCommand = function(self) self:xy(-chunkW/2 + 38, 9) end,
 		(function()
-			local cts = {"MFC", "WF", "SDP", "PFC", "BF", "SDG", "FC", "NGFC", "MF", "SDCB", "Clear", "Failed", "NoPlay"}
-			local labels = {"MFC", "WF", "SDP", "PFC", "BF", "SDG", "FC", "NGFC", "MF", "SDCB", "CLR", "FAIL", "NOP"}
+			local cts = {"MFC", "WF", "SDP", "PFC", "BF", "SDG", "FC", "MF", "SDCB", "Clear", "Failed", "NoPlay"}
+			local labels = {Clear = "CLR", Failed = "FAIL", NoPlay = "NOP"}
 			local am = Def.ActorFrame {}
 			for i, ct in ipairs(cts) do
 				am[#am+1] = LoadFont("Common Normal") .. {
 					InitCommand = function(self) self:x((i-1)*18):zoom(0.18):halign(0) end,
 					BeginCommand = function(self) self:playcommand("Set") end,
 					CTStyleChangedMessageCommand = function(self) self:playcommand("Set") end,
-					SetCommand = function(self) self:settext(labels[i]):diffuse(HVColor.GetClearTypeColor(ct)) end
+					SetCommand = function(self) self:settext(labels[ct] or ct):diffuse(HVColor.GetClearTypeColor(ct)) end
 				}
 			end
 			return am
