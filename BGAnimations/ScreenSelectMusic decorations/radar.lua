@@ -63,6 +63,14 @@ local function clamp(x, lo, hi) return math.max(lo, math.min(hi, x)) end
 local function smoothstep(t) return t*t*(3-2*t) end
 local function valueToPts(v) return v * POINTS_SCALE end
 
+local function maximum(values)
+	local largest = 0
+	for _, value in ipairs(values or {}) do
+		largest = math.max(largest, value)
+	end
+	return largest
+end
+
 local function getHexPoint(i, r, cx, cy)
 	local a = math.rad(-90 + (i-1)*60)
 	return cx + r*math.cos(a), cy + r*math.sin(a)
@@ -222,23 +230,20 @@ local function calculateRadarValues()
 
 	-- CHAOS
 	local chaos = 0
-	if noteCount >= 50 and gv and gv[1] and #gv[1] > 0 then
-		local maxNps, avgNps = math.max(unpack(gv[1])), wifeMean(gv[1])
-		if avgNps > 0 then
-			local maxssr   = math.max(unpack(steps:GetSSRs(rate, 1))) or 0
-			local otherssr = math.max(unpack(steps:GetSSRs(rate, 0.93))) or 0
-			local ssrRatio = otherssr > 0 and maxssr/otherssr or 1
-			local spikeSSR = clamp(math.pow(ssrRatio - 0.07, 8), 0.75, 1.4)
-			local techF = math.pow(technical*1.05/overall, 2)
-			local jackF = chordjack > 0 and math.min(math.pow(jackspeed*1.1/chordjack, 2), 1.25) or 1
-			local cjF   = chordjack > 0 and math.min(math.pow(jackspeed*1.1/chordjack, 2), 1.5) or 1
-			local stamF = stamina > 0 and math.pow(overall/stamina, 0.6) or 1
-			chaos = math.max(0,
-				math.max(msdscale(technical), msdscale(jackspeed))
-				* spikeSSR
-				* math.max(techF, jackF)
-				* math.min(1, stamF, cjF))
-		end
+	if noteCount >= 50 and gv and maximum(gv[1]) > 0 then
+		local maxssr = maximum(steps:GetSSRs(rate, 1))
+		local otherssr = maximum(steps:GetSSRs(rate, 0.93))
+		local ssrRatio = maxssr > 0 and otherssr > 0 and maxssr/otherssr or 1
+		local spikeSSR = clamp(math.pow(ssrRatio - 0.07, 8), 0.75, 1.4)
+		local techF = math.pow(technical*1.05/overall, 2)
+		local jackF = chordjack > 0 and math.min(math.pow(jackspeed*1.1/chordjack, 2), 1.25) or 1
+		local cjF   = chordjack > 0 and math.min(math.pow(jackspeed*1.1/chordjack, 2), 1.5) or 1
+		local stamF = stamina > 0 and math.pow(overall/stamina, 0.6) or 1
+		chaos = math.max(0,
+			math.max(msdscale(technical), msdscale(jackspeed))
+			* spikeSSR
+			* math.max(techF, jackF)
+			* math.min(1, stamF, cjF))
 	end
 
 	-- HELL
@@ -374,7 +379,7 @@ local t = Def.ActorFrame {
 		end
 		self:playcommand("SetGraphVisibility")
 	end,
-	DelayedChartUpdateMessageCommand = function(self) self:stoptweening():queuecommand("Set") end,
+	HV_SelectionDetailsReadyMessageCommand = function(self) self:stoptweening():queuecommand("Set") end,
 	TabChangedMessageCommand          = function(self) self:stoptweening():queuecommand("Set") end,
 	NoteFieldVisibleMessageCommand    = function(self) previewVisible = true; self:playcommand("SetGraphVisibility") end,
 	ChartPreviewOnMessageCommand      = function(self) previewVisible = true; self:playcommand("SetGraphVisibility") end,

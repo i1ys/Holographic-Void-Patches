@@ -405,7 +405,7 @@ t[#t + 1] = Def.Actor {
 			return
 		end
 		self:playcommand("UpdateHeavyData")
-		MESSAGEMAN:Broadcast("DelayedChartUpdate")
+		MESSAGEMAN:Broadcast("HV_SelectionDetailsReady")
 	end,
 	
 	-- Permamirror Sync Logic
@@ -443,7 +443,7 @@ t[#t + 1] = Def.Actor {
 	PermamirrorChangedMessageCommand = function(self) 
 		self:stoptweening():sleep(0.05):queuecommand("SyncPermamirror"):queuecommand("ReportPermamirror")
 	end,
-	DelayedChartUpdateMessageCommand = function(self) self:playcommand("SyncPermamirror") end
+	HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("SyncPermamirror") end
 }
 
 local function GetCurrentBannerPath()
@@ -516,7 +516,7 @@ t[#t + 1] = Def.ActorFrame {
 		InstantChartUpdateMessageCommand = function(self)
 			if self.song ~= selection.song or self.group ~= selection.group then self:visible(false) end
 		end,
-		DelayedChartUpdateMessageCommand = function(self)
+		HV_SelectionDetailsReadyMessageCommand = function(self)
 			self:playcommand("Set")
 		end
 	},
@@ -642,7 +642,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:visible(false)
 			end
 		end,
-		DelayedChartUpdateMessageCommand = function(self)
+		HV_SelectionDetailsReadyMessageCommand = function(self)
 			self:playcommand("Set")
 		end,
 		
@@ -680,7 +680,7 @@ t[#t + 1] = Def.ActorFrame {
 			InstantChartUpdateMessageCommand = function(self)
 				if self.song ~= selection.song then self:visible(false) end
 			end,
-			DelayedChartUpdateMessageCommand = function(self)
+			HV_SelectionDetailsReadyMessageCommand = function(self)
 				self:playcommand("Set")
 			end,
 			ToolTipCommand = function(self)
@@ -933,7 +933,7 @@ t[#t + 1] = Def.ActorFrame {
 			end
 		end,
 		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 		PackDetailsUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
@@ -1004,7 +1004,7 @@ t[#t + 1] = Def.ActorFrame {
 			c:GetChild("Lbl"):settext(name):visible(true)
 		end,
 		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	}
 }
 
@@ -1022,7 +1022,7 @@ local msdTooltip = Def.ActorFrame {
 		self:visible(false)
 	end,
 	-- Background
-	DelayedChartUpdateMessageCommand = function(self)
+	HV_SelectionDetailsReadyMessageCommand = function(self)
 		if self:GetVisible() then self:playcommand("Set") end
 	end,
 
@@ -1377,7 +1377,7 @@ t[#t + 1] = Def.ActorFrame {
 		local show = selection.detailsReady == true and selection.song ~= nil
 		self:playcommand("SetSongDetailsVisible", {show = show})
 	end,
-	DelayedChartUpdateMessageCommand = function(self)
+	HV_SelectionDetailsReadyMessageCommand = function(self)
 		self.pbView = nil
 		self:playcommand("SetSongDetailsVisible", {show = selection.song ~= nil})
 	end,
@@ -1420,7 +1420,7 @@ t[#t + 1] = Def.ActorFrame {
 			local title = THEME:GetString("ScreenSelectMusic", "PersonalBest")
 			self:settext(view and view.j4 and title .. " (J4)" or title):diffuse(accentColor)
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
 	LoadFont("Common Normal") .. {
@@ -1436,7 +1436,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:settext("")
 			end
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 
 	LoadFont("Common Normal") .. {
@@ -1448,7 +1448,7 @@ t[#t + 1] = Def.ActorFrame {
 			local view = getPBView(self:GetParent())
 			self:settext(view and (view.judge and string.format("Wife3 J%d", view.judge) or "Wife3") or "")
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 
 	LoadFont("Common Normal") .. {
@@ -1460,7 +1460,7 @@ t[#t + 1] = Def.ActorFrame {
 			local score = selection.pbScore
 			self:settext(score and getRate(score) or "")
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 
 	LoadFont("Common Large") .. {
@@ -1476,7 +1476,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:settext(THEME:GetString("ScreenSelectMusic", "NoScore")):diffuse(dimText)
 			end
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 
 	LoadFont("Common Large") .. {
@@ -1490,7 +1490,7 @@ t[#t + 1] = Def.ActorFrame {
 			self:settext(grade and HV.GetGradeName(grade) or (view and "-" or ""))
 				:diffuse(grade and HVColor.GetGradeColor(grade) or dimText)
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 	
 	LoadFont("Common Large") .. {
@@ -1504,7 +1504,7 @@ t[#t + 1] = Def.ActorFrame {
 			self:settext(clear and THEME:GetString("ClearTypes", clear) or (view and "-" or ""))
 				:diffuse(clear and HVColor.GetClearTypeColor(clear) or dimText)
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 
 	LoadFont("Common Normal") .. {
@@ -1526,7 +1526,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:settext("")
 			end
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 
 	-- CC Indicator for Personal Best
@@ -1543,7 +1543,7 @@ t[#t + 1] = Def.ActorFrame {
 				self:visible(false)
 			end
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 	},
 
 	Def.ActorFrame {
@@ -1567,7 +1567,7 @@ t[#t + 1] = Def.ActorFrame {
 				block:GetChild("Val"):settext(count or "-"):diffuse(tint):zoom(0.45)
 			end
 		end,
-		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
+		HV_SelectionDetailsReadyMessageCommand = function(self) self:playcommand("Set") end,
 		ThemePrefChangedMessageCommand = function(self, params)
 			if params and params.Name == "HV_JudgmentColorStyle" then
 				self:playcommand("Set")
@@ -2137,7 +2137,7 @@ root[#root + 1] = Def.ActorFrame {
 			self:playcommand("UpdateBanner")
 		end
 	end,
-	DelayedChartUpdateMessageCommand = function(self)
+	HV_SelectionDetailsReadyMessageCommand = function(self)
 		if self:GetVisible() then
 			self:playcommand("UpdateBanner")
 		end

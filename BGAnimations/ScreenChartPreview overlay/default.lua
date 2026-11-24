@@ -52,12 +52,16 @@ local previewAudioPath
 local previewEnd
 local requestedPosition
 local requestedAt
+local sawAudioDelay
+local overlappingRequest
 local lastPositionAt
 local previousRedirection
 local returnScreen
 local readyAt = 0
 local lastDirection
 local lastDirectionAt
+local nativeSample
+local startingNativeSample = false
 
 local function hoveredChartPosition()
 	local clickArea = cdgFrameRef and cdgFrameRef:GetChild("ClickArea")
@@ -97,34 +101,67 @@ local function getPreviewAudioPath(song, steps)
 	return path
 end
 
-local function getPreviewEnd()
-	if previewAudioPath == song:GetMusicPath() then
+local function getPreviewEnd(chart, path)
+	local chartEnd = chart:GetLastSecond()
+	local ending = chartEnd > 0 and math.min(musicLength, chartEnd) or musicLength
+	if path == song:GetMusicPath() then
 		local soundLength = song:MusicLengthSeconds()
-		if soundLength > 0 then return math.min(musicLength, soundLength) end
+		if soundLength > 0 then return math.min(ending, soundLength) end
 	end
-	return musicLength
+	return ending
 end
 
 local function finishPreview()
+	nativeSample = nil
 	previewPosition = previewEnd
 	requestedPosition = nil
 	reachedEnd = true
 	SOUND:StopMusic()
 end
 
+local function startNativeSample(position)
+	-- Stop first so the native request can replace a wheel sample of the same file.
+	nativeSample = {start = song:GetSampleStart(), startedAt = GetTimeSinceStart(), target = position}
+	startingNativeSample = true
+	SOUND:StopMusic()
+	ssm:PlayCurrentSongSampleMusic(true, true)
+	startingNativeSample = false
+end
+
+local function canUseNativeSample()
+	local selected = GAMESTATE:GetCurrentSteps()
+	local start = song:GetSampleStart()
+	return previewAudioPath:lower():match("%.mp3$") and selected
+		and selected:GetPreviewMusicPath() == previewAudioPath
+		and start >= 0 and start < previewEnd and musicLength - start >= 1
+		and ssm.SetSampleMusicPosition and ssm.IsSampleMusicPaused and ssm.PauseSampleMusic
+end
+
 local function playFrom(position)
 	local start = math.max(0, math.min(position, previewEnd))
 	if previewEnd - start <= 0.05 * getCurRateValue() then
-		finishPreview()
+		if nativeSample and nativeSample.seek then
+			nativeSample.target = nil
+			nativeSample.afterSeek = finishPreview
+		else
+			finishPreview()
+		end
 		return
 	end
 	reachedEnd = false
 	previewPosition = start
+	overlappingRequest = requestedPosition ~= nil
 	requestedPosition = start
 	requestedAt = GetTimeSinceStart()
+	sawAudioDelay = false
 	lastPositionAt = nil
-	-- Queue an offset in the new play request so it never refers to the old sound.
-	SOUND:PlayMusicPart(previewAudioPath, start, previewEnd - start, 0, 0, false, true, false)
+	if nativeSample then
+		nativeSample.target = start
+	elseif canUseNativeSample() then
+		startNativeSample(start)
+	else
+		SOUND:PlayMusicPart(previewAudioPath, start, previewEnd - start, 0, 0, false, true, false)
+	end
 end
 
 local function playPreview()
@@ -164,24 +201,6 @@ local function updateNoteDisplay(synchronized)
 	noteSprite:visible(hasNoteFrame)
 end
 
--- Helper: Steps identification
-local stepsTable = {}
-local curStepIndex = 0
-
-local function findCurStepIndex(givenSteps)
-	if not givenSteps then return 0 end
-	for i = 1, #stepsTable do
-		if stepsTable[i]:GetChartKey() == givenSteps:GetChartKey() then
-			return i
-		end
-	end
-	return 0
-end
-
-local function meterComparator(stepA, stepB)
-	return Enum.Reverse(Difficulty)[stepA:GetDifficulty()] < Enum.Reverse(Difficulty)[stepB:GetDifficulty()]
-end
-
 -- HV Helper fallbacks
 local function getDifficultyShort(diff)
 	local d = ToEnumShortString(diff):gsub("Difficulty_", "")
@@ -208,7 +227,7 @@ local function getSongLengthColor(len)
 	return HVColor and HVColor.GetSongLengthColor(len) or textBright
 end
 
-function getMSDColor(msd)
+local function getMSDColor(msd)
 	if not msd or msd == 0 then return textDim end
 	return (HVColor and HVColor.GetMSDRatingColor) and HVColor.GetMSDRatingColor(msd) or textBright
 end
@@ -223,21 +242,77 @@ local function bpmAt(position, rate)
 	return timing:GetBPMAtBeat(beat) * rate
 end
 
+local function updateNativeSample(position, now, rate)
+	local sample = nativeSample
+	if SOUND:IsTimingDelayed() then return false end
+	if sample.start then
+		if position < sample.start - 0.1 or position > sample.start + (now - sample.startedAt) * rate + 0.35 then
+			return false
+		end
+		sample.start = nil
+	end
+
+	if sample.seek then
+		local elapsed = now - sample.seekAt
+		local continued = sample.seekFrom + elapsed * rate
+		-- A sound replacement cannot overtake a queued native seek to the current sound.
+		if (elapsed < 0.35 and math.abs(position - continued) < 0.06 * rate)
+			or position < sample.seek - 0.1 or position > sample.seek + elapsed * rate + 0.2 then
+			return false
+		end
+		sample.seek = nil
+		if sample.afterSeek then
+			local afterSeek = sample.afterSeek
+			sample.afterSeek = nil
+			afterSeek()
+			return false
+		end
+	end
+
+	if isPaused ~= ssm:IsSampleMusicPaused() then ssm:PauseSampleMusic() end
+	if isPaused then return false end
+	if sample.target then
+		local target = sample.target
+		sample.target = nil
+		if math.abs(target - position) > 0.12 * rate then
+			sample.seek, sample.seekFrom, sample.seekAt = target, position, now
+			ssm:SetSampleMusicPosition(target)
+			return false
+		end
+	end
+	return true
+end
+
 local function updatePlaybackPosition()
-	if isPaused or reachedEnd or SOUND:GetMusicPath() ~= previewAudioPath then return false end
+	if reachedEnd or SOUND:GetMusicPath() ~= previewAudioPath then return false end
 
 	local position = ssm:GetSampleMusicPosition()
 	local now, rate = GetTimeSinceStart(), getCurRateValue()
-	if requestedPosition then
-		local expectedPosition = requestedPosition + (now - requestedAt) * rate
-		if SOUND:IsTimingDelayed() or position < requestedPosition or position > expectedPosition + 0.5 then
+	if nativeSample then
+		if not updateNativeSample(position, now, rate) then return false end
+		if requestedPosition then
+			previewPosition = position
+			requestedPosition = nil
+		end
+	elseif isPaused then
+		return false
+	elseif requestedPosition then
+		local elapsed = now - requestedAt
+		local expectedPosition = requestedPosition + elapsed * rate
+		local tolerance = 0.35 * math.max(1, rate)
+		local loading = SOUND:IsTimingDelayed()
+		if loading and not overlappingRequest then sawAudioDelay = true end
+		-- Keep out an old same-file clock while the playback request is queued.
+		local outsideSeek = position < requestedPosition - tolerance or position > expectedPosition + tolerance
+		if loading or (outsideSeek and not sawAudioDelay and elapsed < 0.75) then
 			-- A very short tail can finish before the first accurate clock sample.
 			if position >= previewEnd and expectedPosition >= previewEnd + 0.5 then finishPreview() end
 			return false
 		end
 		requestedPosition = nil
+		previewPosition = position
 	end
-	if position < previewPosition then
+	if position < previewPosition - 0.05 * rate then
 		-- Etterna can loop files with "loop" in their path even without force loop.
 		if lastPositionAt and previewPosition + (now - lastPositionAt) * rate >= previewEnd then
 			finishPreview()
@@ -256,6 +331,7 @@ local function updateSync()
 	if not ownsPreview() then return end
 
 	updateNoteDisplay(updatePlaybackPosition())
+	if not ownsPreview() then return end
 	local pos = previewPosition
 	applyPreviewPosition(pos)
 
@@ -318,6 +394,7 @@ end
 ------------------------------------------------------------
 local function input(event)
 	if not ownsPreview() or event.type ~= "InputEventType_FirstPress" then return end
+	if nativeSample and nativeSample.afterSeek then return end
 	local btn = event.DeviceInput.button
 	local button = event.GameButton or event.button
 	local direction = (button == "MenuUp" or button == "Up" or btn == "DeviceButton_up") and -1
@@ -401,7 +478,11 @@ local function input(event)
 			if not reachedEnd then
 				isPaused = true
 				requestedPosition = nil
-				SOUND:StopMusic()
+				if nativeSample then
+					nativeSample.target = nil
+				else
+					SOUND:StopMusic()
+				end
 			end
 		end
 		updateNoteDisplay()
@@ -555,9 +636,8 @@ local function chartPanel()
 	return Def.ActorFrame {
 		Name = "ChartPanel",
 		ReloadCommand = function(self)
-			stepsTable = song:GetStepsByStepsType(steps:GetStepsType())
 			self.available = {}
-			for _, s in ipairs(stepsTable) do
+			for _, s in ipairs(song:GetStepsByStepsType(steps:GetStepsType())) do
 				local dStr = ToEnumShortString(s:GetDifficulty()):gsub("Difficulty_", "")
 				self.available[dStr] = s
 			end
@@ -911,9 +991,18 @@ end
 
 local function closePreview(self, restoreAudio)
 	if not HV.ChartPreviewActive or not ssm then return end
+	if restoreAudio and nativeSample and nativeSample.seek then
+		nativeSample.afterSeek = function() closePreview(self, true) end
+		return
+	end
 	local screen = ssm
+	if nativeSample and screen == SCREENMAN:GetTopScreen() and not screen:IsTransitioning()
+		and screen:IsSampleMusicPaused() then
+		screen:PauseSampleMusic()
+	end
 	HV.ChartPreviewActive = false
 	ssm = nil
+	nativeSample = nil
 	requestedPosition = nil
 	lastDirection = nil
 	densityVectors, densityStats = nil, nil
@@ -936,17 +1025,32 @@ local function reloadPreviewChart(self)
 	local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
 	if selected == steps and loadedRate == rate then return end
 	if selected ~= steps then hasNoteFrame = false end
+	local path = getPreviewAudioPath(song, selected)
+	local changedAudio = path ~= previewAudioPath
+	if changedAudio and nativeSample and nativeSample.seek then
+		if not nativeSample.afterSeek then nativeSample.afterSeek = function() reloadPreviewChart(self) end end
+		return
+	end
+	if changedAudio and not validMusicPath(path) then
+		closePreview(self, true)
+		return
+	end
+
+	local ending = getPreviewEnd(selected, path)
+	local changedEnd = ending ~= previewEnd
 	steps, loadedRate = selected, rate
-	local path = getPreviewAudioPath(song, steps)
-	if path ~= previewAudioPath then
-		if not validMusicPath(path) then
-			closePreview(self, true)
-			return
+	previewAudioPath, previewEnd = path, ending
+	if changedAudio then nativeSample = nil end
+	if isPaused then
+		previewPosition = math.min(previewPosition, previewEnd)
+	elseif changedAudio then
+		playPreview()
+	elseif changedEnd then
+		if reachedEnd then
+			previewPosition = math.min(previewPosition, previewEnd)
+		else
+			playFrom(previewPosition)
 		end
-		previewAudioPath = path
-		previewEnd = getPreviewEnd()
-		if isPaused then previewPosition = math.min(previewPosition, previewEnd)
-		else playPreview() end
 	end
 	densityVectors, densityStats = nil, nil
 	local radar = steps:GetRadarValues(PLAYER_1)
@@ -1004,7 +1108,7 @@ local t = Def.ActorFrame {
 		if not validMusicPath(path) or length <= 0 then return end
 
 		ssm, song, musicLength, previewAudioPath = screen, selectedSong, length, path
-		previewEnd = getPreviewEnd()
+		previewEnd = getPreviewEnd(selectedSteps, path)
 		returnScreen = nil
 		loadedRate = nil
 		isPaused = false
@@ -1021,6 +1125,17 @@ local t = Def.ActorFrame {
 	end,
 	PreviewInputCommand = function(self, event)
 		input(event)
+	end,
+	PlayingSampleMusicMessageCommand = function()
+		if startingNativeSample or not ownsPreview() then return end
+		-- The native wheel queues its sample before sending this message.
+		if nativeSample then
+			startNativeSample(previewPosition)
+		elseif isPaused or reachedEnd then
+			SOUND:StopMusic()
+		else
+			playFrom(previewPosition)
+		end
 	end,
 	CloseChartPreviewCommand = function(self)
 		closePreview(self, true)
