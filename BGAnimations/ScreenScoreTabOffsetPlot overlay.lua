@@ -8,7 +8,7 @@ local defaultJudge, plotData
 
 local function displayJudge(score)
 	if PREFSMAN:GetPreference("SortBySSRNormPercent") then return 4 end
-	return HV.Score.GetPlayedJudge(score) or 4
+	return math.max(4, HV.Score.GetPlayedJudge(score) or 4)
 end
 
 local function loadPlotData(score)
@@ -70,7 +70,7 @@ local t = Def.ActorFrame {
 			SCREENMAN:GetTopScreen():Cancel()
 		elseif plotData then
 			local judge = plotData.judge
-			if params.Name == "PrevJudge" then judge = math.max(1, judge - 1)
+			if params.Name == "PrevJudge" then judge = math.max(4, judge - 1)
 			elseif params.Name == "NextJudge" then judge = math.min(9, judge + 1)
 			elseif params.Name == "ResetJudge" then judge = defaultJudge
 			elseif params.Name == "ToggleHands" then
@@ -107,17 +107,25 @@ local t = Def.ActorFrame {
 			local score = params.score
 			self:visible(score ~= nil)
 			if not score then return end
-			local wife = HV.Score.FormatEvaluationWifePercent(score:GetWifeScore() * 100)
-			local grade = HV.GetGradeName(ToEnumShortString(score:GetWifeGrade()))
+			local percent, grade = score:GetWifeScore() * 100, score:GetWifeGrade()
 			local normalized = PREFSMAN:GetPreference("SortBySSRNormPercent")
-			local counts = HV.Score.GetDisplayJudgments(score, normalized and 4 or nil)
+			local playedJudge = HV.Score.GetPlayedJudge(score) or 4
+			local rescoreToJ4 = not normalized and playedJudge < 4
+			if rescoreToJ4 then
+				local rescored, available = getJ4NormalizedPercentage(score)
+				percent = available and rescored or nil
+				if percent and grade ~= "Grade_Failed" then grade = GetGradeFromPercent(percent / 100) end
+			end
+			local wifeText = percent and HV.Score.FormatEvaluationWifePercent(percent) or "-"
+			local gradeText = percent and HV.GetGradeName(ToEnumShortString(grade)) or "-"
+			local counts = HV.Score.GetDisplayJudgments(score, (normalized or rescoreToJ4) and 4 or nil)
 			local tally = "-"
 			if counts then
 				tally = string.format("Marv %d   Perf %d   Great %d   Good %d   Bad %d   Miss %d",
 					counts.W1, counts.W2, counts.W3, counts.W4, counts.W5, counts.Miss)
 			end
 			self:settextf("Score %s   %s   %.2f SSR   %.2fx\n%s",
-				wife, grade, score:GetSkillsetSSR("Overall"), score:GetMusicRate(), tally)
+				wifeText, gradeText, score:GetSkillsetSSR("Overall"), score:GetMusicRate(), tally)
 		end,
 	},
 }

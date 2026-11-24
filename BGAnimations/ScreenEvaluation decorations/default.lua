@@ -171,8 +171,12 @@ local function getJudgeForScore(score)
 	return HV.Score.GetPlayedJudge(score) or (score and 4 or GetTimingDifficulty())
 end
 
-local function defaultJudge()
+local function nativeWifeJudge()
 	return normalized and curScore and 4 or playedJudge
+end
+
+local function defaultJudge()
+	return math.max(4, math.min(9, nativeWifeJudge()))
 end
 
 local formatWifePercent = HV.Score.FormatEvaluationWifePercent
@@ -250,6 +254,11 @@ local function getFilteredDvt()
 	return dvt -- no type vector: return as-is (PSS path, already clean)
 end
 
+local function wifePercentAtJudge(targetJudge)
+	if targetJudge == nativeWifeJudge() then return evaluationWifeScore() * 100 end
+	if rescore.data then return getRescoredWife3Judge(3, targetJudge, rescore.data) end
+end
+
 local function refreshRescoredPercentage()
 	rescore.counts, rescore.percent, rescore.earned, rescore.possible = nil, nil, nil, nil
 	maniaRescore = nil
@@ -263,15 +272,14 @@ local function refreshRescoredPercentage()
 	if judge ~= playedJudge and rescore.data then
 		rescore.counts = HV.Judgment.RescoreHits(rescore.data.dvt, rescore.data.misses, judge, HV.EmulateRidiculousEnabled())
 	end
-	local nativeJudge = defaultJudge()
-	if judge ~= nativeJudge and rescore.data then
-		rescore.percent, rescore.earned, rescore.possible = getRescoredWife3Judge(3, judge, rescore.data)
+	if judge ~= nativeWifeJudge() then
+		rescore.percent, rescore.earned, rescore.possible = wifePercentAtJudge(judge)
 	end
 end
 
 local function displayedWifePercent()
 	if rescore.percent ~= nil then return rescore.percent end
-	if judge == defaultJudge() then return evaluationWifeScore() * 100 end
+	if judge == nativeWifeJudge() then return evaluationWifeScore() * 100 end
 end
 
 function calculateCustomWindowScore(configName, rst)
@@ -621,12 +629,6 @@ local function getRunningWife(wife, judged)
 	if judged == 0 then return 0 end
 	return wife * (songTotalNotes / judged)
 end
-
-local function clampJudge()
-	if judge < 1 then judge = 1 end
-	if judge > 9 then judge = 9 end
-end
-clampJudge()
 
 local function nearestGradeComparison(percent)
 	if not percent or isManiaModeEnabled() then return "" end
@@ -993,15 +995,16 @@ local function createScoreBoard(pn, frameW, pad)
 			end
 
 			if params.Name == "PrevJudge" then
+				if judge == 4 then return end
 				judge = judge - 1
 			elseif params.Name == "NextJudge" then
+				if judge == 9 then return end
 				judge = judge + 1
 			elseif params.Name == "ResetJudge" then
 				judge = defaultJudge()
 			else
 				return
 			end
-			clampJudge()
 			refreshRescoredPercentage()
 			if params.Name == "ResetJudge" then
 				self:RunCommandsOnChildren(function(child) child:playcommand("ResetJudge") end)
@@ -1690,9 +1693,7 @@ local function createScoreBoard(pn, frameW, pad)
 						self:visible(false)
 						return
 					end
-					local percent
-					if playedJudge == 4 or (normalized and curScore) then percent = evaluationWifeScore() * 100
-					elseif rescore.data then percent = getRescoredWife3Judge(3, 4, rescore.data) end
+					local percent = wifePercentAtJudge(4)
 					self:visible(percent ~= nil)
 					if percent then self:settext("J4: " .. formatWifePercent(percent)) end
 				end,
@@ -2532,8 +2533,8 @@ t[#t + 1] = Def.ActorFrame {
 			}
 			col[#col+1] = LoadFont("Common Normal") .. {
 				InitCommand = function(self) self:halign(1):valign(0):xy(100, yOff):zoom(0.35) end,
-				UpdateDataCommand = function(self, params)
-					local pct = params.rst and getRescoredWife3Judge(3, i, params.rst)
+				UpdateDataCommand = function(self)
+					local pct = wifePercentAtJudge(i)
 					self:settext(pct and formatWifePercent(pct) or "-")
 				end
 			}

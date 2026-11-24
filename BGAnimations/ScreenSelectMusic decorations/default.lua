@@ -1,5 +1,4 @@
 local ThemePrefs = HV.LegacyPrefs
-local chartDensity = LoadActor("../ChartDensity.lua")
 
 --- Holographic Void: ScreenSelectMusic Decorations
 
@@ -836,57 +835,31 @@ t[#t + 1] = Def.ActorFrame {
 		end
 	},
 
-	-- NPS Label
+	-- Average chart density uses the engine's rate-adjusted chart length.
 	LoadFont("Common Normal") .. {
 		Name = "NPSLabel",
 		InitCommand = function(self)
 			self:halign(0):valign(0):x(panelW * 0.65):zoom(0.35):diffuse(dimText)
-			self:settext("NPS")
+			self:settext("Avg NPS")
 		end
 	},
-	Def.ActorFrame {
+	LoadFont("Common Normal") .. {
 		Name = "NPSValue",
 		InitCommand = function(self)
-			self:xy(panelW * 0.65 + 28, 0)
+			self:halign(0):valign(0):x(panelW * 0.65 + 40):zoom(0.4):diffuse(mainText)
 		end,
 		SetCommand = function(self)
 			local steps = HV.CurrentSongData.steps
-			local rate = math.max(MIN_MUSIC_RATE, getCurRateValue())
-			if steps ~= self.densitySteps or rate ~= self.densityRate then
-				self.densitySteps, self.densityRate = steps, rate
-				self.densityStats = steps and chartDensity.Summarize(steps:GetCDGraphVectors(rate))
-			end
-
-			local stats = self.densityStats
-			if stats then
-				self:GetChild("Start"):settextf("%.0f", stats.openingPeak):diffuse(accentColor)
-				self:GetChild("Max"):settextf("%.0f", stats.peak):diffuse(accentColor)
-				self:GetChild("Average"):settextf("%.0f", stats.denseMean):diffuse(accentColor)
+			local notes = steps and steps:GetRadarValues(PLAYER_1):GetValue("RadarCategory_Notes")
+			if notes and notes >= 0 then
+				local seconds = math.max(1, steps:GetLengthSeconds())
+				self:settextf("%.2f", notes / seconds):diffuse(accentColor)
 			else
-				self:GetChild("Start"):settext("-"):diffuse(dimText)
-				self:GetChild("Max"):settext("-"):diffuse(dimText)
-				self:GetChild("Average"):settext("-"):diffuse(dimText)
+				self:settext("-"):diffuse(dimText)
 			end
 		end,
-		DelayedChartUpdateMessageCommand = function(self)
-			self:playcommand("Set")
-		end,
-		CurrentRateChangedMessageCommand = function(self)
-			self:playcommand("Set")
-		end,
-		LoadFont("Common Normal") .. { Name = "Start", InitCommand = function(self) self:x(0):halign(0.5):valign(0):zoom(0.4):diffuse(mainText) end },
-		LoadFont("Common Normal") .. { Name = "Sep1", InitCommand = function(self) self:x(10):halign(0.5):valign(0):zoom(0.35):diffuse(dimText):settext("|") end },
-		LoadFont("Common Normal") .. { Name = "Max", InitCommand = function(self) self:x(20):halign(0.5):valign(0):zoom(0.4):diffuse(mainText) end },
-		LoadFont("Common Normal") .. { Name = "Sep2", InitCommand = function(self) self:x(30):halign(0.5):valign(0):zoom(0.35):diffuse(dimText):settext("|") end },
-		LoadFont("Common Normal") .. { Name = "Average", InitCommand = function(self) self:x(40):halign(0.5):valign(0):zoom(0.4):diffuse(mainText) end }
+		InstantChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
-	Def.ActorFrame {
-		Name = "NPSSubtext",
-		InitCommand = function(self) self:xy(panelW * 0.65 + 28, 12) end,
-		LoadFont("Common Normal") .. { InitCommand = function(self) self:x(0):halign(0.5):valign(0):zoom(0.23):diffuse(dimText):settext("START") end },
-		LoadFont("Common Normal") .. { InitCommand = function(self) self:x(20):halign(0.5):valign(0):zoom(0.23):diffuse(dimText):settext("MAX") end },
-		LoadFont("Common Normal") .. { InitCommand = function(self) self:x(40):halign(0.5):valign(0):zoom(0.23):diffuse(dimText):settext("AVG") end }
-	}
 }
 
 -- Separator between Details and MSD

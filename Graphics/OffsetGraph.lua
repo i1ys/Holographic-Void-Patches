@@ -4,22 +4,15 @@ local scoreTabPlot = ... == "ScoreTab"
 --- Holographic Void: Offset Plot Graph
 -- Ported from spawncamping-wallhack OffsetGraph.lua
 -- Shows timing offsets as colored dots on a time axis with judgment threshold lines.
--- Supports judge rescoring via OffsetPlotModification messages.
+-- The parent screen supplies the judge with the plot data.
 -- Supports hand-specific highlighting via ToggleHands.
 -- Supports hover tooltip showing running score/stats at cursor position.
 
 local tst = ms.JudgeScalers
-local judge = math.max(1, math.min(9, PREFSMAN:GetPreference("SortBySSRNormPercent") and 4 or GetTimingDifficulty()))
-local tso = tst[judge]
+local tso = tst[4]
 local fullOffsetRange = 180
 local zoomStep = 9
 local maxOffset = fullOffsetRange
-
-local function clampJudge()
-	if judge < 1 then judge = 1 end
-	if judge > 9 then judge = 9 end
-end
-clampJudge()
 
 -- The vertical axis measures recorded milliseconds. Changing the judge only
 -- changes judgment windows and the derived scoring metrics.
@@ -596,42 +589,21 @@ local t = Def.ActorFrame{
 		end)
 	end,
 	OffsetPlotModificationMessageCommand = function(self, params)
-		if setScoreKey and (params.Name == "PrevJudge" or params.Name == "NextJudge" or params.Name == "ResetJudge") then return end
-		if params.Name == "PrevJudge" and judge > 1 then
-			judge = judge - 1
-			clampJudge()
-			tso = tst[judge]
-		elseif params.Name == "NextJudge" and judge < 9 then
-			judge = judge + 1
-			clampJudge()
-			tso = tst[judge]
-		elseif params.Name == "ToggleHands" and next(handStats) ~= nil and not setChordCohesion then
+		if params.Name == "ToggleHands" then
+			if next(handStats) == nil or setChordCohesion then return end
 			local hands = oddColumns and oddHands or evenHands
 			local direction = params.Direction == -1 and -1 or 1
 			handIndex = (handIndex - 1 + direction) % #hands + 1
+			MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 		elseif params.Name == "NextTrendMetric" then
 			cycleTrendMetric(1)
-			return
 		elseif params.Name == "PrevTrendMetric" then
 			cycleTrendMetric(-1)
-			return
 		elseif params.Name == "NextTrendColor" then
 			cycleTrendColorMode(1)
-			return
 		elseif params.Name == "PrevTrendColor" then
 			cycleTrendColorMode(-1)
-			return
 		end
-		if params.Name == "ResetJudge" then
-			judge = PREFSMAN:GetPreference("SortBySSRNormPercent") and 4 or GetTimingDifficulty()
-			clampJudge()
-			tso = tst[judge]
-		end
-		if params.Name ~= "ResetJudge" and params.Name ~= "PrevJudge"
-			and params.Name ~= "NextJudge" and params.Name ~= "ToggleHands"
-			and params.Name ~= "NextTrendMetric" and params.Name ~= "PrevTrendMetric"
-			and params.Name ~= "NextTrendColor" and params.Name ~= "PrevTrendColor" then return end
-		MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 	end,
 	LoadedCustomWindowMessageCommand = function(self)
 		if scoreTabPlot then return end
@@ -663,11 +635,7 @@ t[#t+1] = Def.Quad{
 			maxOffset = fullOffsetRange
 			selectedSliceX1, selectedSliceX2 = nil, nil
 		end
-		if params.judge then
-			judge = params.judge
-			clampJudge()
-			tso = tst[judge]
-		end
+		if params.judge then tso = tst[math.max(4, math.min(9, params.judge))] end
 		setWidth, setHeight = params.width, params.height
 		setRate = finite(params.rate) and params.rate > 0 and params.rate or 1
 		setChordCohesion, setMania = params.chordCohesion, params.mania
