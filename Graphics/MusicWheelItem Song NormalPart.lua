@@ -1,14 +1,17 @@
 --- Holographic Void: MusicWheelItem Song NormalPart
--- Enhanced song row: MSD for selected difficulty type, local best grade,
+-- Enhanced song row: MSD for selected difficulty type, local best grade and rate,
 -- artist + subtitle display.
 -- Uses SetMessageCommand with params.Song for reliable song data access.
 
 local wheelItemW = 280
+local pbRight = wheelItemW / 2 - 6
+local pbWidth = 42
+local favoriteX = pbRight - pbWidth - 8
 
 -- MusicWheel reuses its rows continuously while scrolling.  These values do
 -- not change during a Select Music visit, so avoid re-querying score history.
 local wheelMSDCache = {}
-local wheelGradeCache = {}
+local wheelPBCache = {}
 
 local function cachedMSD(steps, rate)
 	local chartKey = steps:GetChartKey()
@@ -21,11 +24,11 @@ local function cachedMSD(steps, rate)
 	return value
 end
 
-local function cachedBestGrade(chartKey)
-	local cached = wheelGradeCache[chartKey]
+local function cachedBestResult(chartKey)
+	local cached = wheelPBCache[chartKey]
 	if cached ~= nil then return cached end
 
-	local bestWife, bestGrade = -1, nil
+	local best, bestWife, bestRate = nil, -1, 0
 	local scoresByRate = SCOREMAN:GetScoresByKey(chartKey)
 	if scoresByRate then
 		for _, scoresAtRate in pairs(scoresByRate) do
@@ -33,10 +36,9 @@ local function cachedBestGrade(chartKey)
 			if scoreList then
 				for _, score in ipairs(scoreList) do
 					if not IsScoreInvalid(score) then
-						local wife = score:GetWifeScore()
-						if wife > bestWife then
-							bestWife = wife
-							bestGrade = score:GetWifeGrade()
+						local wife, rate = score:GetWifeScore(), score:GetMusicRate()
+						if wife > bestWife or (best and wife == bestWife and rate > bestRate) then
+							best, bestWife, bestRate = score, wife, rate
 						end
 					end
 				end
@@ -45,8 +47,8 @@ local function cachedBestGrade(chartKey)
 	end
 
 	-- false is a cache entry for charts with no usable score.
-	wheelGradeCache[chartKey] = bestGrade or false
-	return wheelGradeCache[chartKey]
+	wheelPBCache[chartKey] = best and {grade = best:GetWifeGrade(), rate = getRate(best)} or false
+	return wheelPBCache[chartKey]
 end
 
 local function isSongFavorited(song)
@@ -108,7 +110,7 @@ t[#t + 1] = Def.Sprite {
 	Name = "FavoriteStar",
 	Texture = THEME:GetPathG("", "round_star"),
 	InitCommand = function(self)
-		self:x(wheelItemW/2 - 35):y(7):zoomto(10, 10)
+		self:x(favoriteX):y(7):zoomto(10, 10)
 			:diffuse(HVColor.Accent)
 			:visible(false)
 	end,
@@ -178,12 +180,12 @@ t[#t + 1] = LoadFont("Common Normal") .. {
 	end
 }
 
--- Grade badge (right side, below MSD) - shows grade for matching difficulty
+-- Personal best badge (right side, below MSD) for the matching difficulty.
 t[#t + 1] = LoadFont("Common Normal") .. {
 	Name = "GradeDisplay",
 	InitCommand = function(self)
-		self:halign(1):x(wheelItemW/2 - 6):y(7)
-			:zoom(0.30):diffuse(color("0.45,0.45,0.45,1")) -- Increased from 0.22
+		self:halign(1):x(pbRight):y(7)
+			:zoom(0.30):maxwidth(pbWidth / 0.30):diffuse(color("0.45,0.45,0.45,1"))
 	end,
 	SetMessageCommand = function(self, params)
 		local song = (params and params.Song) or self.hv_lastSong
@@ -204,12 +206,10 @@ t[#t + 1] = LoadFont("Common Normal") .. {
 					if profile then
 						local chartKey = st:GetChartKey()
 						if chartKey then
-							local bestGrade = cachedBestGrade(chartKey)
-							if bestGrade and bestGrade ~= "Grade_Failed" then
-								local gs = ToEnumShortString(bestGrade)
-								local displayGrade = HV.GetGradeName(bestGrade)
-								self:settext(displayGrade)
-								self:diffuse(HVColor.GetGradeColor(gs))
+							local best = cachedBestResult(chartKey)
+							if best and best.grade and best.grade ~= "Grade_Failed" then
+								self:settextf("%s %s", HV.GetGradeName(best.grade), best.rate)
+								self:diffuse(HVColor.GetGradeColor(ToEnumShortString(best.grade)))
 								return
 							end
 						end
@@ -230,7 +230,7 @@ t[#t + 1] = LoadFont("Common Normal") .. {
 	InitCommand = function(self)
 		self:halign(0.5):x(0):y(11)
 			:zoom(0.30):diffuse(color("0.5,0.5,0.5,1"))
-			:maxwidth((wheelItemW - 40) / 0.30)
+			:maxwidth(2 * (favoriteX - 8) / 0.30)
 	end,
 	SetMessageCommand = function(self, params)
 		local song = params and params.Song

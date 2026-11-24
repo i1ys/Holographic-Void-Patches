@@ -1492,33 +1492,8 @@ t[#t + 1] = Def.ActorFrame {
 			self:halign(0):valign(0):y(14):zoom(0.35):diffuse(subText)
 		end,
 	SetCommand = function(self)
-			local score = HV.CurrentSongData.pbScore
-			if score then
-				if self:GetParent().isHovering then
-					self:settext("")
-				else
-					local text = "Wife3"
-					local norm = PREFSMAN:GetPreference("SortBySSRNormPercent")
-					if not norm and type(score.GetJudgeScale) == "function" then
-						local scale = score:GetJudgeScale()
-						if scale then
-							scale = math.floor(scale * 100 + 0.5) / 100 -- safe round
-							local jIndex = 4
-							for k, v in pairs(ms.JudgeScalers) do
-								if math.floor(v * 100 + 0.5) / 100 == scale then
-									jIndex = k
-									if jIndex >= 4 then break end
-								end
-							end
-							jIndex = math.max(4, math.min(9, jIndex))
-							text = text .. " J" .. jIndex
-						end
-					end
-					self:settext(text)
-				end
-			else
-				self:settext("")
-			end
+			local view = getPBView(self:GetParent())
+			self:settext(view and (view.judge and string.format("Wife3 J%d", view.judge) or "Wife3") or "")
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
@@ -1529,8 +1504,8 @@ t[#t + 1] = Def.ActorFrame {
 			self:halign(1):valign(0):x(panelW - 32):y(14):zoom(0.35):diffuse(mainText)
 		end,
 		SetCommand = function(self)
-			local view = getPBView(self:GetParent())
-			self:settext(view and (view.judge and string.format("Wife3 J%d", view.judge) or "Wife3") or "")
+			local score = HV.CurrentSongData.pbScore
+			self:settext(score and getRate(score) or "")
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
 	},
