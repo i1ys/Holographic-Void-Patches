@@ -1083,7 +1083,7 @@ t[#t+1] = Def.ActorMultiVertex{
 		local verts = {}
 
 		local palette = HV.Color.GetJudgmentPalette()
-		local windows = HV.Judgment.GetWindows(tso, HV.EmulateRidiculousEnabled())
+		local windows = HV.Judgment.GetWindows(tso)
 		local customWindows = usingCustomWindows and getCurrentCustomWindowConfigJudgmentWindowTable
 			and getCurrentCustomWindowConfigJudgmentWindowTable()
 		local highlightedHand = currentHand()

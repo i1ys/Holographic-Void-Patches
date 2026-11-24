@@ -277,7 +277,6 @@ end
 -- CLEAR TYPE SYSTEM (IIDX-style)
 ------------------------------------------------------------
 local clearTypeNames = {
-	[1]="ClearType_RFC", [2]="ClearType_RF", [3]="ClearType_SDM",
 	[4]="ClearType_MFC", [5]="ClearType_WF", [6]="ClearType_SDP",
 	[7]="ClearType_PFC", [8]="ClearType_BF", [9]="ClearType_SDG",
 	[10]="ClearType_FC", [11]="ClearType_NGFC", [12]="ClearType_MF", [13]="ClearType_SDCB",
@@ -288,45 +287,6 @@ local clearTypeNames = {
 
 local clearTypeReverse = {}
 for k, v in pairs(clearTypeNames) do clearTypeReverse[v] = k end
-
-function HV.EmulateRidiculousEnabled()
-	return ThemePrefs and ThemePrefs.Get and (ThemePrefs.Get("HV_EmulateRidiculous") == true or ThemePrefs.Get("HV_EmulateRidiculous") == "true")
-end
-
-function HV.GetRidiculousCountFromOffsets(offsetVector, judgeScale)
-	local count = 0
-	if type(offsetVector) ~= "table" then return count end
-	local threshold = 11.25 * (tonumber(judgeScale) or 1)
-	for i = 1, #offsetVector do
-		local offset = tonumber(offsetVector[i])
-		if offset and math.abs(offset) <= threshold then
-			count = count + 1
-		end
-	end
-	return count
-end
-
-function HV.GetRidiculousCountFromScore(score)
-	if not HV.EmulateRidiculousEnabled() then return nil end
-	local rst = getRescoreElementsFromScore(score)
-	if not rst or type(rst.dvt) ~= "table" or #rst.dvt == 0 then return nil end
-	local judgeScale = (score and type(score.GetJudgeScale) == "function") and score:GetJudgeScale() or nil
-	return HV.GetRidiculousCountFromOffsets(rst.dvt, judgeScale)
-end
-
-function HV.GetRidiculousTallyString(score)
-	local w1 = score:GetTapNoteScore("TapNoteScore_W1") or 0
-	local w2 = score:GetTapNoteScore("TapNoteScore_W2") or 0
-	local w3 = score:GetTapNoteScore("TapNoteScore_W3") or 0
-	local w4 = score:GetTapNoteScore("TapNoteScore_W4") or 0
-	local w5 = score:GetTapNoteScore("TapNoteScore_W5") or 0
-	local miss = score:GetTapNoteScore("TapNoteScore_Miss") or 0
-	local ridic = HV.GetRidiculousCountFromScore(score)
-	if ridic then
-		return string.format("%d | %d | %d | %d | %d | %d | %d", ridic, w1 - ridic, w2, w3, w4, w5, miss)
-	end
-	return string.format("%d | %d | %d | %d | %d | %d", w1, w2, w3, w4, w5, miss)
-end
 
 ------------------------------------------------------------
 -- INVALIDATING MODIFIERS DETECTION
@@ -446,99 +406,29 @@ function getClearTypeShortText(ct)
 	return THEME:GetString("ClearTypes", ct)
 end
 
+local tapJudgmentKeys = {"W1", "W2", "W3", "W4", "W5", "Miss"}
+
+local function readTapJudgments(score)
+	local getTapScore = score.GetTapNoteScore or score.GetTapNoteScores
+	if not getTapScore then return end
+	local counts = {}
+	for _, key in ipairs(tapJudgmentKeys) do
+		counts[key] = getTapScore(score, "TapNoteScore_" .. key) or 0
+	end
+	return counts
+end
+
 function getClearLevel(pn, steps, score)
-	if score == nil or steps == nil then return 21 end
-	
-	local grade
-	if score.GetWifeGrade then grade = score:GetWifeGrade()
-	else grade = score:GetGrade() end
-
-	if grade == nil then return 21 end
-	-- Check invalid mods FIRST: a failed invalid score should still be Invalid
-	if IsScoreInvalid(score) then return 20 end
-	if grade == "Grade_Failed" then return 19 end
-
-	local tns = {}
-	if score.GetTapNoteScore then
-		tns.W1 = score:GetTapNoteScore("TapNoteScore_W1")
-		tns.W2 = score:GetTapNoteScore("TapNoteScore_W2")
-		tns.W3 = score:GetTapNoteScore("TapNoteScore_W3")
-		tns.W4 = score:GetTapNoteScore("TapNoteScore_W4")
-		tns.W5 = score:GetTapNoteScore("TapNoteScore_W5")
-		tns.Miss = score:GetTapNoteScore("TapNoteScore_Miss")
+	if not score or not steps then return 21 end
+	local chordCohesion
+	if score.GetChordCohesion then
+		chordCohesion = score:GetChordCohesion()
 	else
-		tns.W1 = score:GetTapNoteScores("TapNoteScore_W1")
-		tns.W2 = score:GetTapNoteScores("TapNoteScore_W2")
-		tns.W3 = score:GetTapNoteScores("TapNoteScore_W3")
-		tns.W4 = score:GetTapNoteScores("TapNoteScore_W4")
-		tns.W5 = score:GetTapNoteScores("TapNoteScore_W5")
-		tns.Miss = score:GetTapNoteScores("TapNoteScore_Miss")
+		chordCohesion = not GAMESTATE:CountNotesSeparately()
 	end
-
-	local hns = {}
-	if score.GetHoldNoteScore then
-		hns.Held = score:GetHoldNoteScore("HoldNoteScore_Held")
-	else
-		hns.Held = score:GetHoldNoteScores("HoldNoteScore_Held")
-	end
-
-	local maxNotes
-	if GAMESTATE:CountNotesSeparately() then
-		maxNotes = steps:GetRadarValues(pn):GetValue("RadarCategory_Notes") or 0
-	else
-		maxNotes = steps:GetRadarValues(pn):GetValue("RadarCategory_TapsAndHolds") or 0
-	end
-	local maxHolds = (steps:GetRadarValues(pn):GetValue("RadarCategory_Holds") or 0)
-		+ (steps:GetRadarValues(pn):GetValue("RadarCategory_Rolls") or 0)
-
-	local totalTaps = tns.W1 + tns.W2 + tns.W3 + tns.W4 + tns.W5 + tns.Miss
-	if totalTaps ~= maxNotes then return 20 end -- note count mismatch
-	local mineHits
-	if score.GetTapNoteScore then
-		mineHits = score:GetTapNoteScore("TapNoteScore_HitMine")
-	else
-		mineHits = score:GetTapNoteScores("TapNoteScore_HitMine")
-	end
-
-	local ridiculous = HV.GetRidiculousCountFromScore(score)
-	if ridiculous and tns.W1 == maxNotes and hns.Held == maxHolds then
-		local marvelous = maxNotes - ridiculous
-		if ridiculous == maxNotes then return 1
-		elseif marvelous == 1 then return 2
-		elseif marvelous < 10 then return 3 end
-	end
-
-	-- MFC
-	if tns.W1 == maxNotes and hns.Held == maxHolds then return 4 end
-
-	-- PFC variants
-	if tns.W1 + tns.W2 == maxNotes and hns.Held == maxHolds then
-		if tns.W2 == 1 then return 5      -- WF
-		elseif tns.W2 < 10 then return 6  -- SDP
-		else return 7 end                 -- PFC
-	end
-
-	-- FC variants
-	local missCount = tns.W4 + tns.W5 + tns.Miss
-	local ngCount
-	if score.GetHoldNoteScore then
-		ngCount = score:GetHoldNoteScore("HoldNoteScore_LetGo") + score:GetHoldNoteScore("HoldNoteScore_MissedHold")
-	else
-		ngCount = score:GetHoldNoteScores("HoldNoteScore_LetGo") + score:GetHoldNoteScores("HoldNoteScore_MissedHold")
-	end
-	if mineHits > 0 and tns.W4 + tns.W5 + tns.Miss == 0 and ngCount == 0 then
-		return 11 -- NGFC (FC or higher with hit mines)
-	end
-	if missCount == 0 then
-		if ngCount > 0 then return 11    -- NGFC
-		elseif tns.W3 == 1 then return 8 -- BF
-		elseif tns.W3 < 10 then return 9  -- SDG
-		else return 10 end                -- FC
-	elseif missCount == 1 then return 12  -- MF
-	elseif missCount < 10 then return 13  -- SDCB
-	end
-
-	return 16 -- Clear
+	local category = chordCohesion and "RadarCategory_TapsAndHolds" or "RadarCategory_Notes"
+	local expectedTaps = steps:GetRadarValues(pn):GetValue(category)
+	return getClearTypeLevel("ClearType_" .. getDetailedClearType(score, nil, expectedTaps))
 end
 
 function getClearType(pn, steps, score)
@@ -576,82 +466,38 @@ end
 ------------------------------------------------------------
 -- CLEAR TYPE (Detailed, from PSS)
 ------------------------------------------------------------
-function getDetailedClearType(obj, counts)
-	if not obj then return "Failed" end
-	local miss, w5, w4, w3, w2, w1 = 0, 0, 0, 0, 0, 0
-	local missedHolds = 0
-	local mineHits = 0
-	local grade = "Grade_None"
-	local wifeScore = 0
+function getDetailedClearType(score, counts, expectedTaps)
+	if not score then return "Failed" end
+	if IsScoreInvalid(score) then return "Invalid" end
+	local getGrade = score.GetWifeGrade or score.GetGrade
+	local grade = getGrade and getGrade(score)
+	if not grade or grade == "Grade_Failed" or grade == "Grade_None" then return "Failed" end
 
-	if obj.GetTapNoteScores then -- PlayerStageStats
-		miss = obj:GetTapNoteScores("TapNoteScore_Miss")
-		w5 = obj:GetTapNoteScores("TapNoteScore_W5")
-		w4 = obj:GetTapNoteScores("TapNoteScore_W4")
-		w3 = obj:GetTapNoteScores("TapNoteScore_W3")
-		w2 = obj:GetTapNoteScores("TapNoteScore_W2")
-		w1 = obj:GetTapNoteScores("TapNoteScore_W1")
-		missedHolds = obj:GetHoldNoteScores("HoldNoteScore_LetGo") + obj:GetHoldNoteScores("HoldNoteScore_MissedHold")
-		mineHits = obj:GetTapNoteScores("TapNoteScore_HitMine")
-		grade = obj:GetGrade()
-		wifeScore = obj:GetWifeScore()
-	elseif obj.GetTapNoteScore then -- HighScore
-		miss = obj:GetTapNoteScore("TapNoteScore_Miss")
-		w5 = obj:GetTapNoteScore("TapNoteScore_W5")
-		w4 = obj:GetTapNoteScore("TapNoteScore_W4")
-		w3 = obj:GetTapNoteScore("TapNoteScore_W3")
-		w2 = obj:GetTapNoteScore("TapNoteScore_W2")
-		w1 = obj:GetTapNoteScore("TapNoteScore_W1")
-		missedHolds = obj:GetHoldNoteScore("HoldNoteScore_LetGo") + obj:GetHoldNoteScore("HoldNoteScore_MissedHold")
-		mineHits = obj:GetTapNoteScore("TapNoteScore_HitMine")
-		grade = obj:GetGrade()
-		wifeScore = obj:GetWifeScore()
+	counts = counts or readTapJudgments(score)
+	if not counts then return "Failed" end
+	local tapBreaks = counts.W4 + counts.W5 + counts.Miss
+	if expectedTaps and counts.W1 + counts.W2 + counts.W3 + tapBreaks ~= expectedTaps then
+		return "Invalid"
 	end
 
-	if counts then
-		w1, w2, w3, w4, w5, miss = counts.W1, counts.W2, counts.W3, counts.W4, counts.W5, counts.Miss
-	end
-	-- Check invalid mods FIRST: a failed invalid score should still be Invalid
-	if IsScoreInvalid(obj) then return "Invalid" end
-	if grade == "Grade_Failed" or grade == "Grade_None" then
-		return "Failed"
-	end
-
-	local cb = miss + w5 + w4 + missedHolds
-	if cb == 0 and mineHits > 0 then return "NGFC" end
-	if miss + w5 + w4 == 0 and missedHolds > 0 then return "NGFC" end
-	if cb > 0 then
-		if cb == 1 then return "MF"
-		elseif cb < 10 then return "SDCB"
-		end
-	else
-		if w3 > 0 then
-			if w3 == 1 then return "BF"
-			elseif w3 < 10 then return "SDG"
-			else return "FC" end
-		end
-		if w2 > 0 then
-			if w2 == 1 then return "WF"
-			elseif w2 < 10 then return "SDP"
-			else return "PFC" end
-		end
-		local ridiculous
-		if counts then
-			ridiculous = HV.EmulateRidiculousEnabled() and counts.Ridiculous or nil
-		elseif obj.GetTapNoteScores then
-			local ok, offsets = pcall(function() return obj:GetOffsetVector() end)
-			local judgeScale = PREFSMAN:GetPreference("TimingWindowScale") or 1
-			ridiculous = ok and HV.EmulateRidiculousEnabled() and HV.GetRidiculousCountFromOffsets(offsets, judgeScale) or nil
-		else
-			ridiculous = HV.GetRidiculousCountFromScore(obj)
-		end
-		if ridiculous and ridiculous == w1 then return "RFC"
-		elseif ridiculous and w1 - ridiculous == 1 then return "RF"
-		elseif ridiculous and w1 - ridiculous < 10 then return "SDM" end
-		return "MFC"
+	local getHoldScore = score.GetHoldNoteScore or score.GetHoldNoteScores
+	local getTapScore = score.GetTapNoteScore or score.GetTapNoteScores
+	local droppedHolds = (getHoldScore(score, "HoldNoteScore_LetGo") or 0)
+		+ (getHoldScore(score, "HoldNoteScore_MissedHold") or 0)
+	local hitMines = getTapScore(score, "TapNoteScore_HitMine") or 0
+	if tapBreaks > 0 then
+		local breaks = tapBreaks + droppedHolds
+		if breaks == 1 then return "MF" end
+		if breaks < 10 then return "SDCB" end
+		return "Clear"
 	end
 
-	return "Clear"
+	if droppedHolds > 0 or hitMines > 0 then return "NGFC" end
+	if counts.W3 == 1 then return "BF" end
+	if counts.W3 > 0 then return counts.W3 < 10 and "SDG" or "FC" end
+	if counts.W2 == 1 then return "WF" end
+	if counts.W2 > 0 then return counts.W2 < 10 and "SDP" or "PFC" end
+	return "MFC"
 end
 
 ------------------------------------------------------------
@@ -946,12 +792,11 @@ end
 -- JUDGE RESCORING
 ------------------------------------------------------------
 -- For Window-based Scoring
-local rescoredJudgmentKeys = {"W1", "W2", "W3", "W4", "W5", "Miss"}
 
 function getRescoredJudge(offsetVector, judgeScale, judge)
 	if type(offsetVector) ~= "table" then return 0 end
 
-	local target = rescoredJudgmentKeys[tonumber(judge) or 1]
+	local target = tapJudgmentKeys[tonumber(judge) or 1]
 	if not target then return 0 end
 	local windows = HV.Judgment.GetWindows(ms.JudgeScalers[judgeScale])
 	local count = 0
@@ -992,14 +837,14 @@ function wife3(maxms, ts, version)
 	ts = ts or 1.0
 	local max_points = 2
 	local miss_weight = -5.5
-	local ridic = 5 * ts
+	local fullScoreWindow = 5 * ts
 	local max_boo_weight = 180 * ts
 	local ts_pow = 0.75
 	local zero = 65 * (ts^ts_pow)
 	local dev = 22.7 * (ts^ts_pow)
 
 	-- case handling
-	if maxms <= ridic then			-- anything below this (judge scaled) threshold is counted as full pts
+	if maxms <= fullScoreWindow then
 		return max_points
 	elseif maxms <= zero then			-- ma/pa region, exponential
 			return max_points * erf((zero - maxms) / dev)
@@ -1233,36 +1078,18 @@ function getRescoreElementsFromScore(score, offsets)
 	return o
 end
 
-local function readSavedJudgments(score)
-	local counts = {}
-	for _, key in ipairs(rescoredJudgmentKeys) do
-		counts[key] = score:GetTapNoteScore("TapNoteScore_" .. key) or 0
-	end
-	counts.Ridiculous = HV.GetRidiculousCountFromScore(score)
-	return counts
-end
-
 function HV.Score.GetDisplayJudgments(score, judge)
-	if not judge or HV.Score.GetPlayedJudge(score) == judge then return readSavedJudgments(score) end
+	if not judge or HV.Score.GetPlayedJudge(score) == judge then return readTapJudgments(score) end
 	local rst = getRescoreElementsFromScore(score)
 	local hits = rst and HV.Judgment.GetReplayHits(rst.dvt, nil, rst.tapsHit)
-	if hits then
-		local emulate = HV.EmulateRidiculousEnabled()
-		local counts = HV.Judgment.RescoreHits(hits, rst.misses, judge, emulate)
-		if not emulate then counts.Ridiculous = nil end
-		return counts
-	end
+	if hits then return HV.Judgment.RescoreHits(hits, rst.misses, judge) end
 end
 
 function HV.Score.GetDisplayTally(score, judge)
-	if not judge then return HV.GetRidiculousTallyString(score) end
 	local counts = HV.Score.GetDisplayJudgments(score, judge)
 	if not counts then return "-" end
-	local tally = {counts.W1, counts.W2, counts.W3, counts.W4, counts.W5, counts.Miss}
-	if counts.Ridiculous then
-		tally[1] = counts.W1 - counts.Ridiculous
-		table.insert(tally, 1, counts.Ridiculous)
-	end
+	local tally = {}
+	for i, key in ipairs(tapJudgmentKeys) do tally[i] = counts[key] end
 	return table.concat(tally, " | "), counts
 end
 

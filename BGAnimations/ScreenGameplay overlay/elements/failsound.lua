@@ -5,7 +5,6 @@ return Def.Actor {
 	CurrentSongChangedMessageCommand = function(self)
 		gameplay.failSoundPlayed = false
 		gameplay.autofailJudgments = { W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0 }
-		gameplay.ridiculousCount = 0
 	end,
 	PlayingUpdateMessageCommand = function(self)
 		if gameplay.failSoundPlayed then return end

@@ -610,8 +610,8 @@ for i = 1, pageSize do
 						local username = GetScoreDisplayName(s) or "Unknown"
 						self:GetChild("Player"):settext(username)
 
-						-- Online judgments if available
-						self:GetChild("Judgments"):settext(HV.GetRidiculousTallyString(s))
+						local tally = HV.Score.GetDisplayTally(s)
+						self:GetChild("Judgments"):settext(tally)
 
 						self:GetChild("Judge"):settext("")
 

@@ -31,7 +31,6 @@ local defaultCustomColors = {
 	},
 	
 	judgment = {
-		Ridiculous = "#FFD7FF",
 		W1   = "#f1ffff",
 		W2   = "#FFFFB7",
 		W3   = "#A0E0A0",
@@ -52,9 +51,6 @@ local defaultCustomColors = {
 	},
 	
 	clearType = {
-		RFC     = "#FFD7FF",
-		RF      = "#E8C8F8",
-		SDM     = "#D8C0F0",
 		MFC     = "#E0F8FF",
 		WF      = "#E0E0E0",
 		SDP     = "#CFD198",
@@ -324,10 +320,10 @@ function HVCustomColors.GetElements(category)
 			"A:", "A.", "A",
 			"B", "C", "D", "F", "None",
 		},
-		judgment = { "Ridiculous", "W1", "W2", "W3", "W4", "W5", "Miss", "Held", "LetGo" },
+		judgment = { "W1", "W2", "W3", "W4", "W5", "Miss", "Held", "LetGo" },
 		difficulty = { "Beginner", "Easy", "Medium", "Hard", "Challenge", "Edit" },
 		clearType = {
-			"RFC", "RF", "SDM", "MFC", "WF", "SDP", "PFC", "BF", "SDG", "FC", "NGFC", "MF", "SDCB",
+			"MFC", "WF", "SDP", "PFC", "BF", "SDG", "FC", "NGFC", "MF", "SDCB",
 			"Clear", "Failed", "NoPlay", "Invalid", "None",
 		},
 	}

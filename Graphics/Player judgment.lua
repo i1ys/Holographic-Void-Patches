@@ -16,50 +16,19 @@ local t = Def.ActorFrame {
 		local jdgIdx = judgments[tns]
 		if not jdgIdx then return end
 		
-		local isRidiculous = false
-		if HV.EmulateRidiculousEnabled() and tns == "W1" and params.TapNoteOffset then
-			local judgeScale = tonumber(HV_JudgeScale) or PREFSMAN:GetPreference("TimingWindowScale") or 1
-			if math.abs(params.TapNoteOffset) <= 0.01125 * judgeScale then
-				isRidiculous = true
-			end
-		end
-
 		-- The engine judgment actor is hidden in metrics.ini; this custom actor
 		-- must honor the theme option before rendering a hit judgment.
 		if HV.ShowJudgment and not HV.ShowJudgment() then
 			return
 		end
 
-		local emulateRidiculous = HV.EmulateRidiculousEnabled()
 		local numStates = sprite:GetNumStates()
-		local state
-		local offset = params.TapNoteOffset
-		local isLate = (offset and offset >= 0) and 1 or 0
-
-		if numStates == 14 then
-			-- 2x7 sprite: Row 0 is Ridiculous only if emulation is enabled
-			local baseIdx = jdgIdx
-			if emulateRidiculous then
-				baseIdx = isRidiculous and 0 or (jdgIdx + 1)
-			else
-				baseIdx = jdgIdx == 0 and 0 or (jdgIdx + 1)
-			end
-			state = baseIdx * 2 + isLate
-		elseif numStates == 7 then
-			-- 1x7 sprite
-			local baseIdx = jdgIdx
-			if emulateRidiculous then
-				baseIdx = isRidiculous and 0 or (jdgIdx + 1)
-			else
-				baseIdx = jdgIdx == 0 and 0 or (jdgIdx + 1)
-			end
-			state = baseIdx
-		elseif numStates == 12 then
-			-- 2x6 sprite: Standard mapping
-			state = jdgIdx * 2 + isLate
-		else
-			-- Standard 1x6 sprite
-			state = jdgIdx
+		local state = jdgIdx
+		-- Legacy seven-row assets reserve their first row for the extra judgment.
+		if numStates == 7 or numStates == 14 then state = state + 1 end
+		if numStates == 12 or numStates == 14 then
+			local offset = params.TapNoteOffset
+			state = state * 2 + ((offset and offset >= 0) and 1 or 0)
 		end
 
 		local curTime = GetTimeSinceStart()
@@ -105,19 +74,6 @@ local t = Def.ActorFrame {
 		container:stoptweening():visible(true):diffusealpha(1)
 		sprite:setstate(state)
 
-		local ridiculousIndicator = container:GetChild("RidiculousIndicator")
-		if ridiculousIndicator then
-			-- Only show text indicator for 6-row sprites
-			if isRidiculous and numStates ~= 7 and numStates ~= 14 then
-				ridiculousIndicator:stoptweening():visible(true):diffusealpha(1)
-				if HV.JudgmentAnimation and HV.JudgmentAnimation() then
-					ridiculousIndicator:glow(color("1,1,1,0.5")):linear(0.05):glow(color("1,1,1,0"))
-				end
-			else
-				ridiculousIndicator:visible(false)
-			end
-		end
-
 		-- Apply Animation if enabled (only to the judgment container)
 		if HV.JudgmentAnimation and HV.JudgmentAnimation() then
 			container:zoom(0.81) -- Start slightly larger for the pulse
@@ -158,15 +114,6 @@ local t = Def.ActorFrame {
 					end
 				end
 			},
-			LoadFont("Common Normal") .. {
-				Name = "RidiculousIndicator",
-				InitCommand = function(self)
-					self:y(-22):zoom(0.4):visible(false):maxwidth(200)
-					self:settext("RIDICULOUS")
-					self:diffuse(color("#E6FFFF")) -- Very light cyan
-					self:strokecolor(color("#1A2B2B"))
-				end
-			}
 		},
 		MovableBorder(120, 40, 1, 0, 0)
 	},

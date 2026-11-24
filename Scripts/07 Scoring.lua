@@ -4,7 +4,7 @@ HV.Score = HV.Score or {}
 local tapWindows = {22.5, 45, 90, 135}
 local tapKeys = {"W1", "W2", "W3", "W4"}
 
-function HV.Judgment.GetWindows(scale, includeRidiculous)
+function HV.Judgment.GetWindows(scale)
 	scale = math.max(0.001, math.min(tonumber(scale) or 1, 1))
 	local windows = { W5 = 180 }
 	for i, key in ipairs(tapKeys) do
@@ -12,13 +12,11 @@ function HV.Judgment.GetWindows(scale, includeRidiculous)
 		local milliseconds = type(seconds) == "number" and seconds * 1000 or tapWindows[i]
 		windows[key] = math.max(0, math.min(milliseconds * scale, 180))
 	end
-	if includeRidiculous then windows.Ridiculous = 11.25 * scale end
 	return windows
 end
 
 function HV.Judgment.ClassifyOffset(offsetMs, windows)
 	local offset = math.abs(offsetMs)
-	if windows.Ridiculous and offset <= windows.Ridiculous then return "Ridiculous" end
 	for _, key in ipairs(tapKeys) do
 		if offset <= windows[key] then return key end
 	end
@@ -95,14 +93,13 @@ function HV.Judgment.GetReplayHits(offsets, noteTypes, expectedHits)
 	if #hits == expectedHits then return hits end
 end
 
-function HV.Judgment.RescoreHits(hits, misses, judge, useRidiculous)
-	local windows = HV.Judgment.GetWindows(ms.JudgeScalers[judge], useRidiculous)
-	local counts = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = misses, Ridiculous = 0}
+function HV.Judgment.RescoreHits(hits, misses, judge)
+	local windows = HV.Judgment.GetWindows(ms.JudgeScalers[judge])
+	local counts = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = misses}
 	for _, offset in ipairs(hits) do
 		local judgment = HV.Judgment.ClassifyOffset(offset, windows)
 		counts[judgment] = counts[judgment] + 1
 	end
-	counts.W1 = counts.W1 + counts.Ridiculous
 	return counts
 end
 

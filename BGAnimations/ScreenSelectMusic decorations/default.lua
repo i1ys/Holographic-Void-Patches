@@ -56,21 +56,10 @@ local function getPBView(frame)
 	return stats
 end
 
-local function getPBJudgeRows(counts)
-	local rows = {}
-	if counts and counts.Ridiculous then
-		rows[1] = {name = "Ridiculous", label = "RID", val = counts.Ridiculous}
-	end
-	for _, entry in ipairs({
-		{"W1", "MARV"}, {"W2", "PERF"}, {"W3", "GREAT"}, {"W4", "GOOD"}, {"W5", "BAD"}, {"Miss", "MISS"},
-	}) do
-		local name, label = entry[1], entry[2]
-		local value = counts and counts[name]
-		if value and name == "W1" then value = value - (counts.Ridiculous or 0) end
-		rows[#rows + 1] = {name = name, label = label, val = value or "-"}
-	end
-	return rows
-end
+local pbJudgments = {
+	{"W1", "MARV"}, {"W2", "PERF"}, {"W3", "GREAT"},
+	{"W4", "GOOD"}, {"W5", "BAD"}, {"Miss", "MISS"},
+}
 
 local root = Def.ActorFrame {
 	Name = "SelectMusicDecorations"
@@ -1600,45 +1589,18 @@ t[#t + 1] = Def.ActorFrame {
 		end,
 		SetCommand = function(self)
 			local view = getPBView(self:GetParent())
-			local blocks = self:GetChild("Blocks")
-			if not view then
-				self:visible(false)
-				for i = 1, 7 do
-					local block = blocks and blocks:GetChild("Block_" .. i)
-					if block then block:visible(false) end
-				end
-				return
-			end
-			self:visible(true)
-			local judges = getPBJudgeRows(view.counts)
+			self:visible(view ~= nil)
+			if not view then return end
 
-			local gap = 2
-			local blockW = (panelW - 32 - (gap * (#judges - 1))) / #judges
-			for i = 1, 7 do
+			local blocks = self:GetChild("Blocks")
+			for i, entry in ipairs(pbJudgments) do
+				local key, label = entry[1], entry[2]
 				local block = blocks:GetChild("Block_" .. i)
-				local j = judges[i]
-				block:visible(j ~= nil)
-				if j then block:playcommand("SetLayout", {x = (i - 1) * (blockW + gap), width = blockW}) end
-				if not j then
-					block:GetChild("Val"):settext("")
-					block:GetChild("Lbl"):settext("")
-				end
-				if not j then
-					-- cleared above
-				else
-				local bg = block:GetChild("Bg")
-				local lbl = block:GetChild("Lbl")
-				local valTxt = block:GetChild("Val")
-				
-				if bg and lbl and valTxt then
-					valTxt:settext(tostring(j.val))
-					
-					local c = HVColor.GetJudgmentColor(j.name)
-					bg:diffuse(c):diffusealpha(0.2) -- translucent colored quad
-					lbl:settext(j.label):diffuse(c):zoom(0.2)
-					valTxt:diffuse(c):zoom(0.45)
-				end
-				end
+				local tint = HVColor.GetJudgmentColor(key)
+				local count = view.counts and view.counts[key]
+				block:GetChild("Bg"):diffuse(tint):diffusealpha(0.2)
+				block:GetChild("Lbl"):settext(label):diffuse(tint):zoom(0.2)
+				block:GetChild("Val"):settext(count or "-"):diffuse(tint):zoom(0.45)
 			end
 		end,
 		DelayedChartUpdateMessageCommand = function(self) self:playcommand("Set") end,
@@ -1654,7 +1616,7 @@ t[#t + 1] = Def.ActorFrame {
 		end,
 		(function()
 			local blocks = Def.ActorFrame{ Name = "Blocks" }
-			local numBlocks = 7
+			local numBlocks = #pbJudgments
 			local panelWConst = SCREEN_WIDTH * 0.36
 			local gap = 2
 			local blockW = (panelWConst - 32 - (gap * (numBlocks - 1))) / numBlocks
@@ -1664,12 +1626,6 @@ t[#t + 1] = Def.ActorFrame {
 					Name = "Block_" .. i,
 					InitCommand = function(self)
 						self:x((i - 1) * (blockW + gap))
-					end,
-					SetLayoutCommand = function(self, params)
-						self:x(params.x)
-						self:GetChild("Bg"):zoomto(params.width, 22)
-						self:GetChild("Val"):x(params.width / 2)
-						self:GetChild("Lbl"):x(params.width / 2)
 					end,
 					Def.Quad {
 						Name = "Bg",

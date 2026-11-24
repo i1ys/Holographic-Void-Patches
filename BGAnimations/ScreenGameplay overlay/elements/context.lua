@@ -7,7 +7,6 @@ local gameplay = {
 	pbThreshold = 0,
 	judgeScale = 1.0,
 	autofailJudgments = { W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0 },
-	ridiculousCount = 0,
 	autofailStopped = false,
 	failSoundPlayed = false,
 	accentColor = HVColor.Accent,

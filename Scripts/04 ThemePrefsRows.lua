@@ -176,10 +176,6 @@ function OptionRowShowJudgment()
 	return HV.OptionRow("HV_ShowJudgment", "Show Judgment")
 end
 
-function OptionRowEmulateRidiculous()
-	return HV.OptionRow("HV_EmulateRidiculous", "Emulate Ridiculous")
-end
-
 function OptionRowShowCombo()
 	return HV.OptionRow("HV_ShowCombo", "Show Combo")
 end

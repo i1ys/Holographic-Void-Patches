@@ -129,7 +129,7 @@ local judge = 4
 local playedJudge = 4
 local normalized = PREFSMAN:GetPreference("SortBySSRNormPercent")
 local inMulti = Var("LoadingScreen") == "ScreenNetEvaluation"
-local judges = HV.EmulateRidiculousEnabled() and {"Ridiculous","TapNoteScore_W1","TapNoteScore_W2","TapNoteScore_W3","TapNoteScore_W4","TapNoteScore_W5","TapNoteScore_Miss"} or {"TapNoteScore_W1","TapNoteScore_W2","TapNoteScore_W3","TapNoteScore_W4","TapNoteScore_W5","TapNoteScore_Miss"}
+local judges = {"TapNoteScore_W1", "TapNoteScore_W2", "TapNoteScore_W3", "TapNoteScore_W4", "TapNoteScore_W5", "TapNoteScore_Miss"}
 
 -- Rescoring/offset plot state
 local nrv, dvt, ctt, ntt, totalTaps
@@ -251,24 +251,6 @@ local function setDPTextActors(wholeActor, decimalActor, dp, precision)
 	end
 end
 
--- Filter the module-level dvt by tap note type, mirroring getRescoreElementsFromScore.
--- Without this, mine-hit offsets pass through wife3() giving ~+2 pts each while
--- minesHit*-7 is ALSO applied, netting -5 per mine instead of the correct -7.
-local function getFilteredDvt()
-	if not dvt then return {} end
-	if ntt and #ntt == #dvt then
-		local out = {}
-		for i = 1, #dvt do
-			local ty = ntt[i]
-			if ty == "TapNoteType_Tap" or ty == "TapNoteType_HoldHead" or ty == "TapNoteType_Lift" then
-				out[#out + 1] = dvt[i]
-			end
-		end
-		return out
-	end
-	return dvt -- no type vector: return as-is (PSS path, already clean)
-end
-
 local function wifePercentAtJudge(targetJudge)
 	if targetJudge == nativeWifeJudge() then return evaluationWifeScore() * 100 end
 	if rescore.data then return getRescoredWife3Judge(3, targetJudge, rescore.data) end
@@ -285,7 +267,7 @@ local function refreshRescoredPercentage()
 	end
 
 	if judge ~= playedJudge and rescore.data then
-		rescore.counts = HV.Judgment.RescoreHits(rescore.data.dvt, rescore.data.misses, judge, HV.EmulateRidiculousEnabled())
+		rescore.counts = HV.Judgment.RescoreHits(rescore.data.dvt, rescore.data.misses, judge)
 	end
 	if judge ~= nativeWifeJudge() then
 		rescore.percent, rescore.earned, rescore.possible = wifePercentAtJudge(judge)
@@ -696,8 +678,6 @@ local function nearestGradeComparison(percent)
 end
 local clearType = scoringVoided and nil or getClearType(pn, steps, curScore)
 
-local tst = ms.JudgeScalers
-
 local accentColor = HVColor.Accent
 local brightText = color("1,1,1,1")
 local dimText = brightText
@@ -707,25 +687,9 @@ local bgCard = color("0.06,0.06,0.06,0.7")
 local dividerColor = color("0.2,0.2,0.2,1")
 
 local judgmentColors = {
-	HV.EmulateRidiculousEnabled() and HVColor.GetJudgmentColor("Ridiculous") or nil,
 	HVColor.GetJudgmentColor("W1"), HVColor.GetJudgmentColor("W2"), HVColor.GetJudgmentColor("W3"),
 	HVColor.GetJudgmentColor("W4"), HVColor.GetJudgmentColor("W5"), HVColor.GetJudgmentColor("Miss")
 }
-if not HV.EmulateRidiculousEnabled() then table.remove(judgmentColors, 1) end
-
-local function getRidiculousCount()
-	if not HV.EmulateRidiculousEnabled() then return nil end
-	return HV.GetRidiculousCountFromOffsets(getFilteredDvt(), tst[playedJudge] or 1)
-end
-
-local function getEvaluationJudgeCount(judgeName)
-	if scoringVoided then return 0 end
-	local ridiculousCount = getRidiculousCount()
-	if judgeName == "Ridiculous" then return ridiculousCount or 0 end
-	if judgeName == "TapNoteScore_W1" and ridiculousCount then return evaluationTapCount(judgeName) - ridiculousCount end
-	return evaluationTapCount(judgeName)
-end
-
 local function getDisplayedJudgeCount(judgeName, judgeIndex)
 	if scoringVoided then return 0 end
 	local key = judgeName:gsub("TapNoteScore_", "")
@@ -733,9 +697,8 @@ local function getDisplayedJudgeCount(judgeName, judgeIndex)
 		return lastSnapshot.counts[key] or 0
 	end
 	if maniaRescore then return maniaRescore.counts[judgeIndex] or 0 end
-	if judge == playedJudge then return getEvaluationJudgeCount(judgeName) end
+	if judge == playedJudge then return evaluationTapCount(judgeName) end
 	if not rescore.counts then return end
-	if key == "W1" then return rescore.counts.W1 - rescore.counts.Ridiculous end
 	return rescore.counts[key]
 end
 
@@ -757,11 +720,17 @@ end
 local maniaJudgeLabels = {"MAX", "300", "200", "100", "50", "MISS"}
 local function getEvaluationJudgeLabel(judgeName, judgeIndex)
 	if maniaRescore or (HV.ManiaState and HV.ManiaState.enabled) then return maniaJudgeLabels[judgeIndex] or "" end
-	return judgeName == "Ridiculous" and THEME:GetString("TapNoteScore", "Ridiculous") or getJudgeStrings(judgeName)
+	return getJudgeStrings(judgeName)
 end
 
-local function getActiveJudgeRowCount()
-	return isManiaModeEnabled() and 6 or #judges
+local function judgmentFraction(count, total)
+	if count and total and total > 0 then return count / total end
+end
+
+local function displayedJudgmentFraction(judgeName, judgeIndex)
+	local total = usingCustomWindows and lastSnapshot and lastSnapshot.totalTaps
+		or (maniaRescore and totalTaps or songTotalNotes)
+	return judgmentFraction(getDisplayedJudgeCount(judgeName, judgeIndex), total)
 end
 
 local function getRATallyCount(rowIndex)
@@ -2006,11 +1975,8 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 		Def.Quad {
 			Name = "HoverArea",
 			InitCommand = function(self)
-				self:halign(0):valign(0):xy(col1X, statsStartY + 20):zoomto(col2X - pad - 5, rowH * getActiveJudgeRowCount() + 4):diffusealpha(0)
+				self:halign(0):valign(0):xy(col1X, statsStartY + 20):zoomto(col2X - pad - 5, rowH * #judges + 4):diffusealpha(0)
 			end,
-			ManiaModeChangedMessageCommand = function(self)
-				self:zoomto(col2X - pad - 5, rowH * getActiveJudgeRowCount() + 4)
-			end
 		},
 
 		LoadFont("Common Normal") .. {
@@ -2029,45 +1995,36 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 	
 	for k, v in ipairs(judges) do
 		local jy = statsStartY + 28 + (k - 1) * rowH
-		local rowColor = function()
-			if isManiaModeEnabled() then
-				return HVColor.GetJudgmentColor(({"W1", "W2", "W3", "W4", "W5", "Miss"})[k])
-			end
-			return judgmentColors[k]
-		end
-		
+		local rowColor = judgmentColors[k]
+
 		-- Backdrop
 		tallyFrame[#tallyFrame + 1] = Def.Quad {
 			InitCommand = function(self)
-				self:halign(0):xy(col1X - 2, jy):zoomto(0, rowH - 2):diffuse(rowColor()):diffusealpha(0.2):visible(k <= getActiveJudgeRowCount())
+				self:halign(0):xy(col1X - 2, jy):zoomto(0, rowH - 2):diffuse(rowColor):diffusealpha(0.2)
 			end,
 			ManiaModeChangedMessageCommand = function(self)
-				self:visible(k <= getActiveJudgeRowCount()):diffuse(rowColor()):diffusealpha(0.2)
 				self:playcommand("SetJudge")
 			end,
 			OnCommand = function(self)
-				local count = getDisplayedJudgeCount(v, k) or 0
-				local pct = count / songTotalNotes
+				local pct = displayedJudgmentFraction(v, k) or 0
 				self:zoomto((col2X - pad - col1X) * pct, rowH - 2)
 			end,
 			SetJudgeCommand = function(self)
-				local count = getDisplayedJudgeCount(v, k) or 0
-				local pct = count / songTotalNotes
+				local pct = displayedJudgmentFraction(v, k) or 0
 				self:finishtweening():linear(0.2):zoomto((col2X - pad - col1X) * pct, rowH - 2)
 			end,
 			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
 			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			RATallyChangedCommand = function(self)
-				local count = 0
+				local pct
 				if showRATally then
-					count = getRATallyCount(k)
-					self:diffuse(raColors[k] or judgmentColors[k]):diffusealpha(k <= #raLabels and 0.2 or 0)
+					pct = judgmentFraction(getRATallyCount(k), totalTaps)
 				else
-					count = getDisplayedJudgeCount(v, k) or 0
-					self:diffuse(rowColor()):diffusealpha(0.2)
+					pct = displayedJudgmentFraction(v, k)
 				end
-				local pct = count / songTotalNotes
+				self:diffuse(showRATally and raColors[k] or rowColor):diffusealpha(0.2)
+				pct = pct or 0
 				self:finishtweening():linear(0.2):zoomto((col2X - pad - col1X) * pct, rowH - 2)
 			end,
 			ResetJudgeMessageCommand = function(self) self:playcommand("On") end
@@ -2075,20 +2032,20 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 		-- Label
 		tallyFrame[#tallyFrame + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self)
-				self:halign(0):xy(col1X, jy):zoom(0.45):diffuse(rowColor()):visible(k <= getActiveJudgeRowCount())
+				self:halign(0):xy(col1X, jy):zoom(0.45):diffuse(rowColor)
 					self:settext(getEvaluationJudgeLabel(v, k))
 			end,
-			ManiaModeChangedMessageCommand = function(self) self:settext(getEvaluationJudgeLabel(v, k)):diffuse(rowColor()):visible(k <= getActiveJudgeRowCount()) end,
+			ManiaModeChangedMessageCommand = function(self) self:settext(getEvaluationJudgeLabel(v, k)):diffuse(rowColor) end,
 			RATallyChangedCommand = function(self)
 				if showRATally then
-					self:settext(raLabels[k] or ""):diffuse(raColors[k] or judgmentColors[k])
+					self:settext(raLabels[k]):diffuse(raColors[k])
 				elseif usingCustomWindows then
 					if getCustomWindowConfigJudgmentName then self:settext(getCustomWindowConfigJudgmentName(v)) end
-					self:diffuse(rowColor())
+					self:diffuse(rowColor)
 				elseif maniaRescore then
-					self:settext(getEvaluationJudgeLabel(v, k)):diffuse(rowColor())
+					self:settext(getEvaluationJudgeLabel(v, k)):diffuse(rowColor)
 				else
-					self:settext(v == "Ridiculous" and THEME:GetString("TapNoteScore", "Ridiculous") or getJudgeStrings(v)):diffuse(rowColor())
+					self:settext(getJudgeStrings(v)):diffuse(rowColor)
 				end
 			end,
 			LoadedCustomWindowMessageCommand = function(self)
@@ -2098,9 +2055,8 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 		}
 		-- Count
 		tallyFrame[#tallyFrame + 1] = LoadFont("Common Normal") .. {
-			InitCommand = function(self) self:halign(1):xy(col2X - pad - 40, jy):zoom(0.55):diffuse(brightText):visible(k <= getActiveJudgeRowCount()) end,
+			InitCommand = function(self) self:halign(1):xy(col2X - pad - 40, jy):zoom(0.55):diffuse(brightText) end,
 			ManiaModeChangedMessageCommand = function(self)
-				self:visible(k <= getActiveJudgeRowCount())
 				self:playcommand("SetJudge")
 			end,
 			OnCommand = function(self) self:settext(getDisplayedJudgeCount(v, k) or "-") end,
@@ -2111,7 +2067,7 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			RATallyChangedCommand = function(self)
 				if showRATally then
-					self:settext(k <= #raLabels and getRATallyCount(k) or "")
+					self:settext(getRATallyCount(k))
 				else
 					self:playcommand("SetJudge")
 				end
@@ -2126,28 +2082,24 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 		}
 		-- Percentage
 		tallyFrame[#tallyFrame + 1] = LoadFont("Common Normal") .. {
-			InitCommand = function(self) self:halign(1):xy(col2X - pad - 5, jy):zoom(0.35):diffuse(dimText):visible(k <= getActiveJudgeRowCount()) end,
+			InitCommand = function(self) self:halign(1):xy(col2X - pad - 5, jy):zoom(0.35):diffuse(dimText) end,
 			ManiaModeChangedMessageCommand = function(self)
-				self:visible(k <= getActiveJudgeRowCount())
 				self:playcommand("SetJudge")
 			end,
 			OnCommand = function(self)
 				self:playcommand("SetJudge")
 			end,
 			SetJudgeCommand = function(self)
-				local total = usingCustomWindows and lastSnapshot and lastSnapshot.totalTaps
-					or (maniaRescore and totalTaps or songTotalNotes)
-				local count = getDisplayedJudgeCount(v, k)
-				self:settext(count and total > 0 and string.format("%.1f%%", count / total * 100) or "-")
+				local pct = displayedJudgmentFraction(v, k)
+				self:settext(pct and string.format("%.1f%%", pct * 100) or "-")
 			end,
 			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
 			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			RATallyChangedCommand = function(self)
 				if showRATally then
-					local count = getRATallyCount(k)
-					if k <= #raLabels and totalTaps > 0 then self:settextf("%.1f%%", count / totalTaps * 100)
-					else self:settext("") end
+					local pct = judgmentFraction(getRATallyCount(k), totalTaps)
+					self:settext(pct and string.format("%.1f%%", pct * 100) or "")
 				else
 					self:playcommand("SetJudge")
 				end
@@ -2157,7 +2109,7 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 	end
 
 	-- Ratios (Bottom Column 1 - 2x2 Grid)
-	local ratioStartY = statsStartY + 28 + (getActiveJudgeRowCount() * rowH) + 12
+	local ratioStartY = statsStartY + 28 + (#judges * rowH) + 12
 	local ratioLabels = {"LA", "RA", "MA", "PA"}
 	local ratioColors = {color("#FF69B4"), color("#FFD700"), color("#FFFFFF"), color("#E0E0A0")}
 	local function getManiaRatioText(index)

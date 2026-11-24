@@ -473,19 +473,13 @@ local HVPrefs = {
 		Choices = (function() local c = {}; for i=0, 99 do c[#c+1]=tostring(i) end return c end)(),
 		Values = (function() local v = {}; for i=0, 99 do v[#v+1]=i end return v end)(),
 	},
-	-- Gameplay: Emulate Ridiculous Judgement (W0 = W1/2)
-	HV_EmulateRidiculous = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true}
-	},
 }
 
 local Config = HV.Config
 -- Keep the global definitions readable as defaults for pre-migration HV2 profiles.
 Config.GameplayHUD = {}
 for _, key in ipairs({
-	"HV_MinimalisticMode", "HV_ShowJudgment", "HV_EmulateRidiculous",
+	"HV_MinimalisticMode", "HV_ShowJudgment",
 	"HV_JudgmentAnimation", "HV_PrioritizeLowerJudgements",
 	"HV_ShowCombo", "HV_ComboAnimation", "HV_ShowCurrentWife", "HV_ShowJudgeCounter",
 	"HV_JudgeCounterMode", "HV_ShowNGIndicator", "HV_ShowPlayerInfo",

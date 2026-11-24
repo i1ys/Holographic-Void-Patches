@@ -105,7 +105,6 @@ end
 
 -- Judgment colors (kept distinct but desaturated to fit the theme)
 HVColor.JudgmentHolographic = {
-	Ridiculous = color("#FFD7FF"),
 	W1   = color("#f1ffff"),    -- Marvelous: pure white
 	W2   = color("#FFFFB7"),    -- Perfect: warm off-white
 	W3   = color("#A0E0A0"),    -- Great: pale green
@@ -117,7 +116,6 @@ HVColor.JudgmentHolographic = {
 }
 
 HVColor.JudgmentClassic = {
-	Ridiculous = color("#FF66CC"),
 	W1   = color("#99CCFF"),
 	W2   = color("#F2CB30"),
 	W3   = color("#14CC8F"),
@@ -134,7 +132,6 @@ function HVColor.RefreshJudgmentColors()
 	local s = tostring(style):lower()
 	if s == "custom" and HVCustomColors then
 		HVColor.Judgment = {
-			Ridiculous = color(HVCustomColors.GetColor("judgment", "Ridiculous")),
 			W1   = color(HVCustomColors.GetColor("judgment", "W1")),
 			W2   = color(HVCustomColors.GetColor("judgment", "W2")),
 			W3   = color(HVCustomColors.GetColor("judgment", "W3")),
@@ -163,7 +160,6 @@ function HVColor.GetJudgmentColor(judge)
 	local s = tostring(judge):gsub("TapNoteScore_", ""):gsub("HoldNoteScore_", "")
 	
 	-- Map internal scores to the palette
-	if s == "Ridiculous" or s == "W0" then return palette.Ridiculous or palette.W1 end
 	if s == "W1" then return palette.W1 end
 	if s == "W2" then return palette.W2 end
 	if s == "W3" then return palette.W3 end
@@ -239,9 +235,6 @@ end
 
 -- Clear Type colors
 HVColor.ClearTypeHolographic = {
-	RFC     = color("#FFD7FF"),
-	RF      = color("#E8C8F8"),
-	SDM     = color("#D8C0F0"),
 	MFC     = color("#E0F8FF"), -- Slightly cyan white (Marvelous Full Combo)
 	WF      = color("#E0E0E0"), -- Muted White (White Flag - 1xW2 FC)
 	SDP     = color("#CFD198"), -- Muted Yellow (Single Digit Perfects)
@@ -260,9 +253,6 @@ HVColor.ClearTypeHolographic = {
 }
 
 HVColor.ClearTypeClassic = {
-	RFC     = color("#FF66CC"),
-	RF      = color("#DD66FF"),
-	SDM     = color("#BB66FF"),
 	MFC     = color("#66CCFF"),
 	WF      = color("#DDDDDD"),
 	SDP     = color("#CC8800"),
@@ -286,9 +276,6 @@ function HVColor.RefreshClearTypeColors()
 	local s = tostring(style):lower()
 	if s == "custom" and HVCustomColors then
 		HVColor.ClearType = {
-			RFC     = color(HVCustomColors.GetColor("clearType", "RFC")),
-			RF      = color(HVCustomColors.GetColor("clearType", "RF")),
-			SDM     = color(HVCustomColors.GetColor("clearType", "SDM")),
 			MFC     = color(HVCustomColors.GetColor("clearType", "MFC")),
 			WF      = color(HVCustomColors.GetColor("clearType", "WF")),
 			SDP     = color(HVCustomColors.GetColor("clearType", "SDP")),

@@ -5,7 +5,6 @@ if gameplay.isSync or (not showCounter and statMode == "Off") then return end
 
 local fullCounter = showCounter and HV.GetJudgmentTallyMode() ~= "Simple"
 local useNativeCounts = showCounter or statMode == "MARatio"
-local useRidiculous = showCounter and HV.EmulateRidiculousEnabled()
 local useOffsets = fullCounter or statMode == "StdDev" or statMode == "Mean"
 local useDelta = statMode == "DeltaHand"
 local useLastOffset = statMode == "TapOffset"
@@ -35,9 +34,8 @@ end
 local function reset()
 	stats = {
 		taps = {W1 = 0, W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0},
-		ridiculous = 0,
 		held = 0,
-		letGo = 0,
+		missedHolds = 0,
 		maRatio = 0,
 		paRatio = 0,
 		longest = 0,
@@ -58,7 +56,6 @@ end
 
 local function resetAndPublish(self)
 	reset()
-	gameplay.ridiculousCount = 0
 	publish(self)
 end
 
@@ -114,10 +111,7 @@ local function refreshNativeStats()
 	stats.taps.W5 = pss:GetTapNoteScores("TapNoteScore_W5")
 	stats.taps.Miss = pss:GetTapNoteScores("TapNoteScore_Miss")
 	stats.held = pss:GetHoldNoteScores("HoldNoteScore_Held")
-	stats.letGo = pss:GetHoldNoteScores("HoldNoteScore_LetGo")
-	if useRidiculous and not replayPrefixMissing then
-		stats.ridiculous = gameplay.ridiculousCount
-	end
+	stats.missedHolds = pss:GetHoldNoteScores("HoldNoteScore_LetGo") + pss:GetHoldNoteScores("HoldNoteScore_MissedHold")
 	if fullCounter then stats.longest = pss:MaxCombo() end
 end
 
@@ -129,7 +123,6 @@ local function refreshTimingStats()
 	if replayPrefixMissing then
 		-- Etterna resets its combo on resume. Continue this segment from live
 		-- judgments while native tap tallies retain their replay snapshot.
-		stats.ridiculous = nil
 		stats.handScores, stats.handCounts = nil, nil
 		if count == 0 then stats.mean, stats.largest, stats.longest = nil, nil, nil end
 		if count < 2 then stats.stdDev = nil end
@@ -154,8 +147,6 @@ return Def.Actor {
 				clearOffsets()
 				if replayPrefixMissing then
 					stats.lastOffset = nil
-				else
-					gameplay.ridiculousCount = 0
 				end
 			end
 		elseif useOffsets or useDelta or useLastOffset then

@@ -52,10 +52,6 @@ local function toggleInGameLeaderboardPreference()
 	MESSAGEMAN:Broadcast("HV_InGameLeaderboardModeChanged", { Mode = nextMode })
 end
 
-local function isRidiculousJudgment(params)
-	return HV.EmulateRidiculousEnabled() and params and params.TapNoteScore == "TapNoteScore_W1" and params.TapNoteOffset and math.abs(params.TapNoteOffset) <= 0.01125 * (tonumber(gameplay.judgeScale) or 1)
-end
-
 return Def.ActorFrame {
 	Name = "GameplayOverlay",
 	ApplyMinimalisticModeCommand = function(self, params)
@@ -105,7 +101,6 @@ return Def.ActorFrame {
 		-- Properly initialize total chart points once song/steps are loaded
 		gameplay.maxPoints = (getMaxNotes(PLAYER_1) or 1) * 2
 		gameplay.pointsLost = 0
-		gameplay.ridiculousCount = 0
 		gameplay.judgeScale = PREFSMAN:GetPreference("TimingWindowScale") or 1.0
 		if HV.IsReplayPlayback and HV.IsReplayPlayback() and curScreen and curScreen.GetReplayScore then
 			local replayScore = curScreen:GetReplayScore(PLAYER_1)
@@ -199,7 +194,6 @@ return Def.ActorFrame {
 
 	CurrentSongChangedMessageCommand = function(self)
 		hideFallbackLifeBar()
-		gameplay.ridiculousCount = 0
 		-- Re-apply sync mods on every loop start to prevent engine resets
 		if gameplay.isSync then
 			for _, pn_loop in ipairs(GAMESTATE:GetEnabledPlayers()) do
@@ -237,10 +231,6 @@ return Def.ActorFrame {
 		elseif s == "TapNoteScore_Miss" then
 			-- A full miss loses 7.5 points relative to the 2.0 potential max per tap (2.0 - (-5.5) = 7.5)
 			gameplay.pointsLost = gameplay.pointsLost + 7.5
-		end
-
-		if isRidiculousJudgment(params) then
-			gameplay.ridiculousCount = gameplay.ridiculousCount + 1
 		end
 
 		if s == "TapNoteScore_W2" then

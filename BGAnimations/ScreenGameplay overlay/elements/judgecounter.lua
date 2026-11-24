@@ -3,7 +3,6 @@ local showJudgeCounter = HV.ShowJudgeCounter()
 if not showJudgeCounter or gameplay.isSync then return end
 
 local simple = HV.GetJudgmentTallyMode() == "Simple"
-local useRidiculous = HV.EmulateRidiculousEnabled()
 local judgmentRows = {}
 
 local function countText(value)
@@ -18,24 +17,12 @@ local function offsetText(value, format)
 	return value == nil and "-" or string.format(format or "%.2f", value)
 end
 
-if useRidiculous then
-	judgmentRows[#judgmentRows + 1] = {
-		label = THEME:GetString("TapNoteScore", "Ridiculous"),
-		color = HVColor.GetJudgmentColor("Ridiculous"),
-		value = function(stats) return countText(stats.ridiculous) end,
-		initial = "0",
-	}
-end
 for _, key in ipairs({"W1", "W2", "W3", "W4", "W5", "Miss"}) do
 	local judgment = key
 	judgmentRows[#judgmentRows + 1] = {
 		label = THEME:GetString("TapNoteScore", judgment),
 		color = HVColor.GetJudgmentColor(judgment),
 		value = function(stats)
-			if useRidiculous and judgment == "W1" then
-				if stats.ridiculous == nil then return "-" end
-				return countText(stats.taps.W1 - stats.ridiculous)
-			end
 			return countText(stats.taps[judgment])
 		end,
 		initial = "0",
@@ -43,7 +30,7 @@ for _, key in ipairs({"W1", "W2", "W3", "W4", "W5", "Miss"}) do
 end
 for _, hold in ipairs({
 	{label = "OK", color = "Held", field = "held"},
-	{label = "NG", color = "LetGo", field = "letGo"},
+	{label = "NG", color = "LetGo", field = "missedHolds"},
 }) do
 	local field = hold.field
 	judgmentRows[#judgmentRows + 1] = {
