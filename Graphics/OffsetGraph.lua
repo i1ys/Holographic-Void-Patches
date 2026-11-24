@@ -11,8 +11,9 @@ local scoreTabPlot = ... == "ScoreTab"
 local tst = ms.JudgeScalers
 local judge = math.max(1, math.min(9, PREFSMAN:GetPreference("SortBySSRNormPercent") and 4 or GetTimingDifficulty()))
 local tso = tst[judge]
-local plotScale = 100
-local maxOffset = math.max(180, 180 * (tso or 1))
+local fullOffsetRange = 180
+local zoomStep = 9
+local maxOffset = fullOffsetRange
 
 local function clampJudge()
 	if judge < 1 then judge = 1 end
@@ -20,13 +21,10 @@ local function clampJudge()
 end
 clampJudge()
 
-local function updateMaxOffset()
-	maxOffset = math.max(180, 180 * (tso or 1)) * plotScale / 100
-end
-
-local function setPlotScale(scale)
-	plotScale = math.max(5, math.min(100, scale))
-	updateMaxOffset()
+-- The vertical axis measures recorded milliseconds. Changing the judge only
+-- changes judgment windows and the derived scoring metrics.
+local function setPlotRange(milliseconds)
+	maxOffset = math.max(zoomStep, math.min(fullOffsetRange, milliseconds))
 	MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 end
 
@@ -316,14 +314,12 @@ local function getHandWife(side)
 	end
 end
 
-local function setPlotScaleToWorstHit()
-	local worst = 0
+local function fitPlotToHits()
+	local worst
 	for _, event in ipairs(plotEvents) do
-		if event.offset ~= nil then worst = math.max(worst, math.abs(event.offset)) end
+		if event.offset ~= nil then worst = math.max(worst or 0, math.abs(event.offset)) end
 	end
-	if worst > 0 then
-		setPlotScale(math.ceil(worst / math.max(180, 180 * tso) * 100))
-	end
+	if worst then setPlotRange(math.ceil(worst)) end
 end
 
 local function xForTime(seconds)
@@ -467,10 +463,12 @@ local function fitY(y)
 end
 
 local function setOffsetVerts(vt, x, y, c)
-	vt[#vt + 1] = {{x - dotWidth/2, y + dotWidth/2, 0}, c}
-	vt[#vt + 1] = {{x + dotWidth/2, y + dotWidth/2, 0}, c}
-	vt[#vt + 1] = {{x + dotWidth/2, y - dotWidth/2, 0}, c}
-	vt[#vt + 1] = {{x - dotWidth/2, y - dotWidth/2, 0}, c}
+	local top = math.max(0, y - dotWidth / 2)
+	local bottom = math.min(setHeight, y + dotWidth / 2)
+	vt[#vt + 1] = {{x - dotWidth / 2, bottom, 0}, c}
+	vt[#vt + 1] = {{x + dotWidth / 2, bottom, 0}, c}
+	vt[#vt + 1] = {{x + dotWidth / 2, top, 0}, c}
+	vt[#vt + 1] = {{x - dotWidth / 2, top, 0}, c}
 end
 
 local function HighlightUpdaterThing(self)
@@ -559,17 +557,17 @@ local t = Def.ActorFrame{
 			if not bg or not isOver(bg) then return false end
 
 			if event.type == "InputEventType_FirstPress" and btn == "DeviceButton_mousewheel up" then
-				setPlotScale(plotScale - 5)
+				setPlotRange(maxOffset - zoomStep)
 				return true
 			elseif event.type == "InputEventType_FirstPress" and btn == "DeviceButton_mousewheel down" then
-				setPlotScale(plotScale + 5)
+				setPlotRange(maxOffset + zoomStep)
 				return true
 			elseif event.type == "InputEventType_FirstPress" and btn == "DeviceButton_left mouse button" then
 				if getCurrentHoverModeId() == "slice" then
 					setSliceByCenterX(getMouseLocalX(bg))
 					MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 				else
-					setPlotScaleToWorstHit()
+					fitPlotToHits()
 				end
 				return true
 			elseif not scoreTabPlot and event.type == "InputEventType_FirstPress" and btn == "DeviceButton_right mouse button" then
@@ -578,7 +576,7 @@ local t = Def.ActorFrame{
 					selectedSliceX2 = nil
 					MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 				else
-					setPlotScale(100)
+					setPlotRange(fullOffsetRange)
 				end
 				return true
 			elseif event.type == "InputEventType_FirstPress" and btn == "DeviceButton_middle mouse button" then
@@ -633,7 +631,6 @@ local t = Def.ActorFrame{
 			and params.Name ~= "NextJudge" and params.Name ~= "ToggleHands"
 			and params.Name ~= "NextTrendMetric" and params.Name ~= "PrevTrendMetric"
 			and params.Name ~= "NextTrendColor" and params.Name ~= "PrevTrendColor" then return end
-		updateMaxOffset()
 		MESSAGEMAN:Broadcast("JudgeDisplayChanged")
 	end,
 	LoadedCustomWindowMessageCommand = function(self)
@@ -663,13 +660,13 @@ t[#t+1] = Def.Quad{
 		plotParams = params
 		if params.scoreKey ~= setScoreKey then
 			setScoreKey = params.scoreKey
+			maxOffset = fullOffsetRange
 			selectedSliceX1, selectedSliceX2 = nil, nil
 		end
 		if params.judge then
 			judge = params.judge
 			clampJudge()
 			tso = tst[judge]
-			updateMaxOffset()
 		end
 		setWidth, setHeight = params.width, params.height
 		setRate = finite(params.rate) and params.rate > 0 and params.rate or 1
@@ -1145,9 +1142,9 @@ t[#t+1] = Def.ActorMultiVertex{
 				verts[#verts + 1] = {{x + dotWidth/4, params.height, 0}, color}
 				verts[#verts + 1] = {{x + dotWidth/4, 0, 0}, color}
 				verts[#verts + 1] = {{x - dotWidth/4, 0, 0}, color}
-			else
-				local y = fitY(event.offset) + params.height / 2
-				setOffsetVerts(verts, x, y, color)
+			elseif math.abs(event.offset) <= maxOffset + 0.001 then
+				local offset = clampValue(event.offset, -maxOffset, maxOffset)
+				setOffsetVerts(verts, x, fitY(offset) + params.height / 2, color)
 			end
 		end
 
