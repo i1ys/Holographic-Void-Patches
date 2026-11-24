@@ -26,8 +26,8 @@ local HVPrefs = {
 	-- Offset Graph: Trend metric mode
 	HV_OffsetGraphTrendMetric = {
 		Default = "wife",
-		Choices = {"Tap Wife%", "Tap Grade", "Tap Clear", "Mean", "Std Dev", "Marv Count", "Perf Count", "Off"},
-		Values = {"wife", "grade", "clear", "mean", "sd", "ma", "pa", "off"}
+		Choices = {"Tap Wife%", "Tap Grade", "Tap Clear", "Mean", "MA", "PA", "Off"},
+		Values = {"wife", "grade", "clear", "mean", "ma", "pa", "off"}
 	},
 
 	-- Offset Graph: Trend color mode
@@ -104,6 +104,7 @@ local HVPrefs = {
 	-- Gameplay: UI/Background Dim (0.0 - 1.0)
 	HV_ScreenFilter = {
 		Default = 0.0,
+		PercentScale = 100,
 		Choices = {"0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"},
 		Values = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
 	},
@@ -112,6 +113,7 @@ local HVPrefs = {
 	-- BGBrightness remains the source of truth and the user-facing option.
 	HV_SongBackgroundBrightness = {
 		Default = 1.0,
+		PercentScale = 100,
 		Choices = {"0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"},
 		Values = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
 	},
@@ -119,6 +121,7 @@ local HVPrefs = {
 	-- Gameplay: Sudden Lane Cover height (0-100)
 	HV_LaneCoverSudden = {
 		Default = 0,
+		PercentScale = 1,
 		Choices = laneCoverChoices,
 		Values = laneCoverValues,
 	},
@@ -126,6 +129,7 @@ local HVPrefs = {
 	-- Gameplay: Hidden Lane Cover height (0-100)
 	HV_LaneCoverHidden = {
 		Default = 0,
+		PercentScale = 1,
 		Choices = laneCoverChoices,
 		Values = laneCoverValues,
 	},
@@ -140,14 +144,14 @@ local HVPrefs = {
 	-- Gameplay: NPS Window Size (seconds)
 	HV_NPSWindowSize = {
 		Default = 1,
-		Choices = {"1", "2", "3", "4", "5"},
+		Choices = {"1s", "2s", "3s", "4s", "5s"},
 		Values = {1, 2, 3, 4, 5}
 	},
 
 	-- Gameplay: Error Bar Mode (Off, Standard, EWMA Only, Both)
 	HV_ErrorBarMode = {
 		Default = "Standard",
-		Choices = {"Off", "Standard", "EWMA", "Both"},
+		Choices = {"Off", "Standard", "EWMA Only", "Both"},
 		Values = {"Off", "Standard", "EWMAOnly", "Both"}
 	},
 
@@ -162,13 +166,14 @@ local HVPrefs = {
 	-- Gameplay: Mini Pacemaker Target Type
 	HV_PacemakerTargetType = {
 		Default = "Target",
-		Choices = {"Target", "PB", "PB (Replay)"},
+		Choices = {"Target", "PB", "PB Replay"},
 		Values = {"Target", "PB", "PBReplay"}
 	},
 
 	-- Gameplay: Mini Pacemaker Target Goal (percentage)
 	HV_PacemakerTargetGoal = {
 		Default = 93,
+		PercentScale = 1,
 		Choices = {
 			"0%", "1%", "2%", "3%", "4%", "5%", "6%", "7%", "8%", "9%", "10%",
 			"11%", "12%", "13%", "14%", "15%", "16%", "17%", "18%", "19%", "20%",
@@ -182,7 +187,7 @@ local HVPrefs = {
 			"91%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%",
 			"99.50%", "99.60%", "99.70%", "99.80%", "99.90%", "99.95%", "99.955%",
 			"99.96%", "99.97%", "99.98%", "99.99%",
-			"99.990%", "99.991%", "99.992%", "99.993%", "99.9935%", "99.994%",
+			"99.991%", "99.992%", "99.993%", "99.9935%", "99.994%",
 			"99.995%", "99.996%", "99.997%", "99.998%", "99.999%", "100%"
 		},
 		Values = {
@@ -198,7 +203,7 @@ local HVPrefs = {
 			91, 92, 93, 94, 95, 96, 97, 98, 99,
 			99.50, 99.60, 99.70, 99.80, 99.90, 99.95, 99.955,
 			99.96, 99.97, 99.98, 99.99,
-			99.990, 99.991, 99.992, 99.993, 99.9935, 99.994,
+			99.991, 99.992, 99.993, 99.9935, 99.994,
 			99.995, 99.996, 99.997, 99.998, 99.999, 100
 		}
 	},
@@ -238,6 +243,7 @@ local HVPrefs = {
 	-- Gameplay: Show Hit Mean Display (Legacy compatibility)
 	HV_ShowMean = {
 		Default = "Mean",
+		Aliases = {J4 = "Mean"},
 		Choices = {"Off", "Mean", "Tap Offset", "Std Dev", "MA Ratio", "Delta Hand"},
 		Values = {"Off", "Mean", "TapOffset", "StdDev", "MARatio", "DeltaHand"}
 	},
@@ -303,7 +309,7 @@ local HVPrefs = {
 	},
 
 	-- Alarm System Preferences
-	HV_AlarmActive = { Default = false },
+	HV_AlarmActive = {Default = false, Choices = {"Off", "On"}, Values = {false, true}},
 	HV_AlarmType = {
 		Default = "Timer",
 		Choices = {"Time", "Timer"},
@@ -311,7 +317,7 @@ local HVPrefs = {
 	},
 	HV_AlarmTime = { Default = "12:00" },
 	HV_AlarmTimerDuration = { Default = 5 },
-	HV_AlarmShowInGameplay = { Default = true },
+	HV_AlarmShowInGameplay = {Default = true, Choices = {"Off", "On"}, Values = {false, true}},
 
 	-- Gameplay Customization: HUD Elements
 	HV_ShowJudgment = {
@@ -437,6 +443,7 @@ local HVPrefs = {
 	-- Gameplay: Auto-Fail Threshold Wife Percent
 	HV_AutoFailThreshold_Wife = {
 		Default = 93,
+		PercentScale = 1,
 		Choices = {
 			"0%", "1%", "2%", "3%", "4%", "5%", "6%", "7%", "8%", "9%", "10%",
 			"11%", "12%", "13%", "14%", "15%", "16%", "17%", "18%", "19%", "20%",
@@ -450,7 +457,7 @@ local HVPrefs = {
 			"91%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%",
 			"99.50%", "99.60%", "99.70%", "99.80%", "99.90%", "99.95%", "99.955%",
 			"99.96%", "99.97%", "99.98%", "99.99%",
-			"99.990%", "99.991%", "99.992%", "99.993%", "99.9935%", "99.994%",
+			"99.991%", "99.992%", "99.993%", "99.9935%", "99.994%",
 			"99.995%", "99.996%", "99.997%", "99.998%", "99.999%", "100%"
 		},
 		Values = {
@@ -466,7 +473,7 @@ local HVPrefs = {
 			91, 92, 93, 94, 95, 96, 97, 98, 99,
 			99.50, 99.60, 99.70, 99.80, 99.90, 99.95, 99.955,
 			99.96, 99.97, 99.98, 99.99,
-			99.990, 99.991, 99.992, 99.993, 99.9935, 99.994,
+			99.991, 99.992, 99.993, 99.9935, 99.994,
 			99.995, 99.996, 99.997, 99.998, 99.999, 100
 		}
 	},
@@ -505,17 +512,10 @@ end
 function Config.NormalizeGameplayHUD(key, value)
 	local definition = Config.GameplayHUD[key]
 	if not definition then return nil end
-	if key == "HV_ShowMean" and value == "J4" then return "Mean" end
-	if key == "HV_PacemakerTargetGoal" then
-		if Config.IsFinite(value) and value >= 0 and value <= 100 then return value end
-		return nil
-	end
-	for _, choice in ipairs(definition.Values) do
-		if value == choice then return value end
-	end
+	return Config.NormalizePreference(definition, value)
 end
 
-Config.RegisterThemeDefaults(HVPrefs)
+Config.RegisterThemePreferences(HVPrefs)
 
 local Theme = Config.Theme
 local ThemePrefs = {

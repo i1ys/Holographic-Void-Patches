@@ -1,413 +1,5 @@
 local ThemePrefs = HV.LegacyPrefs
 
---- Holographic Void: ThemePrefs Option Rows
--- @module 04_ThemePrefsRows
--- Defines option row handlers for the in-client ThemePrefs system.
--- These rows appear in ScreenOptionsService when theme options are accessed.
--- Uses _Fallback's ThemePrefsRows.Init system.
-
--- Generate 5% increment tables for Lane Cover heights (0-100%)
-local laneCoverChoices = {"Off"}
-local laneCoverValues = {0}
-for i = 1, 20 do
-	local val = i * 5
-	table.insert(laneCoverChoices, tostring(val) .. "%")
-	table.insert(laneCoverValues, val)
-end
-
-local HVPrefRows = {
-	-- Auto Login Tokens (Secret, non-visible in menu)
-	HV_Username = {
-		Default = "",
-		Choices = {""},
-		Values  = {""},
-	},
-	HV_PasswordToken = {
-		Default = "",
-		Choices = {""},
-		Values  = {""},
-	},
-
-
-	-- Background Animation Intensity
-	HV_BGAnimIntensity = {
-		Default = 1,
-		Choices = {"Off", "Subtle", "Full"},
-		Values = {0, 1, 2},
-	},
-
-	-- Mouse Parallax
-	HV_Parallax = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Song Preview Mode
-	HV_SongPreview = {
-		Default = 1,
-		Choices = {"SM Style", "osu! Style (New)", "osu! Style (Old)"},
-		Values = {1, 2, 3},
-	},
-
-	-- Song Select BGM
-	HV_SongSelectBGM = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-
-	-- Show MSD Ratings
-	HV_ShowMSD = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-
-	-- Show Profile Stats on Select Music
-	HV_ShowProfileStats = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-
-
-
-	-- Show Measure Lines
-	HV_ShowMeasureLines = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Screen Filter
-	HV_ScreenFilter = {
-		Default = 0.0,
-		Choices = {"0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"},
-		Values = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
-	},
-
-	-- Lane Cover
-	HV_LaneCoverSudden = {
-		Default = 0,
-		Choices = laneCoverChoices,
-		Values = laneCoverValues,
-	},
-	HV_LaneCoverHidden = {
-		Default = 0,
-		Choices = laneCoverChoices,
-		Values = laneCoverValues,
-	},
-
-	-- Glow Effects
-	HV_EnableGlow = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Show NPS
-	HV_ShowNPS = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- NPS Window Size
-	HV_NPSWindowSize = {
-		Default = 1,
-		Choices = {"1s", "2s", "3s", "4s", "5s"},
-		Values = {1, 2, 3, 4, 5},
-	},
-
-	-- Error Bar Mode
-	HV_ErrorBarMode = {
-		Default = "Standard",
-		Choices = {"Off", "Standard", "EWMA Only", "Both"},
-		Values  = {"Off", "Standard", "EWMAOnly", "Both"},
-	},
-
-	-- Error Bar Coloring Mode
-	HV_ErrorBarColoringMode = {
-		Default = "Current",
-		Choices = {"J4", "Current Judge"},
-		Values  = {"J4", "Current"},
-	},
-
-
-	-- Show Mini Text Goal Tracker (formerly Pacemaker)
-	HV_ShowGoalTracker = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Pacemaker Target Type
-	HV_PacemakerTargetType = {
-		Default = "Target",
-		Choices = {"Target", "PB", "PB Replay"},
-		Values  = {"Target", "PB", "PBReplay"},
-	},
-
-	-- Pacemaker Target Goal
-	HV_PacemakerTargetGoal = {
-		Default = 93,
-		Choices = {
-			"0%", "1%", "2%", "3%", "4%", "5%", "6%", "7%", "8%", "9%", "10%",
-			"11%", "12%", "13%", "14%", "15%", "16%", "17%", "18%", "19%", "20%",
-			"21%", "22%", "23%", "24%", "25%", "26%", "27%", "28%", "29%", "30%",
-			"31%", "32%", "33%", "34%", "35%", "36%", "37%", "38%", "39%", "40%",
-			"41%", "42%", "43%", "44%", "45%", "46%", "47%", "48%", "49%", "50%",
-			"51%", "52%", "53%", "54%", "55%", "56%", "57%", "58%", "59%", "60%",
-			"61%", "62%", "63%", "64%", "65%", "66%", "67%", "68%", "69%", "70%",
-			"71%", "72%", "73%", "74%", "75%", "76%", "77%", "78%", "79%", "80%",
-			"81%", "82%", "83%", "84%", "85%", "86%", "87%", "88%", "89%", "90%",
-			"91%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%",
-			"99.50%", "99.70%", "99.80%", "99.90%", "99.95%",
-			"99.96%", "99.97%", "99.98%", "99.99%",
-			"99.990%", "99.991%", "99.992%", "99.993%", "99.994%",
-			"99.995%", "99.996%", "99.997%", "99.998%", "99.999%", "100%"
-		},
-		Values = {
-			0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-			11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-			21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-			31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-			41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
-			51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-			61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
-			71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-			81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
-			91, 92, 93, 94, 95, 96, 97, 98, 99,
-			99.50, 99.70, 99.80, 99.90, 99.95,
-			99.96, 99.97, 99.98, 99.99,
-			99.990, 99.991, 99.992, 99.993, 99.994,
-			99.995, 99.996, 99.997, 99.998, 99.999, 100
-		},
-	},
-
-	-- Show Particles
-	HV_Particles = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Show Mean on Notefield
-	HV_ShowMean = {
-		Default = "Mean",
-		Choices = {"Off", "Mean", "Tap Offset", "Std Dev", "MA Ratio", "Delta Hand"},
-		Values = {"Off", "Mean", "TapOffset", "StdDev", "MARatio", "DeltaHand"},
-	},
-	
-	-- Accent Color
-	HV_AccentColor = {
-		Default = "#5ABAFF",
-		Choices = {"Blue", "Pink", "Mint", "Orange", "Purple", "White"},
-		Values  = {"#5ABAFF", "#FF5ABB", "#5AFFBA", "#FFBA5A", "#BA5AFF", "#D9D9D9"},
-	},
-
-	-- Use Custom Grade Names (from grade.costom.md)
-	HV_UseCustomGrades = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-
-	
-	-- Background Effect Style
-
-	-- Title Screen Text Mode
-	HV_QuotesMode = {
-		Default = "Quotes",
-		Choices = {"Off", "Quotes", "Tips"},
-		Values  = {"Off", "Quotes", "Tips"},
-	},
-
-	-- Gameplay HUD Customization
-	HV_ShowJudgment = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_ShowCombo = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_ShowCurrentWife = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_ShowJudgeCounter = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_ShowPlayerInfo = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_ProgressBarPosition = {
-		Default = "Top",
-		Choices = {"Top", "Bottom", "Off"},
-		Values = {"Top", "Bottom", "Off"},
-	},
-	HV_ShowInGameLeaderboard = {
-		Default = "Off",
-		Choices = {"Off", "Local", "Online"},
-		Values = {"Off", "Local", "Online"},
-	},
-	HV_ShowNPSGraph = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_ComboBreakHighlight = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	HV_AssistMode = {
-		Default = "Off",
-		Choices = {"Off", "Clap", "Metronome", "Both"},
-		Values = {"Off", "Clap", "Metronome", "Both"},
-	},
-	HV_GoalTrackerText = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Minimalistic Mode
-	HV_MinimalisticMode = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Judgment Tally Mode
-	HV_JudgeCounterMode = {
-		Default = "Full",
-		Choices = {"Full", "Simple"},
-		Values = {"Full", "Simple"},
-	},
-
-	-- NG Indicator
-	HV_ShowNGIndicator = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-	-- Instant Search
-	HV_InstantSearch = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Prioritize Lower Judgements
-	HV_PrioritizeLowerJudgements = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Judgment Animation
-	HV_JudgmentAnimation = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Combo Animation
-	HV_ComboAnimation = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-
-	-- Auto-Fail Action Mode
-	HV_AutoFailMode = {
-		Default = "Off",
-		Choices = {"Off", "Fail", "Restart"},
-		Values = {"Off", "Fail", "Restart"},
-	},
-
-	-- Auto-Fail Trigger Condition
-	HV_AutoFailCondition = {
-		Default = "Wife Percent",
-		Choices = {"Wife Percent", "Sync to Goal", "Judgement Count", "Personal Best"},
-		Values = {"Wife Percent", "Sync to Goal", "Judgement Count", "Personal Best"},
-	},
-
-	-- Auto-Fail Judgement
-	HV_AutoFailJudgement = {
-		Default = "Miss",
-		Choices = {"Perfect", "Great", "Good", "Bad", "Miss"},
-		Values = {"W2", "W3", "W4", "W5", "Miss"},
-	},
-
-	-- Auto-Fail Threshold Wife Percent
-	HV_AutoFailThreshold_Wife = {
-		Default = 93,
-		Choices = {
-			"0%", "1%", "2%", "3%", "4%", "5%", "6%", "7%", "8%", "9%", "10%",
-			"11%", "12%", "13%", "14%", "15%", "16%", "17%", "18%", "19%", "20%",
-			"21%", "22%", "23%", "24%", "25%", "26%", "27%", "28%", "29%", "30%",
-			"31%", "32%", "33%", "34%", "35%", "36%", "37%", "38%", "39%", "40%",
-			"41%", "42%", "43%", "44%", "45%", "46%", "47%", "48%", "49%", "50%",
-			"51%", "52%", "53%", "54%", "55%", "56%", "57%", "58%", "59%", "60%",
-			"61%", "62%", "63%", "64%", "65%", "66%", "67%", "68%", "69%", "70%",
-			"71%", "72%", "73%", "74%", "75%", "76%", "77%", "78%", "79%", "80%",
-			"81%", "82%", "83%", "84%", "85%", "86%", "87%", "88%", "89%", "90%",
-			"91%", "92%", "93%", "94%", "95%", "96%", "97%", "98%", "99%",
-			"99.50%", "99.60%", "99.70%", "99.80%", "99.90%", "99.95%", "99.955%",
-			"99.96%", "99.97%", "99.98%", "99.99%",
-			"99.990%", "99.991%", "99.992%", "99.993%", "99.9935%", "99.994%",
-			"99.995%", "99.996%", "99.997%", "99.998%", "99.999%", "100%"
-		},
-		Values = {
-			0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-			11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-			21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-			31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-			41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
-			51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-			61, 62, 63, 64, 65, 66, 67, 68, 69, 70,
-			71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-			81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
-			91, 92, 93, 94, 95, 96, 97, 98, 99,
-			99.50, 99.60, 99.70, 99.80, 99.90, 99.95, 99.955,
-			99.96, 99.97, 99.98, 99.99,
-			99.990, 99.991, 99.992, 99.993, 99.9935, 99.994,
-			99.995, 99.996, 99.997, 99.998, 99.999, 100
-		},
-	},
-
-	-- Auto-Fail Judgement Limit 0 to 99
-	HV_AutoFailThreshold_Count = {
-		Default = 10,
-		Choices = (function() local c = {}; for i=0, 99 do c[#c+1]=tostring(i) end return c end)(),
-		Values = (function() local v = {}; for i=0, 99 do v[#v+1]=i end return v end)(),
-	},
-	-- Emulate Ridiculous Judgement
-	HV_EmulateRidiculous = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true},
-	},
-} -- End of HVPrefRows
-
--- Register the rows with the _Fallback ThemePrefsRows system
-ThemePrefsRows.Init(HVPrefRows)
-
 -- Helper for 1% - 250% choices
 local RSChoices = {}
 for i = 1, 250 do
@@ -445,91 +37,72 @@ function OptionRowMini()
 	}
 end
 
--- Adapt the fallback option row to HV2's theme or active-profile store.
+-- Build an Etterna Lua option row from the same definition used by the store.
 function HV.OptionRow(name, title, config)
-	local baseRow = ThemePrefRow(name, title)
-	local row = baseRow and DeepCopy(baseRow)
+	local settings = HV.Config
+	local definition = assert(settings.GetThemePreference(name), "Unknown theme preference: " .. name)
 	local prefs = config or ThemePrefs
-	local hud = HV.Config.GameplayHUD[name]
-	local hvPref = hud or HVPrefRows[name]
+	local hud = settings.GameplayHUD[name]
+	local choices = DeepCopy(definition.Choices)
+	local values = DeepCopy(definition.Values)
 	local profileDirectory
-	
-	if not row then
-		row = {
-			Name = name,
-			Title = title or name,
-			Choices = (hvPref and hvPref.Choices) or {"Off", "On"},
-			Values = (hvPref and hvPref.Values) or {false, true},
-		}
-	elseif hvPref then
-		row.Choices = hvPref.Choices
-		row.Values = hvPref.Values
-	end
-	-- ThemePrefRow may omit layout metadata for custom rows; the options
-	-- screen requires this to be a string.
-	row.LayoutType = "ShowAllInRow"
-	row.SelectType = "SelectOne"
-	if hud then row.OneChoiceForAllPlayers = true end
-	
-	row.ExportOnChange = true
-	
-	-- Define a robust load function that handles string/boolean mismatch
-	row.LoadSelections = function(self, list, pn)
-		local val
-		if hud then
-			profileDirectory = HV.Config.ProfileDirectory(PLAYER_1) or false
-			val = HV.Config.Player.Get(PLAYER_1, name)
-		else
-			val = prefs.Get(name)
-		end
-		local found = false
-		for i, v in ipairs(self.Values) do
-			if v == val or tostring(v) == tostring(val) then
-				list[i] = true
-				found = true
-				break
-			end
-		end
-		-- If not found, default based on truthiness or fallback to first index
-		if not found then
-			if val == "true" or val == true or val == 1 or val == "1" then
-				list[#list] = true -- Usually 'On'
-			else
-				list[1] = true -- Usually 'Off'
-			end
+
+	local function findChoice(value)
+		for i, choice in ipairs(values) do
+			if choice == value then return i end
 		end
 	end
 
-	-- Define a robust save function that ensures disk persistence
-	row.SaveSelections = function(self, list, pn)
-		local val = nil
-		for i, selected in ipairs(list) do
-			if selected then
-				val = self.Values[i]
-				break
-			end
-		end
-		if val == nil then return end
-		local ok, err
-		if hud then
-			local directory = HV.Config.ProfileDirectory(PLAYER_1)
-			if profileDirectory ~= nil and profileDirectory ~= (directory or false) then return end
-			ok = HV.Config.Player.Set(PLAYER_1, name, val, directory)
-			if ok and directory then ok, err = HV.Config.Player.Save(PLAYER_1, directory) end
-		else
-			ok, err = prefs.Set(name, val)
-			if ok and config then ok, err = config.Save() end
-		end
-		if not ok and err then SCREENMAN:SystemMessage(err) end
-		MESSAGEMAN:Broadcast("ThemePrefChanged", {Name = name})
-		if (name == "HV_LaneCoverSudden" or name == "HV_LaneCoverHidden")
-			and HV and HV.ApplyLaneCoverModifiers then
-			HV.ApplyLaneCoverModifiers()
+	if definition.PercentScale then
+		local current = prefs.Get(name)
+		if not findChoice(current) then
+			values[#values + 1] = current
+			choices[#choices + 1] = tostring(current * definition.PercentScale) .. "%"
 		end
 	end
-	
-	return row
+
+	return {
+		Name = name,
+		Title = title or name,
+		Choices = choices,
+		LayoutType = "ShowAllInRow",
+		SelectType = "SelectOne",
+		OneChoiceForAllPlayers = true,
+		ExportOnChange = true,
+		LoadSelections = function(self, list, pn)
+			if hud then profileDirectory = settings.ProfileDirectory(PLAYER_1) or false end
+			local index = findChoice(prefs.Get(name)) or findChoice(definition.Default)
+			list[index] = true
+		end,
+		SaveSelections = function(self, list, pn)
+			local value
+			for i, selected in ipairs(list) do
+				if selected then
+					value = values[i]
+					break
+				end
+			end
+			if value == nil then return end
+
+			local ok, err
+			if hud then
+				local directory = settings.ProfileDirectory(PLAYER_1)
+				if profileDirectory ~= nil and profileDirectory ~= (directory or false) then return end
+				ok = settings.Player.Set(PLAYER_1, name, value, directory)
+				if ok and directory then ok, err = settings.Player.Save(PLAYER_1, directory) end
+			else
+				ok, err = prefs.Set(name, value)
+				if ok and config then ok, err = config.Save() end
+			end
+			if not ok and err then SCREENMAN:SystemMessage(err) end
+			MESSAGEMAN:Broadcast("ThemePrefChanged", {Name = name})
+			if (name == "HV_LaneCoverSudden" or name == "HV_LaneCoverHidden") and HV.ApplyLaneCoverModifiers then
+				HV.ApplyLaneCoverModifiers()
+			end
+		end,
+	}
 end
+
 function OptionRowSongPreview()
 	return HV.OptionRow("HV_SongPreview", "Song Preview Mode")
 end

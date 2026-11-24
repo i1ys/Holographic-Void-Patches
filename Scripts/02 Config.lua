@@ -109,35 +109,58 @@ function Config.ProfileDirectory(pn)
 	end
 end
 
-local themeDefaults = { HV_InstantSearch = true }
+local themeDefinitions = {
+	HV_InstantSearch = {Default = true, Choices = {"Off", "On"}, Values = {false, true}},
+}
+
+function Config.NormalizePreference(definition, value)
+	if definition.Aliases then value = definition.Aliases[value] or value end
+	if type(value) ~= type(definition.Default) then return nil end
+	if type(value) == "number" and not Config.IsFinite(value) then return nil end
+
+	-- Percent rows may display a discrete list while accepting custom values.
+	if definition.PercentScale then
+		if value >= 0 and value <= 100 / definition.PercentScale then return value end
+		return nil
+	end
+	if not definition.Values then return value end
+	for _, choice in ipairs(definition.Values) do
+		if choice == value then return value end
+	end
+end
+
 local function normalizeTheme(data)
-	for key, default in pairs(themeDefaults) do
-		local value = data[key]
-		if type(value) ~= type(default) or (type(value) == "number" and not Config.IsFinite(value)) then
-			data[key] = default
+	for key, definition in pairs(themeDefinitions) do
+		local value = Config.NormalizePreference(definition, data[key])
+		if value == nil then
+			value = definition.Default
 		end
+		data[key] = value
 	end
 	return data
 end
 
-local themeStore = Config.CreateStore("themeConfig.lua", themeDefaults, normalizeTheme)
+local themeStore = Config.CreateStore("themeConfig.lua", {}, normalizeTheme)
 
-function Config.RegisterThemeDefaults(definitions)
+function Config.RegisterThemePreferences(definitions)
 	for key, definition in pairs(definitions) do
-		themeDefaults[key] = definition.Default
+		themeDefinitions[key] = definition
 	end
+end
+
+function Config.GetThemePreference(key)
+	return themeDefinitions[key]
 end
 
 Config.Theme = {
 	Get = function(key)
-		if themeDefaults[key] ~= nil then return themeStore.Get("Save")[key] end
+		if themeDefinitions[key] then return themeStore.Get("Save")[key] end
 	end,
 	Set = function(key, value)
-		local default = themeDefaults[key]
-		if default == nil or type(default) ~= type(value)
-			or (type(value) == "number" and not Config.IsFinite(value)) then
-			return false
-		end
+		local definition = themeDefinitions[key]
+		if not definition then return false end
+		value = Config.NormalizePreference(definition, value)
+		if value == nil then return false end
 		themeStore.Set("Save", key, value)
 		return true
 	end,

@@ -11,12 +11,6 @@ local dimText = color("0.45,0.45,0.45,1")
 local subText = color("0.65,0.65,0.65,1")
 local brightText = color("1,1,1,1")
 
-local PREF_DEFS = {
-	HV_AlarmActive = { Values = {"false", "true"}, Choices = {"Off", "On"} },
-	HV_AlarmType = { Values = {"Time", "Timer"}, Choices = {"Time", "Timer"} },
-	HV_AlarmShowInGameplay = { Values = {"false", "true"}, Choices = {"Off", "On"} },
-}
-
 local alarmRows = {
 	{ Name = "ACTIVE", Pref = "HV_AlarmActive" },
 	{ Name = "MODE", Pref = "HV_AlarmType" },
@@ -24,36 +18,28 @@ local alarmRows = {
 }
 
 local function cyclePref(name)
-	local pref = PREF_DEFS[name]
-	if not pref then return end
-	local current = tostring(ThemePrefs.Get(name))
-	local idx = 1
-	for i, v in ipairs(pref.Values) do
-		if tostring(v) == current then idx = i break end
+	local definition = HV.Config.GetThemePreference(name)
+	local current = ThemePrefs.Get(name)
+	local nextIndex = 1
+	for i, value in ipairs(definition.Values) do
+		if value == current then
+			nextIndex = i % #definition.Values + 1
+			break
+		end
 	end
-	idx = (idx % #pref.Values) + 1
-	ThemePrefs.Set(name, pref.Values[idx])
-	ThemePrefs.Save()
+	local ok, err = ThemePrefs.Set(name, definition.Values[nextIndex])
+	if not ok then
+		if err then SCREENMAN:SystemMessage(err) end
+		return
+	end
 	MESSAGEMAN:Broadcast("ThemePrefChanged", {Name = name})
 
-	-- Special logic for Alarm Timer
-	if name == "HV_AlarmActive" then
-		local active = ThemePrefs.Get("HV_AlarmActive")
-		if (active == "true" or active == true) and ThemePrefs.Get("HV_AlarmType") == "Timer" then
-			local duration = tonumber(ThemePrefs.Get("HV_AlarmTimerDuration")) or 5
-			HV.AlarmTimerDuration = duration * 60
-			HV.AlarmTimerStartTime = GetTimeSinceStart()
-			HV.AlarmTimerSeconds = duration * 60
-		end
-	elseif name == "HV_AlarmType" then
-		-- If switching TO Timer while active, start it
-		local active = ThemePrefs.Get("HV_AlarmActive")
-		if (active == "true" or active == true) and ThemePrefs.Get("HV_AlarmType") == "Timer" then
-			local duration = tonumber(ThemePrefs.Get("HV_AlarmTimerDuration")) or 5
-			HV.AlarmTimerDuration = duration * 60
-			HV.AlarmTimerStartTime = GetTimeSinceStart()
-			HV.AlarmTimerSeconds = duration * 60
-		end
+	if (name == "HV_AlarmActive" or name == "HV_AlarmType")
+		and ThemePrefs.Get("HV_AlarmActive") and ThemePrefs.Get("HV_AlarmType") == "Timer" then
+		local seconds = ThemePrefs.Get("HV_AlarmTimerDuration") * 60
+		HV.AlarmTimerDuration = seconds
+		HV.AlarmTimerStartTime = GetTimeSinceStart()
+		HV.AlarmTimerSeconds = seconds
 	end
 end
 
@@ -919,11 +905,14 @@ t[#t + 1] = Def.ActorFrame {
 						InitCommand = function(self) self:x(250):halign(1):zoom(0.35) end,
 						ThemePrefChangedMessageCommand = function(self, params) if params.Name == row.Pref then self:playcommand("Refresh") end end,
 						RefreshCommand = function(self)
-							local val = tostring(ThemePrefs.Get(row.Pref))
-							local def = PREF_DEFS[row.Pref]
-							local display = val
-							for j, v in ipairs(def.Values) do if tostring(v) == val then display = def.Choices[j] break end end
-							self:settext(display:upper())
+							local current = ThemePrefs.Get(row.Pref)
+							local definition = HV.Config.GetThemePreference(row.Pref)
+							for j, value in ipairs(definition.Values) do
+								if value == current then
+									self:settext(definition.Choices[j]:upper())
+									break
+								end
+							end
 						end,
 						OnCommand = function(self) self:playcommand("Refresh") end
 					},

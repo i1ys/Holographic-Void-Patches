@@ -2305,7 +2305,8 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 
 	-- Column 2: Note Types
 	local ntStartY = statsStartY + 20 + (7 * rowH)
-	local noteTypeLabels = {"Holds", "Rolls", "Lifts", "Mines Avoided"}
+	-- The native Mines radar counts avoided mines.
+	local noteTypeLabels = {"Holds", "Rolls", "Lifts", "Mines"}
 	for ni, nlabel in ipairs(noteTypeLabels) do
 		local radar = noteTypeRadars[ni]
 		local ny = ntStartY + (ni - 1) * 16
