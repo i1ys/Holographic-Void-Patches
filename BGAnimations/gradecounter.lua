@@ -1,9 +1,4 @@
 GRADECOUNTERSTORAGE = GRADECOUNTERSTORAGE or {
-	AAAAA = 0,
-	AAAA = 0,
-	AAA = 0,
-	AA = 0,
-	A = 0,
 	session_AAAAA = 0,
 	session_AAAA = 0,
 	session_AAA = 0,
@@ -12,32 +7,45 @@ GRADECOUNTERSTORAGE = GRADECOUNTERSTORAGE or {
 	session_UnderA = 0,
 }
 
-local gradeBands = {
-	Tier01 = "AAAAA",
-	Tier02 = "AAAA", Tier03 = "AAAA", Tier04 = "AAAA",
-	Tier05 = "AAA", Tier06 = "AAA", Tier07 = "AAA",
-	Tier08 = "AA", Tier09 = "AA", Tier10 = "AA",
-	Tier11 = "A", Tier12 = "A", Tier13 = "A",
-	Tier14 = "UnderA", Tier15 = "UnderA", Tier16 = "UnderA", Tier17 = "UnderA",
-	Failed = "UnderA",
+local profileGradeBands = {
+	{name = "AAAAA", grades = {"Grade_Tier01"}},
+	{name = "AAAA", grades = {"Grade_Tier04", "Grade_Tier02", "Grade_Tier03"}},
+	{name = "AAA", grades = {"Grade_Tier07", "Grade_Tier05", "Grade_Tier06"}},
+	{name = "AA", grades = {"Grade_Tier10", "Grade_Tier08", "Grade_Tier09"}},
+	{name = "A", grades = {"Grade_Tier13", "Grade_Tier11", "Grade_Tier12"}},
+	{name = "B", grades = {"Grade_Tier14"}},
+	{name = "C", grades = {"Grade_Tier15"}},
+	{name = "D", grades = {"Grade_Tier16"}},
+	{name = "F", grades = {"Grade_Failed", "Grade_Tier17"}},
 }
+GRADECOUNTERSTORAGE.profileGradeBands = profileGradeBands
+
+local gradeBands = {}
+for _, band in ipairs(profileGradeBands) do
+	for _, grade in ipairs(band.grades) do
+		gradeBands[grade] = band.name
+	end
+end
 
 function GRADECOUNTERSTORAGE:incrementSession(grade)
-	local band = grade and gradeBands[ToEnumShortString(grade)]
+	local band = gradeBands[grade]
 	if not band then return end
 	local key = "session_" .. band
+	if not self[key] then key = "session_UnderA" end
 	self[key] = self[key] + 1
 end
 
 function GRADECOUNTERSTORAGE:refreshProfile()
-	self.AAAAA, self.AAAA, self.AAA, self.AA, self.A = 0, 0, 0, 0, 0
+	for _, band in ipairs(profileGradeBands) do
+		self[band.name] = 0
+	end
 	-- The engine supplies the active profile's scores for all installed charts.
 	SCOREMAN:SortRecentScores()
 	local rank = 1
 	local score = SCOREMAN:GetRecentScore(rank)
 	while score do
-		local band = gradeBands[ToEnumShortString(score:GetWifeGrade())]
-		if band and band ~= "UnderA" then
+		local band = gradeBands[score:GetWifeGrade()]
+		if band then
 			self[band] = self[band] + 1
 		end
 		rank = rank + 1

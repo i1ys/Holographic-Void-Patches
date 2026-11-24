@@ -108,7 +108,8 @@ local function stop(self)
 end
 
 local function playerName(screen)
-	if HV.OnlineReplayActive and HV.OnlineReplayName then return HV.OnlineReplayName end
+	local replayName = HV.GetOnlineReplayPlayerName()
+	if replayName then return replayName end
 	local score = screen.GetReplayScore and screen:GetReplayScore(PLAYER_1)
 	if score then return score:GetDisplayName() or score:GetName() or "Replay" end
 	return "Replay"

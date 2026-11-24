@@ -95,7 +95,6 @@ return Def.ActorFrame {
 			end
 		end
 
-		HV.LastGameplayTime = os.time()
 		HV.GameplaySessionValid = true
 
 		-- Properly initialize total chart points once song/steps are loaded

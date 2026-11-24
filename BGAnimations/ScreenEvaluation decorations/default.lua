@@ -909,34 +909,17 @@ local t = Def.ActorFrame {
 		self:RunCommandsOnChildren(function(self) self:playcommand("SetJudge") end)
 	end,
 
-	-- Dedicated actor for logging session grades
 	Def.Actor {
 		Name = "SessionGradeLogger",
-		OnCommand = function(self)
-			local screen = SCREENMAN:GetTopScreen()
-			if not screen then 
-				-- Retry next frame if screen is not yet available
-				-- Use sleep with a slightly longer duration to be safe
-				self:sleep(0.05):queuecommand("On")
-				return 
-			end
-
-			-- Only log once per screen entry AND only if we just came from gameplay
-				if not screen.HV_GradeCounted then
-				if not scoringVoided and HV.GameplaySessionValid and GRADECOUNTERSTORAGE and GRADECOUNTERSTORAGE.incrementSession then
-					local grade = normalized and openingScore and openingScore:GetWifeGrade() or pss:GetWifeGrade()
-					GRADECOUNTERSTORAGE:incrementSession(grade)
-					-- Clear the flag after a short delay to allow other actors (like XP display) to see it first
-					self:sleep(0.5):queuecommand("ClearFlag")
-				end
-				screen.HV_GradeCounted = true
+		OnCommand = function()
+			local countPlay = HV.GameplaySessionValid and not isReplay
+			HV.GameplaySessionValid = false
+			if countPlay and GRADECOUNTERSTORAGE then
+				local grade = normalized and openingScore and openingScore:GetWifeGrade() or pss:GetWifeGrade()
+				GRADECOUNTERSTORAGE:incrementSession(grade)
 			end
 		end,
-		ClearFlagCommand = function(self)
-			HV.GameplaySessionValid = false
-		end
 	},
-
 }
 
 -- Rescore data + rescore delegate to the corrected global functions in 08 EtternaUtils.lua.
@@ -1188,13 +1171,15 @@ local function createScoreBoard(pn, frameW, pad)
 				Def.Sprite {
 					Name = "Avatar",
 					InitCommand = function(self) self:halign(0):valign(0):zoomto(60, 60) end,
-					BeginCommand = function(self)
-						self:Load(getAvatarPath(pn))
-						self:zoomto(60, 60)
-					end
+					BeginCommand = function(self) self:playcommand("SetAvatar") end,
+					ScoreChangedMessageCommand = function(self) self:playcommand("SetAvatar") end,
+					SetAvatarCommand = function(self)
+						local avatar = isOnlineEvaluation() and getDefaultAssetByType("avatar") or getAvatarPath(pn)
+						self:Load(avatar):zoomto(60, 60)
+					end,
 				},
 
-					-- Name: online evaluations show only the viewed leaderboard player.
+				-- Name: online evaluations show only the viewed leaderboard player.
 				LoadFont("Common Normal") .. {
 					Name = "PlayerName",
 					InitCommand = function(self)
@@ -1219,14 +1204,16 @@ local function createScoreBoard(pn, frameW, pad)
 						self.offlineName = profile and profile:GetDisplayName() or nil
 						if self.offlineName == "" then self.offlineName = nil end
 					end,
-					OnCommand = function(self)
+					OnCommand = function(self) self:playcommand("SetName") end,
+					ScoreChangedMessageCommand = function(self) self:playcommand("SetName") end,
+					SetNameCommand = function(self)
+						self:stoptweening():diffusealpha(1)
 						self.onlineName = self.localOnlineName
 						if isOnlineEvaluation() then
 							self.showOnline = true
 							local name = curScore and curScore.GetDisplayName and curScore:GetDisplayName()
 							if curScore == openingScore and self.replayName then name = self.replayName end
 							self:settext(name and name ~= "" and name or "Online Player")
-							self:stoptweening():diffusealpha(1)
 							return
 						elseif not self.onlineName then
 							self:settext(self.offlineName or "Player 1")
@@ -1246,144 +1233,6 @@ local function createScoreBoard(pn, frameW, pad)
 						self.showOnline = not self.showOnline
 						self:stoptweening():linear(self.transitionDuration * 0.5):diffusealpha(1):sleep(self.displayDuration):queuecommand("UpdateName")
 					end
-				},
-
-				-- Level Badge
-				Def.ActorFrame {
-					Name = "PlayerLevelBadge",
-					InitCommand = function(self) self:xy(65, 23) end,
-					OnCommand = function(self) self:visible(not isOnlineEvaluation()) end,
-					
-					-- Badge Quad
-					Def.Quad {
-						Name = "BadgeQuad",
-						InitCommand = function(self)
-							self:halign(0):zoomto(38, 14):diffusealpha(0.8)
-						end,
-						OnCommand = function(self)
-							if profile and HV.GetLevelColor then
-								local steps = GAMESTATE:GetCurrentSteps()
-								local msd = (steps and steps:GetMSD(getCurRateValue(), 1)) or 0
-								local gain = HV.CalculateXPGain(pss, msd)
-								local xpOld = HV.GetXP(profile)
-								local xpNew = xpOld
-								
-								local timeDiff = os.time() - (HV.LastGameplayTime or 0)
-								local pc = GAMESTATE:GetPlayerState(PLAYER_1):GetPlayerController()
-								local isHuman = (pc == "PlayerController_Human")
-								local isRealPlay = curScore == openingScore and not isReplay and HV.GameplaySessionValid
-									and timeDiff >= 0 and timeDiff < 86400 and isHuman and not GAMESTATE:IsPracticeMode()
-								
-								if isRealPlay and gain > 0 then
-									xpNew = xpOld + gain
-									HV.SetXP(profile, xpNew)
-									
-									local levelOld = HV.GetLevelFromXP(HV.LastTotalXP)
-									local levelNew = HV.GetLevelFromXP(xpNew)
-									
-									self:diffuse(HV.GetLevelColor(levelNew))
-									
-									-- Level Up Animation
-									if levelNew > levelOld and HV.LastTotalXP > 0 then
-										self:GetParent():stoptweening():zoom(1.5):smooth(0.5):zoom(1)
-										self:GetParent():glow(1,1,1,1):linear(0.5):glow(1,1,1,0)
-										MESSAGEMAN:Broadcast("HVLevelUp", {newLevel = levelNew})
-									end
-									
-									-- Update global state
-									HV.LastTotalXP = xpNew
-									HV.GameplaySessionValid = false -- Only once per play
-									
-									-- Broadcast gain for other actors (e.g. Floating XP)
-									MESSAGEMAN:Broadcast("HVXPCalculated", {gain = gain})
-								else
-									-- Non-earning state: just show current level color
-									local level = HV.GetLevel(profile)
-									self:diffuse(HV.GetLevelColor(level))
-								end
-							else
-								self:diffuse(color("#666666"))
-							end
-						end
-					},
-					
-					-- Level Text
-					LoadFont("Common Normal") .. {
-						InitCommand = function(self)
-							self:halign(0):x(4):zoom(0.32):diffuse(color("#FFFFFF"))
-						end,
-						OnCommand = function(self)
-							if profile then
-								self:settextf("Lv. %d", HV.GetLevel(profile))
-							end
-						end
-					},
-
-					-- Level Up Text
-					LoadFont("Common Normal") .. {
-						InitCommand = function(self)
-							self:halign(0):y(-12):zoom(0.4):diffusealpha(0):settext("LEVEL UP!")
-						end,
-						HVLevelUpMessageCommand = function(self)
-							self:stoptweening():diffusealpha(0):y(-12)
-								:sleep(0.2):linear(0.3):diffusealpha(1):y(-18):sleep(1):linear(0.5):diffusealpha(0)
-						end
-					}
-				},
-
-				-- Progress Bar
-				Def.ActorFrame {
-					Name = "LevelProgress",
-					InitCommand = function(self) self:xy(65, 34) end,
-					OnCommand = function(self) self:visible(not isOnlineEvaluation()) end,
-					
-					-- Bar BG
-					Def.Quad {
-						InitCommand = function(self)
-							self:halign(0):zoomto(frameW * 0.18, 4):diffuse(0,0,0,0.5)
-						end
-					},
-					-- Bar Fill
-					Def.Quad {
-						InitCommand = function(self)
-							self:halign(0):zoomto(0, 4):diffuse(color("#FF4081"))
-						end,
-						OnCommand = function(self)
-							if profile and HV.GetLevelProgress then
-								local progress = HV.GetLevelProgress(profile)
-								self:smooth(0.8):zoomx(frameW * 0.18 * progress)
-							end
-						end
-					},
-					-- Progress Numbers
-					LoadFont("Common Normal") .. {
-						Name = "ProgressText",
-						InitCommand = function(self)
-							self:halign(0):xy(0, 8):zoom(0.22):diffuse(subText)
-						end,
-						OnCommand = function(self)
-							if profile and HV.GetLevelProgress then
-								local _, cur, total = HV.GetLevelProgress(profile)
-								self:settextf("%d / %d XP", cur, total)
-							else
-								self:settext("")
-							end
-						end
-					},
-					-- Floating +XP Gain Animation
-					LoadFont("Common Normal") .. {
-						InitCommand = function(self)
-							self:halign(0):xy(50, 8):zoom(0.22):diffuse(color("#00FF00")):diffusealpha(0)
-						end,
-						HVXPCalculatedMessageCommand = function(self, params)
-							if params.gain and params.gain > 0 then
-								local progressText = self:GetParent():GetChild("ProgressText")
-								local startX = (progressText and progressText:GetZoomedWidth() or 80) + 10
-								self:stoptweening():x(startX):settextf("+ %d XP", params.gain)
-								self:diffusealpha(0):sleep(0.5):linear(0.5):x(startX + 15):diffusealpha(1):linear(0.8):x(startX + 30):diffusealpha(0)
-							end
-						end
-					}
 				},
 
 				-- Rating (Player SSR - cycles between online and offline with fade)

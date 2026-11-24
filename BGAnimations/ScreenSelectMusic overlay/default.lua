@@ -194,6 +194,8 @@ local main_af = Def.ActorFrame {
 		HV.ActiveTab = ""
 		HV.SuppressSearchCloseEnter = false
 		HV.GameplaySessionValid = false
+		HV.OnlineReplayActive = false
+		HV.OnlineReplayName = nil
 		HV.ChartPreviewActive = false
 		HV.LeftMousePeekHold = false
 		HV.LeftMousePeekHoldAllowed = false
@@ -654,17 +656,9 @@ main_af[#main_af + 1] = Def.ActorFrame {
 
 				-- --- PROFILE TAB SPECIFIC CLICKS ---
 				if HV.ActiveTab == "PROFILE" then
-					local gradeSidebarCX = SCREEN_CENTER_X - overlayW/2 + gradeSidebarW/2
-					local gradeSidebarTop = SCREEN_CENTER_Y - overlayH/2
 					local profileSidebarX = (SCREEN_CENTER_X - overlayW/2) + gradeSidebarW
 					local scoreAreaX = profileSidebarX + profileSidebarW
 					local headerY = SCREEN_CENTER_Y - overlayH/2 + 35
-
-					-- 1. Dedicated profile stats screen
-					if IsMouseOverCentered(gradeSidebarCX, gradeSidebarTop + 25, gradeSidebarW - 12, 22) then
-						SCREENMAN:SetNewScreen("ScreenHVStats")
-						return true
-					end
 
 					-- 2. Mode Toggle (TOP / RECENT)
 					if IsMouseOverCentered(scoreAreaX + mainPartW - 250, headerY, 100, 24) then
@@ -1064,58 +1058,36 @@ local profileOverlay = Def.ActorFrame {
 			end
 		},
 
-		-- Grades Display
+		LoadFont("Common Normal") .. {
+			Text = THEME:GetString("ScreenSelectMusic", "Plays"),
+			InitCommand = function(self) self:y(-overlayH/2 + 25):zoom(0.28):diffuse(brightText) end,
+		},
 		(function()
-			local g = Def.ActorFrame { InitCommand = function(self) self:y(-overlayH/2 + 60) end }
-			local grades = {"AAAAA", "AAAA", "AAA", "AA", "A"}
-			local tiers = {"Grade_Tier01", "Grade_Tier04", "Grade_Tier07", "Grade_Tier10", "Grade_Tier13"}
-
-			g[#g+1] = Def.ActorFrame {
-				InitCommand = function(self) self:y(-35) end,
-				Def.Quad {
-					InitCommand = function(self)
-						self:zoomto(gradeSidebarW - 12, 20):diffuse(accentColor):diffusealpha(0.22)
-					end
-				},
-				LoadFont("Common Normal") .. {
-					Text = "STATS",
-					InitCommand = function(self)
-						self:zoom(0.28):diffuse(brightText)
-					end
-				}
+			local bands = GRADECOUNTERSTORAGE.profileGradeBands
+			local rowSpacing = math.min(32, (overlayH - 80) / (#bands - 1))
+			local rows = Def.ActorFrame {
+				InitCommand = function(self) self:y(-overlayH/2 + 60) end,
 			}
-			
-			for i, grade in ipairs(grades) do
-				local gy = (i-1) * 32
-				g[#g+1] = Def.ActorFrame {
-					InitCommand = function(self) self:y(gy) end,
-					-- Grade Label
+			for i, band in ipairs(bands) do
+				local grade = band.grades[1]
+				local y = (i - 1) * rowSpacing
+				local function updateCount(self)
+					self:settext(GRADECOUNTERSTORAGE[band.name] or 0)
+				end
+				rows[#rows + 1] = Def.ActorFrame {
+					InitCommand = function(self) self:y(y) end,
 					LoadFont("Common Normal") .. {
-						Text = HV.GetGradeName(tiers[i]),
-						InitCommand = function(self) 
-							self:halign(0.5):xy(0, -6):zoom(0.35)
-							self:diffuse(HVColor.GetGradeColor(tiers[i]))
-						end
+						Text = HV.GetGradeName(grade),
+						InitCommand = function(self) self:y(-6):zoom(0.35):diffuse(HVColor.GetGradeColor(grade)) end,
 					},
-					-- Count
 					LoadFont("Common Normal") .. {
-						InitCommand = function(self) 
-							self:halign(0.5):xy(0, 8):zoom(0.35):diffuse(mainText)
-						end,
-						BeginCommand = function(self)
-							if GRADECOUNTERSTORAGE then
-								self:settext(GRADECOUNTERSTORAGE[grade] or 0)
-							end
-						end,
-						UpdateOverlayUIMessageCommand = function(self)
-							if GRADECOUNTERSTORAGE then
-								self:settext(GRADECOUNTERSTORAGE[grade] or 0)
-							end
-						end
-					}
+						InitCommand = function(self) self:y(8):zoom(0.35):diffuse(mainText) end,
+						BeginCommand = updateCount,
+						UpdatePlayCountsCommand = updateCount,
+					},
 				}
 			end
-			return g
+			return rows
 		end)()
 	},
 
@@ -1172,76 +1144,9 @@ local profileOverlay = Def.ActorFrame {
 					self:settext(HV.GetPlayerName())
 				end
 			},
-			Def.ActorFrame {
-				Name = "PlayerLevelBadge",
-				InitCommand = function(self) self:xy(-22, 54) end,
-				UpdateOverlaySkillsetsMessageCommand = function(self)
-					local prof = PROFILEMAN:GetProfile(PLAYER_1)
-					if prof and HV.GetLevelColor then
-						local level = HV.GetLevel(prof)
-						self:GetChild("Badge"):diffuse(HV.GetLevelColor(level))
-						self:GetChild("Txt"):settextf("Lv. %d", level)
-						self:visible(true)
-					elseif prof then
-						self:GetChild("Badge"):diffuse(color("#666666"))
-						self:GetChild("Txt"):settextf("Lv. %d", HV.GetLevel(prof))
-						self:visible(true)
-					else
-						self:visible(false)
-					end
-				end,
-				-- Badge Quad
-				Def.Quad {
-					Name = "Badge",
-					InitCommand = function(self)
-						self:zoomto(36, 12):diffusealpha(0.8)
-					end
-				},
-				-- Level Text
-				LoadFont("Common Normal") .. {
-					Name = "Txt",
-					InitCommand = function(self)
-						self:zoom(0.32):diffuse(color("#000000"))
-					end
-				}
-			},
-			-- Progress Bar
-			Def.ActorFrame {
-				Name = "LevelProgress",
-				InitCommand = function(self) self:y(68) end,
-				UpdateOverlaySkillsetsMessageCommand = function(self)
-					local prof = PROFILEMAN:GetProfile(PLAYER_1)
-					if prof and HV.GetLevelProgress then
-						local progress, cur, total = HV.GetLevelProgress(prof)
-						self:GetChild("Bar"):stoptweening():smooth(0.5):zoomx(60 * progress)
-						self:GetChild("Num"):settextf("%d / %d XP", cur, total)
-						self:visible(true)
-					elseif prof then
-						self:GetChild("Bar"):zoomx(0)
-						self:GetChild("Num"):settext("")
-						self:visible(true)
-					else
-						self:visible(false)
-					end
-				end,
-				-- Bar BG
-				Def.Quad {
-					InitCommand = function(self) self:zoomto(60, 3):diffuse(0,0,0,0.5) end
-				},
-				-- Bar Fill
-				Def.Quad {
-					Name = "Bar",
-					InitCommand = function(self) self:halign(0):x(-30):zoomto(0, 3):diffuse(color("#FF4081")) end
-				},
-				-- Numbers
-				LoadFont("Common Normal") .. {
-					Name = "Num",
-					InitCommand = function(self) self:y(8):zoom(0.22):diffuse(subText) end
-				}
-			},
 			LoadFont("Common Normal") .. {
 				Name = "Rating",
-				InitCommand = function(self) self:xy(22, 54):zoom(0.55):diffuse(accentColor) end,
+				InitCommand = function(self) self:y(54):zoom(0.55):diffuse(accentColor) end,
 				UpdateOverlaySkillsetsMessageCommand = function(self)
 					if not HV.ShowMSD() then self:visible(false); return end
 					local val = 0
@@ -1743,7 +1648,7 @@ local profileOverlay = Def.ActorFrame {
 			self:visible(true):stoptweening()
 				:diffusealpha(0):linear(0.15):diffusealpha(1)
 			GRADECOUNTERSTORAGE:refreshProfile()
-			self:GetChild("GradeSidebar"):playcommand("UpdateOverlayUI")
+			self:GetChild("GradeSidebar"):playcommand("UpdatePlayCounts")
 			self:playcommand("UpdateAllScores")
 		else
 			self:stoptweening():linear(0.1):diffusealpha(0):queuecommand("UnlockInput"):queuecommand("Hide")

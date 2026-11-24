@@ -327,8 +327,11 @@ t[#t + 1] = Def.ActorFrame {
 	-- Player Name
 	LoadFont("Common Normal") .. {
 		InitCommand = function(self)
-			self:halign(0):valign(0):xy(32, 3):zoom(0.28)
-				:diffuse(brightText):settext(profileName)
+			self:halign(0):valign(0):xy(32, 3):zoom(0.28):maxwidth((cardW - 38) / 0.28)
+				:diffuse(brightText)
+		end,
+		BeginCommand = function(self)
+			self:settext(HV.GetOnlineReplayPlayerName() or profileName)
 		end
 	},
 
