@@ -42,7 +42,7 @@ local function refreshSection(self, cachedOnly)
 	if not section then return end
 	local wheel = self:GetParent():GetParent()
 	local style = GAMESTATE:GetCurrentStyle()
-	local summary = HV.WheelData.GetSection(wheel, section, style and style:GetStepsType(), cachedOnly)
+	local summary = HV.WheelData.GetSection(wheel, section, style and style:GetStepsType(), cachedOnly, true)
 	local bar = self:GetChild("ProgressionBar")
 	if not summary then
 		if self.summary then

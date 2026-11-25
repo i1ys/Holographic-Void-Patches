@@ -44,8 +44,8 @@ local focus = LoadActor("input_focus.lua")
 local filterInput
 local searchRefreshPending = false
 local searchString = ""
-local appliedSearch = ""
-local searchHasMatches = true
+local requestedSearch = ""
+local searchResult = {query = "", hasMatches = true}
 local searchRefreshActor
 
 -- Online top-score entries are not guaranteed to be native HighScore objects;
@@ -86,39 +86,58 @@ local function wheelSearchQuery(query)
 	end
 	value = value:match("^%s*(.-)%s*$")
 	if value == "" then return "" end
-	if field == "ck" or value:find(";%s*%a+=") then
-		return field .. "=" .. value
+	local nativeQuery = field .. "=" .. value
+	if value:find(";%s*%a+=") then return nativeQuery end
+	local term = value:lower()
+	if field == "ck" then
+		return nativeQuery, function(song)
+			for _, steps in ipairs(song:GetAllSteps()) do
+				if steps:GetChartKey():lower():find(term, 1, true) then return true end
+			end
+			return false
+		end
 	end
-	return field .. "=" .. value, searchFields[field], value:lower()
+	local getter = searchFields[field]
+	return nativeQuery, function(song)
+		local getField = song[getter]
+		return getField and (getField(song) or ""):lower():find(term, 1, true) ~= nil
+	end
 end
 
 local function refreshMusicSearch()
 	searchRefreshPending = not focus.isCurrent()
-	if searchRefreshPending then return end
+	if searchRefreshPending then return false end
 	local screen = SCREENMAN:GetTopScreen()
 	local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
-	if not wheel then return end
-	local query, getter, term = wheelSearchQuery(appliedSearch)
-	wheel:SongSearch(query)
-	searchHasMatches = true
-	if getter and wheel.GetSongs then
+	if not wheel then return false end
+	local query = requestedSearch
+	local nativeQuery, matches = wheelSearchQuery(query)
+	wheel:SongSearch(nativeQuery)
+	local hasMatches = true
+	if matches and wheel.GetSongs then
 		-- The native wheel keeps the previous results when its search finds none.
-		local first = wheel:GetSongs()[1]
-		searchHasMatches = first ~= nil and first[getter]
-			and (first[getter](first) or ""):lower():find(term, 1, true) ~= nil
+		hasMatches = false
+		for _, song in ipairs(wheel:GetSongs()) do
+			if matches(song) then
+				hasMatches = true
+				break
+			end
+		end
 	end
+	searchResult = {query = query, hasMatches = hasMatches, matches = matches}
+	return true
 end
 
 local function setSearchText(query, apply, debounce)
 	searchString = query
 	if apply then
 		if searchRefreshActor then searchRefreshActor:stoptweening() end
-		appliedSearch = query
+		requestedSearch = query
 		if debounce and searchRefreshActor then
 			searchRefreshActor:sleep(0.12):queuecommand("ApplySearch")
 			apply = false
 		else
-			refreshMusicSearch()
+			apply = refreshMusicSearch()
 		end
 	end
 	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = apply})
@@ -129,10 +148,10 @@ HV.SetMusicSearchQuery = function(query)
 end
 HV.GetMusicSearchQuery = function() return searchString end
 HV.RefreshMusicSearch = function(onlyIfActive)
-	if onlyIfActive and appliedSearch == "" then return end
+	if onlyIfActive and requestedSearch == "" then return end
 	if searchRefreshActor then searchRefreshActor:stoptweening() end
-	refreshMusicSearch()
-	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = true})
+	local applied = refreshMusicSearch()
+	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = applied})
 end
 
 -- Mouse wheel locking to prevent double-moves
@@ -178,14 +197,26 @@ local function IsSelectMusicBackgroundClickArea()
 	return true
 end
 
+local function searchBlocksWheelSelection(screen, wheel)
+	-- The native wheel can still point at a song from the previous query after a miss.
+	if searchResult.hasMatches or screen:GetSelectionState() ~= 0 then return false end
+	wheel = wheel or screen:GetMusicWheel()
+	if not wheel then return false end
+	local row = wheel:GetSelectedType()
+	return row == "WheelItemDataType_Song" or row == "WheelItemDataType_Random"
+		or row == "WheelItemDataType_Roulette" or row == "WheelItemDataType_Portal"
+end
+
 local function selectRandomSong(screen)
-	if not searchHasMatches or GAMESTATE:GetSortOrder() == "SortOrder_ModeMenu" then return end
+	local result = searchResult
+	if not result.hasMatches or GAMESTATE:GetSortOrder() == "SortOrder_ModeMenu" then return end
 	local wheel = screen:GetMusicWheel()
 	if not wheel then return end
 	local songs = wheel:GetSongs()
 	while #songs > 0 do
 		local index = math.random(#songs)
-		if wheel:SelectSong(songs[index]) then return end
+		local song = songs[index]
+		if (not result.matches or result.matches(song)) and wheel:SelectSong(song) then return end
 		songs[index] = songs[#songs]
 		songs[#songs] = nil
 	end
@@ -695,7 +726,9 @@ main_af[#main_af + 1] = Def.ActorFrame {
 						local offset = math.floor(y / 40 + 0.5)
 						if math.abs(offset) <= 5 and math.abs(y - offset * 40) <= 19 then
 							if offset == 0 and (wheel:IsSettled() or wheel:IsRouletting()) then
-								if not screen:IsTransitioning() then screen:SelectCurrent() end
+								if not screen:IsTransitioning() and not searchBlocksWheelSelection(screen, wheel) then
+									screen:SelectCurrent()
+								end
 							elseif wheel:IsSettled() then
 								local direction = offset > 0 and 1 or -1
 								for _ = 1, math.abs(offset) do
@@ -832,6 +865,8 @@ main_af[#main_af + 1] = Def.ActorFrame {
 
 			-- 3. Key Presses (Global Shortcuts)
 			if evType == "InputEventType_FirstPress" then
+				if isEnter and HV.ActiveTab == "" and searchBlocksWheelSelection(screen) then return true end
+
 				-- Close any active tab on Escape or Back
 				if btn == "DeviceButton_escape" or logicalBtn == "Back" then
 					if HV.ActiveTab ~= "" then
@@ -843,7 +878,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 
 				-- Global Del to clear search
 				if btn:lower() == "devicebutton_delete" then
-					if searchString ~= "" or appliedSearch ~= "" then
+					if searchString ~= "" or requestedSearch ~= "" then
 						setSearchText("", true)
 						return true
 					end
@@ -1672,8 +1707,8 @@ main_af[#main_af + 1] = Def.ActorFrame {
 			end,
 			DrawSearchCommand = function(self, params)
 				local focused = params.focused
-				local query = focused and searchString or appliedSearch
-				local failed = query ~= "" and query == appliedSearch and not searchHasMatches
+				local query = focused and searchString or requestedSearch
+				local failed = query ~= "" and query == searchResult.query and not searchResult.hasMatches
 				local label = focused and query or ("Search: " .. query)
 				if query == "" then
 					label = focused and "Search songs" or "Click here to Search (or Ctrl + 4)"
