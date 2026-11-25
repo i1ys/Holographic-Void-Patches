@@ -134,7 +134,7 @@ Trace("Holographic Void: 01 Init.lua loaded.")
 -- ============================================================
 -- RATE HELPERS (used across screens)
 -- ============================================================
-HV.RateIncrements = {Small = 0.05, Large = 0.10}
+HV.RateIncrements = {Small = 0.05, Large = 0.1}
 
 function HV.GetRateIncrement()
 	return INPUTFILTER:IsBeingPressed("/") and HV.RateIncrements.Large or HV.RateIncrements.Small
