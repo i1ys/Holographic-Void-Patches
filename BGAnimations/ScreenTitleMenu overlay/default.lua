@@ -14,6 +14,7 @@ t[#t+1] = LoadActor("../_cursor")
 -- Combined Input Controller
 t[#t+1] = Def.ActorFrame {
 	BeginCommand = function(self)
+		Branch.CloseMultiplayerConnection()
 		HV.TitleState.keyboardIndex = HV.TitleState.keyboardIndex or 1
 		local screen = SCREENMAN:GetTopScreen()
 		if not screen then return end

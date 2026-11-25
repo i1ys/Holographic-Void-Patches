@@ -128,7 +128,6 @@ end
 local judge = 4
 local playedJudge = 4
 local normalized = PREFSMAN:GetPreference("SortBySSRNormPercent")
-local inMulti = Var("LoadingScreen") == "ScreenNetEvaluation"
 local judges = {"TapNoteScore_W1", "TapNoteScore_W2", "TapNoteScore_W3", "TapNoteScore_W4", "TapNoteScore_W5", "TapNoteScore_Miss"}
 
 -- Rescoring/offset plot state
@@ -1005,7 +1004,7 @@ local function createScoreBoard(pn, frameW, pad)
 			MESSAGEMAN:Broadcast("EvaluationJudgeChanged")
 		end,
 		ToggleCustomWindowsMessageCommand = function(self)
-			if inMulti or not curScore then return end
+			if not curScore then return end
 			if usingCustomWindows then
 				usingCustomWindows, lastSnapshot = false, nil
 				MESSAGEMAN:Broadcast("UnloadedCustomWindow")
@@ -2285,11 +2284,7 @@ local scoreboardFrame = Def.ActorFrame {
 	InitCommand = function(self) self:xy(rightX + 10, offsetPlotHeight + 110) end,
 }
 
-if inMulti then
-	scoreboardFrame[#scoreboardFrame + 1] = LoadActor("MPscoreboard")
-else
-	scoreboardFrame[#scoreboardFrame + 1] = LoadActor("online_leaderboard", selectEvaluationScore, openingScore)
-end
+scoreboardFrame[#scoreboardFrame + 1] = LoadActor("online_leaderboard", selectEvaluationScore, openingScore)
 
 t[#t + 1] = scoreboardFrame
 t[#t + 1] = LoadActor("../_cursor")

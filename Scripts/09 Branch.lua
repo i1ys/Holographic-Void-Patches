@@ -47,18 +47,46 @@ Branch.AfterNetSelectProfile = function()
 	return SMOnlineScreen()
 end
 
-Branch.LeavePackDownloader = function()
-	return "ScreenTitleMenu"
+function Branch.CloseMultiplayerConnection()
+	if IsNetConnected() then CloseConnection() end
 end
 
-Branch.LeaveAssets = function()
-	if IsSMOnlineLoggedIn(PLAYER_1) then
-		if NSMAN:GetCurrentRoomName() then
-			return "ScreenNetSelectMusic"
-		end
-		return "ScreenNetRoom"
-	end
-	return "ScreenSelectMusic"
+function HV.GetMultiplayerRoomName()
+	if not IsNetConnected() or not IsSMOnlineLoggedIn() then return end
+	local room = NSMAN:GetCurrentRoomName()
+	if room and room ~= "" then return room end
+end
+
+Branch.AfterSelectMusic = function()
+	if SCREENMAN:GetTopScreen():GetGoToOptions() then return SelectFirstOptionsScreen() end
+	return "ScreenStageInformation"
+end
+
+Branch.PlayerOptions = function()
+	if SCREENMAN:GetTopScreen():GetGoToOptions() then return "ScreenPlayerOptions" end
+	return "ScreenStageInformation"
+end
+
+Branch.BackOutOfMultiplayerRoom = function()
+	return IsNetConnected() and IsSMOnlineLoggedIn() and "ScreenNetRoom" or "ScreenSelectMusic"
+end
+
+local function returnFromMultiplayerRound()
+	if HV.GetMultiplayerRoomName() then return "ScreenNetSelectMusic" end
+	return Branch.BackOutOfMultiplayerRoom()
+end
+
+Branch.AfterNetStageInformation = function()
+	if HV.GetMultiplayerRoomName() then return ToNetGameplay() end
+	return Branch.BackOutOfMultiplayerRoom()
+end
+
+Branch.AfterNetProfileSave = returnFromMultiplayerRound
+Branch.BackOutOfNetPlayerOptions = returnFromMultiplayerRound
+Branch.BackOutOfNetStageInformation = returnFromMultiplayerRound
+
+Branch.LeavePackDownloader = function()
+	return "ScreenTitleMenu"
 end
 
 Trace("Holographic Void: 09 Branch.lua loaded.")

@@ -28,7 +28,6 @@ if not gameplay.isSync then
 	t[#t + 1] = LoadActor("scoretracking")
 	t[#t + 1] = LoadActor("elements/autofaildisplay.lua", gameplay)
 	t[#t + 1] = LoadActor("npscalc")
-	t[#t + 1] = LoadActor("multiplayer")
 	t[#t + 1] = LoadActor("leaderboard")
 	t[#t + 1] = LoadActor("avatar")
 end

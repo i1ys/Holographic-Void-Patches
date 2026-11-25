@@ -12,7 +12,6 @@ local footerH = 32
 local maxVisibleRooms = math.max(1, math.floor((SCREEN_HEIGHT - topOffset - footerH - 24) / (roomHeight + roomGap)))
 
 local function roomText(room, key, fallback)
-	if room == nil then return fallback end
 	local value = room[key]
 	if value == nil or value == "" then
 		return fallback
@@ -20,123 +19,132 @@ local function roomText(room, key, fallback)
 	return tostring(value)
 end
 
+local function getRoomScreen()
+	if not IsNetConnected() or not IsSMOnlineLoggedIn() then return end
+	local screen = SCREENMAN:GetTopScreen()
+	if screen and screen:GetName() == "ScreenNetRoom" then
+		return screen
+	end
+end
+
 local function roomList()
+	local rooms = {}
 	local selectedIndex = 1
-	local roomCount = 0
 	local creatingRoom = false
 	local scrollOffset = 0
+	local owner, inputCallback, previousRedirection
 
-	local function clampSelection()
-		if roomCount <= 0 then
-			selectedIndex = 1
-			creatingRoom = true
-			scrollOffset = 0
-			return
-		end
-		if selectedIndex < 1 then selectedIndex = roomCount end
-		if selectedIndex > roomCount then selectedIndex = 1 end
-		if selectedIndex <= scrollOffset then
-			scrollOffset = selectedIndex - 1
-		end
-		if selectedIndex > scrollOffset + maxVisibleRooms then
-			scrollOffset = selectedIndex - maxVisibleRooms
-		end
-		if scrollOffset < 0 then scrollOffset = 0 end
+	local function isCreateSelected()
+		return creatingRoom or #rooms == 0
+	end
+
+	local function releaseInput(self)
+		if not owner then return end
+		owner:RemoveInputCallback(inputCallback)
+		SCREENMAN:set_input_redirected(PLAYER_1, previousRedirection)
+		owner, inputCallback = nil, nil
+		self:SetUpdateFunction(nil)
 	end
 
 	return Def.ActorFrame {
 		Name = "HVNetRoomList",
 		OnCommand = function(self)
+			local screen = getRoomScreen()
+			if not screen or owner then return end
+			owner = screen
+			previousRedirection = SCREENMAN:get_input_redirected(PLAYER_1)
 			SCREENMAN:set_input_redirected(PLAYER_1, true)
-			local screen = SCREENMAN:GetTopScreen()
-			if screen then
-				screen:AddInputCallback(function(event)
-					if event.type ~= "InputEventType_FirstPress" and event.type ~= "InputEventType_Repeat" then
-						return false
-					end
-					local button = event.button
-					if button == "Back" then
-						screen:Cancel()
-						return true
-					end
-					if button == "MenuLeft" or button == "Left" or button == "MenuRight" or button == "Right" then
-						creatingRoom = not creatingRoom
-						MESSAGEMAN:Broadcast("HVNetRoomRefresh")
-						return true
-					end
-					if button == "MenuUp" or button == "Up" then
-						if creatingRoom then
-							creatingRoom = false
-							selectedIndex = math.max(1, roomCount)
-						else
-							selectedIndex = selectedIndex - 1
-						end
-						clampSelection()
-						MESSAGEMAN:Broadcast("HVNetRoomRefresh")
-						return true
-					end
-					if button == "MenuDown" or button == "Down" then
-						if roomCount == 0 then
-							creatingRoom = true
-						elseif creatingRoom then
-							creatingRoom = false
-							selectedIndex = 1
-						else
-							selectedIndex = selectedIndex + 1
-						end
-						clampSelection()
-						MESSAGEMAN:Broadcast("HVNetRoomRefresh")
-						return true
-					end
-					if button == "Start" then
-						if creatingRoom then
-							screen:GetRoomWheel():MakeNewRoom()
-						elseif roomCount > 0 then
-							local rooms = screen:GetRoomWheel():GetRooms()
-							local room = rooms[selectedIndex]
-							if room then
-								screen:SelectRoom(room.name)
-							end
-						end
-						return true
-					end
+			inputCallback = function(event)
+				if getRoomScreen() ~= owner or owner:IsTransitioning() then return false end
+				if event.type ~= "InputEventType_FirstPress" and event.type ~= "InputEventType_Repeat" then
 					return false
-				end)
+				end
+				local button = event.GameButton or event.button
+				local firstPress = event.type == "InputEventType_FirstPress"
+				if button == "Back" then
+					if firstPress then screen:Cancel() end
+					return true
+				end
+				if button == "MenuLeft" or button == "Left" or button == "MenuRight" or button == "Right" then
+					if firstPress and #rooms > 0 then
+						creatingRoom = not creatingRoom
+						self:playcommand("RenderRooms")
+					end
+					return true
+				end
+				local up = button == "MenuUp" or button == "Up"
+				local down = button == "MenuDown" or button == "Down"
+				if up or down then
+					local count = #rooms
+					if count > 0 then
+						if creatingRoom then
+							creatingRoom = false
+							selectedIndex = up and count or 1
+						else
+							local direction = up and -1 or 1
+							selectedIndex = (selectedIndex - 1 + direction) % count + 1
+						end
+						self:playcommand("RenderRooms")
+					end
+					return true
+				end
+				if button == "Start" then
+					if not firstPress then return true end
+					if isCreateSelected() then
+						screen:GetRoomWheel():MakeNewRoom()
+					else
+						screen:SelectRoom(rooms[selectedIndex].name)
+					end
+					return true
+				end
+				return false
 			end
-			self:playcommand("Refresh")
+			screen:AddInputCallback(inputCallback)
+			self:playcommand("RefreshRooms")
 		end,
-		RefreshCommand = function(self)
-			local screen = SCREENMAN:GetTopScreen()
+		EndCommand = releaseInput,
+		RefreshRoomsCommand = function(self)
+			local screen = getRoomScreen()
 			if not screen then return end
-			local rooms = screen:GetRoomWheel():GetRooms()
-			roomCount = #rooms
-			clampSelection()
-			for i = 1, maxVisibleRooms do
-				local roomActor = self:GetChild("Room" .. i)
-				local roomIndex = i + scrollOffset
-				local room = rooms[roomIndex]
-				if roomActor then
-					roomActor:visible(room ~= nil)
-					if room then
-						roomActor:playcommand("SetRoom", {
-							room = room,
-							selected = not creatingRoom and roomIndex == selectedIndex,
-							index = roomIndex
-						})
+			local selectedRoom = rooms[selectedIndex]
+			rooms = screen:GetRoomWheel():GetRooms()
+			selectedIndex = math.max(1, math.min(selectedIndex, #rooms))
+			if selectedRoom then
+				for i, room in ipairs(rooms) do
+					if room.name == selectedRoom.name then
+						selectedIndex = i
+						break
 					end
 				end
 			end
-			local noRooms = self:GetChild("NoRooms")
-			if noRooms then
-				noRooms:visible(roomCount == 0)
-			end
-			local create = self:GetChild("CreateRoom")
-			if create then
-				create:playcommand("SetSelected", {selected = creatingRoom})
-			end
+			self:playcommand("RenderRooms")
 		end,
-		HVNetRoomRefreshMessageCommand = function(self)
-			self:playcommand("Refresh")
+		RoomListUpdatedMessageCommand = function(self)
+			self:playcommand("RefreshRooms")
+		end,
+		BeginTextEntryMessageCommand = function(self)
+			-- Etterna sends room changes to the top screen, which can be the text entry prompt.
+			self:SetUpdateFunction(function()
+				if getRoomScreen() then
+					self:SetUpdateFunction(nil)
+					self:playcommand("RefreshRooms")
+				end
+			end)
+		end,
+		RenderRoomsCommand = function(self)
+			scrollOffset = math.min(scrollOffset, math.max(0, #rooms - maxVisibleRooms))
+			scrollOffset = math.min(scrollOffset, selectedIndex - 1)
+			scrollOffset = math.max(scrollOffset, selectedIndex - maxVisibleRooms)
+			local createSelected = isCreateSelected()
+			for i = 1, maxVisibleRooms do
+				local roomIndex = i + scrollOffset
+				self:GetChild("Room" .. i):playcommand("SetRoom", {
+					room = rooms[roomIndex],
+					selected = not createSelected and roomIndex == selectedIndex
+				})
+			end
+			self:GetChild("NoRooms"):visible(#rooms == 0)
+			self:GetChild("CreateRoom"):playcommand("SetSelected", {selected = createSelected})
 		end,
 		LoadFont("Common Normal") .. {
 			Name = "NoRooms",
@@ -175,8 +183,8 @@ local function roomList()
 				end,
 				MouseDownCommand = function(self, params)
 					if params.event == "DeviceButton_left mouse button" then
-						local screen = SCREENMAN:GetTopScreen()
-						if screen then
+						local screen = getRoomScreen()
+						if screen and not screen:IsTransitioning() then
 							screen:GetRoomWheel():MakeNewRoom()
 						end
 					end
@@ -187,6 +195,7 @@ local function roomList()
 end
 
 local function roomEntry(i)
+	local roomName
 	return Def.ActorFrame {
 		Name = "Room" .. i,
 		InitCommand = function(self)
@@ -194,12 +203,15 @@ local function roomEntry(i)
 		end,
 		SetRoomCommand = function(self, params)
 			local room = params.room
+			roomName = room and room.name
+			self:visible(room ~= nil)
+			if not room then return end
 			local selected = params.selected
 			self:GetChild("Bg"):diffuse(selected and color("0.12,0.12,0.12,0.98") or bgCard)
 			self:GetChild("Accent"):diffuse(selected and accentColor or color("0.2,0.2,0.2,1"))
 			self:GetChild("Name"):settext(roomText(room, "name", "Room"))
 			self:GetChild("Desc"):settext(roomText(room, "description", THEME:GetString("NetRoom", "Explain")))
-			self:GetChild("State"):settext(room and room.passworded and THEME:GetString("NetRoom", "Passworded") or "")
+			self:GetChild("State"):settext(room.passworded and THEME:GetString("NetRoom", "Passworded") or "")
 		end,
 		Def.Quad {
 			Name = "Bg",
@@ -236,19 +248,12 @@ local function roomEntry(i)
 				self:halign(0):valign(0):zoomto(roomWidth, roomHeight):diffusealpha(0)
 			end,
 			MouseDownCommand = function(self, params)
-				if params.event == "DeviceButton_left mouse button" then
-					local screen = SCREENMAN:GetTopScreen()
-					local roomName = self:GetParent():GetChild("Name"):GetText()
-					if screen and roomName and roomName ~= "" then
+				if params.event == "DeviceButton_left mouse button" and roomName and roomName ~= "" then
+					local screen = getRoomScreen()
+					if screen and not screen:IsTransitioning() then
 						screen:SelectRoom(roomName)
 					end
 				end
-			end,
-			MouseOverCommand = function(self)
-				MESSAGEMAN:Broadcast("HVNetRoomRefresh")
-			end,
-			MouseOutCommand = function(self)
-				MESSAGEMAN:Broadcast("HVNetRoomRefresh")
 			end
 		}
 	}

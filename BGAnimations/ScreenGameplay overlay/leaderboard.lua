@@ -1,11 +1,5 @@
--- Holographic Void: In-Game Leaderboard (Single Player)
--- Shows local or online high scores for the current song during gameplay
--- Top-left corner, individual score cards + live current score
--- THe judgement display is not shown here.
-
 local leaderboardMode = HV.ShowInGameLeaderboard() or "Off"
-local topScreen = SCREENMAN:GetTopScreen()
-local isNetMultiplayer = NSMAN and NSMAN.IsETTP and NSMAN:IsETTP() and topScreen and topScreen:GetName() and topScreen:GetName():find("Net") ~= nil or false
+local isNetMultiplayer = Var("LoadingScreen") == "ScreenNetGameplay"
 if GAMESTATE:IsPracticeMode() then
 	return Def.ActorFrame {}
 end
@@ -34,7 +28,7 @@ local maxEntries = 5
 local isCustomizeGameplay = HV.IsGameplayCustomizationEnabled()
 
 -- Get player name (prefer online)
-local profileName = HV.GetPlayerName()
+local profileName = isNetMultiplayer and NSMAN:GetLoggedInUsername() or HV.GetPlayerName()
 
 -- Grade helper
 local function GetGradeStr(wife)
@@ -71,32 +65,38 @@ end
 -- ============================================================
 local function UpdateScores()
 	highScores = {}
+	local curRate = getCurRateValue()
+	if isNetMultiplayer then
+		if not IsSMOnlineLoggedIn() or not PREFSMAN:GetPreference("EnableScoreboard") then return end
+		local lb = {}
+		for _, score in ipairs(NSMAN:GetMPLeaderboard()) do
+			if score.user ~= "" and score.wife == score.wife and math.abs(score.wife) < math.huge then
+				lb[#lb + 1] = score
+			end
+		end
+		table.sort(lb, function(a, b)
+			if a.wife ~= b.wife then return a.wife > b.wife end
+			return a.user < b.user
+		end)
+		for i, s in ipairs(lb) do
+			if s.user:lower() ~= profileName:lower() then
+				highScores[#highScores + 1] = {
+					rank = i,
+					wife = s.wife * 100,
+					gradeStr = GetGradeFromPercent(s.wife),
+					name = s.user,
+					rate = curRate,
+					ssr = 0,
+				}
+				if #highScores == maxEntries then break end
+			end
+		end
+		return
+	end
+
 	local ck = steps:GetChartKey()
 	if not ck then return end
-
-	-- Get current rate for filtering
-	local curRate = getCurRateValue()
-	local curRateStr = getCurRateString()
-
-	if isNetMultiplayer then
-		local lb = NSMAN:GetMPLeaderboard() or {}
-		table.sort(lb, function(a, b)
-			return (a.wife or -1) > (b.wife or -1)
-		end)
-		for i = 1, math.min(maxEntries, #lb) do
-			local s = lb[i]
-			local wife = (s.wife or 0) * 100
-			highScores[#highScores + 1] = {
-				rank = i,
-				wife = wife,
-				combo = 0,
-				gradeStr = GetGradeStr(wife),
-				name = s.user or "???",
-				rate = curRate,
-				ssr = -1,
-			}
-		end
-	elseif leaderboardMode == "Online" then
+	if leaderboardMode == "Online" then
 		-- Fetch from DLMAN
 		local lb = DLMAN:GetChartLeaderBoard(ck)
 		if lb then
@@ -142,7 +142,7 @@ local function UpdateScores()
 		end
 	else
 		-- Local Scores: Only for current rate
-		local sl = getScoreTable(PLAYER_1, curRateStr)
+		local sl = getScoreTable(PLAYER_1, getCurRateString())
 		if sl then
 			-- Already sorted by score usually, but let's be sure it's wife%
 			table.sort(sl, function(a, b) return a:GetWifeScore() > b:GetWifeScore() end)
@@ -165,8 +165,13 @@ local function UpdateScores()
 	end
 end
 
--- Initial fetch
-UpdateScores()
+if not isNetMultiplayer then UpdateScores() end
+
+local function refreshNetScores(self)
+	if not isNetMultiplayer then return end
+	UpdateScores()
+	self:playcommand("RefreshScores")
+end
 
 -- ============================================================
 -- UI Construction
@@ -194,12 +199,8 @@ local t = Def.ActorFrame {
 		UpdateScores()
 		self:playcommand("RefreshScores")
 	end,
-	JudgmentMessageCommand = function(self)
-		if isNetMultiplayer then
-			UpdateScores()
-			self:playcommand("RefreshScores")
-		end
-	end,
+	MPLeaderboardUpdateMessageCommand = refreshNetScores,
+	MultiplayerDisconnectionMessageCommand = refreshNetScores,
 
 	-- Mode Tag
 	LoadFont("Common Normal") .. {
@@ -290,7 +291,9 @@ for i = 1, maxEntries do
 		},
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(1):valign(0):xy(cardW - 6, 21):zoom(0.22):diffuse(dimText) end,
-			SetDataCommand = function(self, data) self:settextf("%dx", data.combo) end
+			SetDataCommand = function(self, data)
+				self:settext(data.combo and string.format("%dx", data.combo) or "")
+			end
 		}
 	}
 end
@@ -331,7 +334,7 @@ t[#t + 1] = Def.ActorFrame {
 				:diffuse(brightText)
 		end,
 		BeginCommand = function(self)
-			self:settext(HV.GetOnlineReplayPlayerName() or profileName)
+			self:settext(isNetMultiplayer and profileName or HV.GetOnlineReplayPlayerName() or profileName)
 		end
 	},
 
@@ -366,7 +369,10 @@ t[#t + 1] = Def.ActorFrame {
 }
 
 -- Trigger first refresh
-t.BeginCommand = function(self) self:playcommand("RefreshScores") end
+t.BeginCommand = function(self)
+	if isNetMultiplayer then UpdateScores() end
+	self:playcommand("RefreshScores")
+end
 
 t[#t + 1] = MovableBorder(cardW, ((cardH + cardGap) * (maxEntries + 1)), 1, cardW / 2, ((cardH + cardGap) * (maxEntries + 1)) / 2)
 

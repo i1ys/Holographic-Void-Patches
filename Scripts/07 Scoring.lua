@@ -105,22 +105,26 @@ end
 
 function HV.Score.GetChartBestGradeTier(chartKey, chartGrades, checkpoint)
 	if chartGrades[chartKey] == nil then
-		local best, played = false, false
+		local best, localBest, played = false, false, false
 		for _, rate in pairs(SCOREMAN:GetScoresByKey(chartKey) or {}) do
 			if checkpoint then checkpoint() end
 			for _, score in ipairs(rate:GetScores()) do
 				if checkpoint then checkpoint() end
 				played = true
 				local tier = tonumber(score:GetWifeGrade():match("^Grade_Tier(%d+)$"))
-				if tier and (not best or tier < best) and (not score.GetEtternaValid or score:GetEtternaValid())
-					and not IsScoreInvalid(score) then
-					best = tier
+				if tier and (not best or tier < best) then
+					local eligible = not score.GetEtternaValid or score:GetEtternaValid()
+					if eligible and not IsScoreInvalid(score) then
+						best = tier
+					elseif not eligible and not best and (not localBest or tier < localBest) and not IsScoreInvalid(score) then
+						localBest = tier
+					end
 				end
 				if best == 1 then break end
 			end
 			if best == 1 then break end
 		end
-		chartGrades[chartKey] = {tier = best, played = played}
+		chartGrades[chartKey] = {tier = best or localBest, played = played}
 	end
 	local result = chartGrades[chartKey]
 	return result.tier, result.played

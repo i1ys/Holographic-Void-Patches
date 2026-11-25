@@ -214,6 +214,7 @@ local main_af = Def.ActorFrame {
 		end)
 	end,
 	BeginCommand = function(self)
+		Branch.CloseMultiplayerConnection()
 		-- Store ScreenSelectMusic reference globally for chart preview to use
 		HV = HV or {}
 		HV.SSM = SCREENMAN:GetTopScreen()
