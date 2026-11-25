@@ -55,7 +55,6 @@ local requestedAt
 local sawAudioDelay
 local overlappingRequest
 local lastPositionAt
-local positionSettlesAt
 local hasPlaybackClock = false
 local previousRedirection
 local returnScreen
@@ -122,10 +121,18 @@ local function finishPreview()
 	SOUND:StopMusic()
 end
 
+local function getExtendedSampleStart()
+	local start = song:GetSampleStart()
+	-- ScreenSelectMusic starts the extended sample at 5s when the wheel sample is too late.
+	if musicLength - start < 1 then return 5 end
+	return start
+end
+
 local function startNativeSample(position)
 	-- Stop first so the native request can replace a wheel sample of the same file.
 	hasPlaybackClock = false
-	nativeSample = {start = song:GetSampleStart(), startedAt = GetTimeSinceStart(), target = position}
+	local start = getExtendedSampleStart()
+	nativeSample = {start = start, startedAt = GetTimeSinceStart(), target = position ~= start and position or nil}
 	startingNativeSample = true
 	SOUND:StopMusic()
 	ssm:PlayCurrentSongSampleMusic(true, true)
@@ -134,10 +141,10 @@ end
 
 local function canUseNativeSample()
 	local selected = GAMESTATE:GetCurrentSteps()
-	local start = song:GetSampleStart()
+	local start = getExtendedSampleStart()
 	return previewAudioPath:lower():match("%.mp3$") and selected
 		and selected:GetPreviewMusicPath() == previewAudioPath
-		and start >= 0 and start < previewEnd and musicLength - start >= 1
+		and start >= 0 and start < previewEnd
 		and ssm.SetSampleMusicPosition and ssm.IsSampleMusicPaused and ssm.PauseSampleMusic
 end
 
@@ -159,7 +166,6 @@ local function playFrom(position)
 	requestedAt = GetTimeSinceStart()
 	sawAudioDelay = false
 	lastPositionAt = nil
-	positionSettlesAt = nil
 	if nativeSample then
 		nativeSample.target = start
 	elseif canUseNativeSample() then
@@ -170,7 +176,7 @@ local function playFrom(position)
 end
 
 local function playPreview()
-	local start = song:GetSampleStart()
+	local start = canUseNativeSample() and getExtendedSampleStart() or song:GetSampleStart()
 	if start < 0 or previewEnd - start < 1 then start = 0 end
 	playFrom(start)
 end
@@ -305,7 +311,6 @@ local function updatePlaybackPosition()
 		if requestedPosition then
 			previewPosition = position
 			requestedPosition = nil
-			positionSettlesAt = now + 0.4
 		end
 	elseif isPaused then
 		return false
@@ -324,19 +329,11 @@ local function updatePlaybackPosition()
 		end
 		requestedPosition = nil
 		previewPosition = position
-		positionSettlesAt = now + 0.4
 	end
-	if position < previewPosition - 0.05 * rate then
-		-- Etterna can loop files with "loop" in their path even without force loop.
-		if lastPositionAt and previewPosition + (now - lastPositionAt) * rate >= previewEnd then
-			finishPreview()
-			return false
-		end
-		-- The first clock sample can overshoot before Etterna settles on the audible position.
-		if not positionSettlesAt or now > positionSettlesAt
-			or previewPosition - position > 0.35 * math.max(1, rate) then return false end
-	end
-	if position >= previewEnd then
+	-- Etterna can wrap the clock at EOF. Earlier clock corrections are still live playback.
+	local wrappedAtEnd = lastPositionAt and position < previewPosition - 0.05 * rate
+		and previewPosition + (now - lastPositionAt) * rate >= previewEnd
+	if position >= previewEnd or wrappedAtEnd then
 		finishPreview()
 		return false
 	end
