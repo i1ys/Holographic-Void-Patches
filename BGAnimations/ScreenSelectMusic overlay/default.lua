@@ -42,11 +42,13 @@ local profileOverlayActor = nil
 local globalTooltipActor = nil
 local focus = LoadActor("input_focus.lua")
 local filterInput
-local searchRefreshPending = false
+local searchRefreshPending
 local searchString = ""
 local requestedSearch = ""
 local searchResult = {query = "", hasMatches = true}
 local searchRefreshActor
+local tagFilter
+local tagKeysChanged = false
 
 -- Online top-score entries are not guaranteed to be native HighScore objects;
 -- some Etterna versions return plain tables.  Keep the validation indicator
@@ -72,60 +74,178 @@ local searchFields = {
 	pack = "GetGroupName",
 }
 
-local function wheelSearchQuery(query)
-	query = query:match("^%s*(.-)%s*$")
-	if query == "" then return "" end
-	local field, value = query:match("^(%a+)=(.*)$")
-	field = field and field:lower()
-	if field == "p" or field == "group" then
-		field = "pack"
-	elseif field == "charter" or field == "stepper" then
-		field = "author"
-	elseif not searchFields[field] and field ~= "ck" then
-		field, value = "title", query
+local searchAliases = {p = "pack", group = "pack", charter = "author", stepper = "author"}
+
+local function searchField(name)
+	if not name then return end
+	name = name:lower()
+	name = searchAliases[name] or name
+	if searchFields[name] or name == "ck" then return name end
+end
+
+local function matchesSearchTerm(song, term)
+	if term.field == "ck" then
+		for _, chart in ipairs(song:GetAllSteps()) do
+			if chart:GetChartKey():lower():find(term.value, 1, true) then return true end
+		end
+		return false
 	end
-	value = value:match("^%s*(.-)%s*$")
-	if value == "" then return "" end
-	local nativeQuery = field .. "=" .. value
-	if value:find(";%s*%a+=") then return nativeQuery end
-	local term = value:lower()
-	if field == "ck" then
-		return nativeQuery, function(song)
-			for _, steps in ipairs(song:GetAllSteps()) do
-				if steps:GetChartKey():lower():find(term, 1, true) then return true end
-			end
-			return false
+	local getter = song[searchFields[term.field]]
+	return getter and (getter(song) or ""):lower():find(term.value, 1, true) ~= nil
+end
+
+local function wheelSearchQuery(query)
+	local terms, nativeQuery = {}, ""
+	local function addTerm(part)
+		local name, value = part:match("^%s*(%a+)%s*=(.*)$")
+		local field = searchField(name)
+		if not field then field, value = "title", part end
+		value = value:match("^%s*(.-)%s*$")
+		if value == "" then return end
+		terms[#terms + 1] = {field = field, value = value:lower()}
+		-- The engine recognizes field markers anywhere in the submitted text.
+		if nativeQuery == "" and not value:find("=", 1, true) then
+			nativeQuery = field .. "=" .. value
 		end
 	end
-	local getter = searchFields[field]
+
+	local start = 1
+	for separator, name in query:gmatch("();%s*(%a+)%s*=") do
+		if searchField(name) then
+			addTerm(query:sub(start, separator - 1))
+			start = separator + 1
+		end
+	end
+	addTerm(query:sub(start))
+	if #terms == 0 then return "" end
 	return nativeQuery, function(song)
-		local getField = song[getter]
-		return getField and (getField(song) or ""):lower():find(term, 1, true) ~= nil
+		for _, term in ipairs(terms) do
+			if not matchesSearchTerm(song, term) then return false end
+		end
+		return true
+	end, #terms > 1 or nativeQuery == ""
+end
+
+local function findMatch(items, matches)
+	for _, item in ipairs(items) do
+		if not matches or matches(item) then return item end
+	end
+end
+
+local function submitMusicSearch(wheel, sort, nativeQuery, textMatches, wheelReloaded, hasTagFilter)
+	if nativeQuery == "" then
+		if not wheelReloaded then wheel:ReloadSongList() end
+	else
+		local restrictedGroup = sort == "SortOrder_Group" and GAMESTATE:GetPreferredSongGroup() ~= "---Group All---"
+		if sort == "SortOrder_Favorites" or restrictedGroup then
+			-- A smaller pool may contain no song for the engine's previous-query fallback.
+			if not wheelReloaded then wheel:ReloadSongList() end
+			local songs = wheel:GetSongs()
+			if not findMatch(songs, textMatches) then return songs end
+		end
+		wheel:SongSearch(nativeQuery)
+	end
+	if textMatches or hasTagFilter then return wheel:GetSongs() end
+end
+
+local function readySearchWheel()
+	if not focus.isCurrent() or HV.ChartPreviewActive then return end
+	local screen = SCREENMAN:GetTopScreen()
+	local sort = GAMESTATE:GetSortOrder()
+	if sort == "SortOrder_ModeMenu" or screen:GetSelectionState() ~= 0 then return end
+	local wheel = screen:GetMusicWheel()
+	if wheel and wheel:IsSettled() and not wheel:IsLocked() then return wheel, sort end
+end
+
+local function queueSearchRefresh()
+	if searchRefreshPending ~= "debouncing" then searchRefreshPending = "waiting" end
+end
+
+local function queueTagFilter(keys)
+	tagFilter = nil
+	if keys then
+		local included = {}
+		for _, key in ipairs(keys) do included[key] = true end
+		local function matchesChart(chart)
+			return included[chart:GetChartKey()] == true
+		end
+		tagFilter = {
+			keys = keys,
+			matchesChart = matchesChart,
+			matchesSong = function(song) return findMatch(song:GetAllSteps(), matchesChart) ~= nil end,
+		}
+	end
+	tagKeysChanged = true
+	queueSearchRefresh()
+end
+
+local function getCombinedTagChartMatch()
+	if tagFilter and FILTERMAN:AnyActiveFilter() then return tagFilter.matchesChart end
+end
+
+local function refreshCombinedTagFilter()
+	if getCombinedTagChartMatch() then queueSearchRefresh() end
+end
+
+local function getTagSongMatch(filter, matchesChart)
+	if not filter then return end
+	if not matchesChart then return filter.matchesSong end
+
+	local matchesByDir = {}
+	return function(song)
+		local dir = song:GetSongDir()
+		if matchesByDir[dir] == nil then
+			matchesByDir[dir] = filter.matchesSong(song) and findMatch(song:GetChartsMatchingFilter(), matchesChart) ~= nil
+		end
+		return matchesByDir[dir]
 	end
 end
 
 local function refreshMusicSearch()
-	searchRefreshPending = not focus.isCurrent()
-	if searchRefreshPending then return false end
-	local screen = SCREENMAN:GetTopScreen()
-	local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
-	if not wheel then return false end
+	local wheel, sort = readySearchWheel()
+	if not wheel then
+		searchRefreshPending = "waiting"
+		return false
+	end
+	searchRefreshPending = nil
 	local query = requestedSearch
-	local nativeQuery, matches = wheelSearchQuery(query)
-	wheel:SongSearch(nativeQuery)
-	local hasMatches = true
-	if matches and wheel.GetSongs then
-		-- The native wheel keeps the previous results when its search finds none.
-		hasMatches = false
-		for _, song in ipairs(wheel:GetSongs()) do
-			if matches(song) then
-				hasMatches = true
-				break
-			end
+	local nativeQuery, textMatches, exactSelection = wheelSearchQuery(query)
+	local filter = tagFilter
+	local matchesTag = getTagSongMatch(filter, getCombinedTagChartMatch())
+	local tagFilterEmpty = filter and #filter.keys == 0
+	local wheelReloaded = tagKeysChanged
+	tagKeysChanged = false
+	if wheelReloaded then
+		-- Etterna interprets an empty key list as clearing its filter.
+		local song = nativeQuery == "" and not exactSelection and not tagFilterEmpty and GAMESTATE:GetCurrentSong()
+		wheel:FilterByStepKeys(filter and filter.keys or {})
+		if song and (not matchesTag or matchesTag(song)) then wheel:SelectSong(song) end
+	end
+
+	local matches = textMatches
+	if matchesTag then
+		matches = function(song)
+			return (not textMatches or textMatches(song)) and matchesTag(song)
 		end
 	end
-	searchResult = {query = query, hasMatches = hasMatches, matches = matches}
+	local songs
+	if not tagFilterEmpty then
+		songs = submitMusicSearch(wheel, sort, nativeQuery, textMatches, wheelReloaded, filter ~= nil)
+	end
+	-- Native search and chart-key filters can both keep songs after a miss.
+	local first = songs and findMatch(songs, matches)
+	local hasMatches = first ~= nil or (not songs and not filter)
+	local tagMiss = filter ~= nil and not hasMatches and (not songs or not findMatch(songs, matchesTag))
+	searchResult = {query = query, hasMatches = hasMatches, tagMiss = tagMiss, matches = matches,
+		exactTextMatch = exactSelection and textMatches or nil}
+	if exactSelection and first then wheel:SelectSong(first) end
 	return true
+end
+
+local function refreshAndPublishMusicSearch()
+	if refreshMusicSearch() then
+		MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = true})
+	end
 end
 
 local function setSearchText(query, apply, debounce)
@@ -134,6 +254,7 @@ local function setSearchText(query, apply, debounce)
 		if searchRefreshActor then searchRefreshActor:stoptweening() end
 		requestedSearch = query
 		if debounce and searchRefreshActor then
+			searchRefreshPending = "debouncing"
 			searchRefreshActor:sleep(0.12):queuecommand("ApplySearch")
 			apply = false
 		else
@@ -147,11 +268,13 @@ HV.SetMusicSearchQuery = function(query)
 	setSearchText(tostring(query or ""), true)
 end
 HV.GetMusicSearchQuery = function() return searchString end
-HV.RefreshMusicSearch = function(onlyIfActive)
-	if onlyIfActive and requestedSearch == "" then return end
+HV.GetCombinedTagChartMatch = function()
+	if focus.isCurrent() then return getCombinedTagChartMatch() end
+end
+HV.RefreshMusicSearch = function()
+	if tagFilter and #tagFilter.keys == 0 then tagKeysChanged = true end
 	if searchRefreshActor then searchRefreshActor:stoptweening() end
-	local applied = refreshMusicSearch()
-	MESSAGEMAN:Broadcast("SearchQueryUpdated", {query = searchString, applied = applied})
+	refreshAndPublishMusicSearch()
 end
 
 -- Mouse wheel locking to prevent double-moves
@@ -198,18 +321,40 @@ local function IsSelectMusicBackgroundClickArea()
 end
 
 local function searchBlocksWheelSelection(screen, wheel)
-	-- The native wheel can still point at a song from the previous query after a miss.
-	if searchResult.hasMatches or screen:GetSelectionState() ~= 0 then return false end
+	local matchesChart = getCombinedTagChartMatch()
+	local matchesText = searchResult.exactTextMatch
+	local blocked = searchRefreshPending ~= nil or not searchResult.hasMatches
+	if not blocked and not matchesChart and not matchesText then return false end
+	if screen:GetSelectionState() ~= 0 then return false end
 	wheel = wheel or screen:GetMusicWheel()
 	if not wheel then return false end
 	local row = wheel:GetSelectedType()
-	return row == "WheelItemDataType_Song" or row == "WheelItemDataType_Random"
-		or row == "WheelItemDataType_Roulette" or row == "WheelItemDataType_Portal"
+	if row ~= "WheelItemDataType_Song" then
+		return row == "WheelItemDataType_Random" or row == "WheelItemDataType_Roulette" or row == "WheelItemDataType_Portal"
+	end
+	if blocked then return true end
+	if not wheel:IsSettled() then return true end
+
+	local song = GAMESTATE:GetCurrentSong()
+	if matchesText and (not song or not matchesText(song)) then
+		ms.ok(THEME:GetString("ScreenSelectMusic", "SongOutsideSearch"))
+		return true
+	end
+	if not matchesChart then return false end
+
+	local steps = GAMESTATE:GetCurrentSteps()
+	if song and steps and matchesChart(steps) then
+		for _, chart in ipairs(song:GetChartsMatchingFilter()) do
+			if chart == steps then return false end
+		end
+	end
+	ms.ok(THEME:GetString("TabTags", "ChartOutsideFilters"))
+	return true
 end
 
 local function selectRandomSong(screen)
 	local result = searchResult
-	if not result.hasMatches or GAMESTATE:GetSortOrder() == "SortOrder_ModeMenu" then return end
+	if searchRefreshPending or not result.hasMatches or GAMESTATE:GetSortOrder() == "SortOrder_ModeMenu" then return end
 	local wheel = screen:GetMusicWheel()
 	if not wheel then return end
 	local songs = wheel:GetSongs()
@@ -233,7 +378,7 @@ end
 local main_af = Def.ActorFrame {
 	Def.Actor {
 		InitCommand = function(self) searchRefreshActor = self end,
-		ApplySearchCommand = function() HV.RefreshMusicSearch() end,
+		ApplySearchCommand = function() refreshAndPublishMusicSearch() end,
 		OffCommand = function(self) self:stoptweening() end,
 	},
 	BeginCommand = function(self)
@@ -241,7 +386,7 @@ local main_af = Def.ActorFrame {
 		focus.attach()
 		self:SetUpdateFunction(function()
 			focus.update()
-			if searchRefreshPending and focus.isCurrent() then HV.RefreshMusicSearch() end
+			if searchRefreshPending == "waiting" then refreshAndPublishMusicSearch() end
 		end)
 		HV.GameplaySessionValid = false
 		HV.OnlineReplayActive = false
@@ -271,9 +416,22 @@ local main_af = Def.ActorFrame {
 	SelectMusicTabChangedMessageCommand = function(self, params)
 		focus.setTab(params and params.Tab)
 	end,
+	SortOrderChangedMessageCommand = function()
+		-- GameState publishes the sort before MusicWheel installs its rows.
+		if requestedSearch ~= "" or tagFilter then queueSearchRefresh() end
+	end,
+	FavoritesUpdatedMessageCommand = function()
+		if GAMESTATE:GetSortOrder() == "SortOrder_Favorites" and (requestedSearch ~= "" or tagFilter) then
+			queueSearchRefresh()
+		end
+	end,
+	ReloadedCurrentSongMessageCommand = refreshCombinedTagFilter,
+	ReloadedCurrentPackMessageCommand = refreshCombinedTagFilter,
 	OffCommand = function(self)
 		focus.dispose()
-		searchRefreshPending = false
+		searchRefreshPending = nil
+		tagFilter = nil
+		tagKeysChanged = false
 		self:SetUpdateFunction(nil)
 	end,
 	CheckFirstLaunchSSMCommand = function(self)
@@ -1708,7 +1866,9 @@ main_af[#main_af + 1] = Def.ActorFrame {
 			DrawSearchCommand = function(self, params)
 				local focused = params.focused
 				local query = focused and searchString or requestedSearch
-				local failed = query ~= "" and query == searchResult.query and not searchResult.hasMatches
+				local applied = query == searchResult.query and not tagKeysChanged
+				local failed = applied and query ~= "" and not searchResult.hasMatches and not searchResult.tagMiss
+				local tagMiss = tagFilter and (#tagFilter.keys == 0 or (applied and searchResult.tagMiss))
 				local label = focused and query or ("Search: " .. query)
 				if query == "" then
 					label = focused and "Search songs" or "Click here to Search (or Ctrl + 4)"
@@ -1717,7 +1877,9 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				local x = query == "" and 28 or 34 + self:GetZoomedWidth()
 				local parent = self:GetParent()
 				parent:GetChild("Cursor"):x(x):visible(focused)
-				parent:GetChild("SearchStatus"):visible(failed)
+				local status = parent:GetChild("SearchStatus")
+				status:settext(tagMiss and THEME:GetString("TabTags", "NoMatches") or "No matches")
+				status:visible(tagMiss or failed)
 			end,
 			SelectMusicTabChangedMessageCommand = function(self, params)
 				self:playcommand("DrawSearch", {focused = params.Tab == "SEARCH"})
@@ -1942,7 +2104,7 @@ main_af[#main_af + 1] = LoadActor("../ScreenChartPreview overlay/default.lua")
 -- Load Decoration Overlays (Initially hidden, using standard Toggle[NAME]Overlay messages)
 local decorOverlays = {"scores", "filters", "playlists", "tags", "goals"}
 for _, name in ipairs(decorOverlays) do
-	local panel, onInput = LoadActor("../ScreenSelectMusic decorations/" .. name .. ".lua", focus)
+	local panel, onInput = LoadActor("../ScreenSelectMusic decorations/" .. name .. ".lua", focus, queueTagFilter)
 	main_af[#main_af + 1] = panel
 	if name == "filters" then filterInput = onInput end
 end

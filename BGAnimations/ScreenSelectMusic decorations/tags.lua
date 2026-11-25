@@ -2,6 +2,8 @@
 -- Uses TAGMAN (tags.lua) to match other themes (Til Death, Rebirth)
 -- Allows adding/removing personal tags to charts for better organization
 
+local focus, queueTagFilter = ...
+
 local accentColor = HVColor.Accent
 local dimText = color("0.45,0.45,0.45,1")
 local subText = color("0.65,0.65,0.65,1")
@@ -22,13 +24,39 @@ local songTags = {} -- Tags for current song
 local currentChartkey = ""
 
 -- Filtering State
-local isFiltering = false
 local filterTags = {} -- Tags currently used for filtering (AND logic)
-local filterChanged = false
 
 -- ============================================================
 -- DATA FETCHING & FILTERING
 -- ============================================================
+
+local function refreshTagFilter(tagData)
+	if not next(filterTags) then
+		queueTagFilter(nil)
+		return
+	end
+
+	local selected
+	for tag in pairs(filterTags) do
+		local charts = tagData[tag] or {}
+		if not selected then
+			selected = {}
+			for chartKey, assigned in pairs(charts) do
+				if assigned then selected[chartKey] = true end
+			end
+		else
+			for chartKey in pairs(selected) do
+				if not charts[chartKey] then selected[chartKey] = nil end
+			end
+		end
+	end
+
+	local keys = {}
+	for chartKey in pairs(selected) do
+		if SONGMAN:GetStepsByChartKey(chartKey) then keys[#keys + 1] = chartKey end
+	end
+	queueTagFilter(keys)
+end
 
 local function RefreshData()
 	local steps = GAMESTATE:GetCurrentSteps()
@@ -53,42 +81,6 @@ local function RefreshData()
 			end
 		end
 	end
-
-	-- Apply Filtering to Music Wheel
-	if filterChanged then
-		local charts = {}
-		local oCharts = {}
-		local whee = nil
-		local screen = SCREENMAN:GetTopScreen()
-		if screen and screen.GetMusicWheel then whee = screen:GetMusicWheel() end
-
-		if whee and tagData then
-			-- Simplified Filtering: Filter by ALL tags in filterTags if isFiltering is true
-			if isFiltering and next(filterTags) then
-				local selected = {}
-				local first = true
-				for tag, _ in pairs(filterTags) do
-					local tagCharts = tagData[tag] or {}
-					if first then
-						for ck, _ in pairs(tagCharts) do selected[ck] = true end
-						first = false
-					else
-						for ck, _ in pairs(selected) do
-							if not tagCharts[ck] then selected[ck] = nil end
-						end
-					end
-				end
-				for ck, _ in pairs(selected) do table.insert(charts, ck) end
-			end
-
-			whee:FilterByAndAgainstStepKeys(charts, oCharts)
-			-- Selection might change, so re-refresh
-			local ssong = GAMESTATE:GetCurrentSong()
-			if ssong then whee:SelectSong(ssong) end
-			if HV.RefreshMusicSearch then HV.RefreshMusicSearch(true) end
-		end
-		filterChanged = false
-	end
 end
 
 -- ============================================================
@@ -110,7 +102,7 @@ local function ToggleTag(tagName)
 	
 	TAGMAN:set_dirty()
 	TAGMAN:save()
-	if isFiltering and filterTags[tagName] then filterChanged = true end
+	if filterTags[tagName] then refreshTagFilter(tagData) end
 	RefreshData()
 	if tagsActor then tagsActor:playcommand("RefreshTags") end
 end
@@ -144,8 +136,7 @@ local function DeleteTag(tagName)
 	-- If tag was in filters, remove it
 	if filterTags[tagName] then
 		filterTags[tagName] = nil
-		if not next(filterTags) then isFiltering = false end
-		filterChanged = true
+		refreshTagFilter(tagData)
 	end
 	RefreshData()
 	if tagsActor then tagsActor:playcommand("RefreshTags") end
@@ -198,6 +189,7 @@ local t = Def.ActorFrame {
 		Def.Quad { 
 			InitCommand = function(self) self:zoomto(100, 22) end,
 			RefreshTagsCommand = function(self) 
+				local isFiltering = next(filterTags) ~= nil
 				self:diffuse(isFiltering and accentColor or color("0.2,0.2,0.2,1")):diffusealpha(isFiltering and 0.8 or 0.4) 
 			end,
 		},
@@ -205,7 +197,7 @@ local t = Def.ActorFrame {
 			InitCommand = function(self) self:zoom(0.28) end,
 			RefreshTagsCommand = function(self) 
 				self:settext(THEME:GetString("TabTags", "TagFilter"))
-				self:diffuse(isFiltering and brightText or subText) 
+				self:diffuse(next(filterTags) and brightText or subText)
 			end,
 		},
 	},
@@ -323,7 +315,7 @@ t[#t + 1] = Def.ActorFrame {
 		local screen = SCREENMAN:GetTopScreen()
 		if not screen then return end
 		screen:AddInputCallback(function(event)
-			if not tagsActor or not tagsActor:GetVisible() then return false end
+			if not focus.isCurrent() or not tagsActor or not tagsActor:GetVisible() then return false end
 			if not event or not event.DeviceInput then return false end
 			if event.type ~= "InputEventType_FirstPress" then return false end
 			local btn = event.DeviceInput.button
@@ -358,21 +350,14 @@ t[#t + 1] = Def.ActorFrame {
 				-- Filter Toggle Button
 				local ftY = SCREEN_CENTER_Y - overlayH/2 + 23
 				if IsMouseOverCentered(SCREEN_CENTER_X - overlayW/2 + 150, ftY, 100, 22) then
-					if isFiltering then
-						isFiltering = false
+					if next(filterTags) then
 						filterTags = {}
 					else
-						-- Filter by the current song's tags
-						isFiltering = true
-						filterTags = {}
-						for tag, _ in pairs(songTags) do
+						for tag in pairs(songTags) do
 							filterTags[tag] = true
 						end
-						-- If the song has no tags, don't enable filtering
-						if not next(filterTags) then isFiltering = false end
 					end
-					filterChanged = true
-					RefreshData()
+					refreshTagFilter(TAGMAN:get_data().playerTags or {})
 					tagsActor:playcommand("RefreshTags")
 					return true
 				end

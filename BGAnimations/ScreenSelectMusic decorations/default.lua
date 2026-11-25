@@ -227,7 +227,7 @@ local function getNativeWheel()
 	return screen and screen.GetMusicWheel and screen:GetMusicWheel()
 end
 
-local chartListSong, chartListType
+local chartListSong, chartListType, chartListTagMatch
 
 local function getPackSummary(wheel, cachedOnly)
 	local group = selection.group
@@ -291,15 +291,17 @@ t[#t + 1] = Def.Actor {
 		local style = GAMESTATE:GetCurrentStyle()
 		local stepsType = style and style:GetStepsType()
 		data.renderedSong, data.renderedRate = data.song, data.rate
-		if chartListSong == data.song and chartListType == stepsType and #data.displayCharts > 0 then return end
-		chartListSong, chartListType = data.song, stepsType
+		local matchesTag = HV.GetCombinedTagChartMatch and HV.GetCombinedTagChartMatch()
+		if chartListSong == data.song and chartListType == stepsType and chartListTagMatch == matchesTag
+			and #data.displayCharts > 0 then return end
+		chartListSong, chartListType, chartListTagMatch = data.song, stepsType, matchesTag
 		data.hasSingle = data.song ~= nil and data.song:HasStepsType("StepsType_Dance_Single")
 		data.hasDouble = data.song ~= nil and data.song:HasStepsType("StepsType_Dance_Double")
 
 		local grouped = {}
 		if data.song then
 			for _, chart in ipairs(data.song:GetChartsMatchingFilter()) do
-				if chart:GetStepsType() == stepsType then
+				if chart:GetStepsType() == stepsType and (not matchesTag or matchesTag(chart)) then
 					local difficulty = ToEnumShortString(chart:GetDifficulty())
 					grouped[difficulty] = grouped[difficulty] or {}
 					local author = chart:GetAuthorCredit()
