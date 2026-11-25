@@ -55,6 +55,8 @@ local requestedAt
 local sawAudioDelay
 local overlappingRequest
 local lastPositionAt
+local positionSettlesAt
+local hasPlaybackClock = false
 local previousRedirection
 local returnScreen
 local readyAt = 0
@@ -113,6 +115,7 @@ end
 
 local function finishPreview()
 	nativeSample = nil
+	hasPlaybackClock = false
 	previewPosition = previewEnd
 	requestedPosition = nil
 	reachedEnd = true
@@ -121,6 +124,7 @@ end
 
 local function startNativeSample(position)
 	-- Stop first so the native request can replace a wheel sample of the same file.
+	hasPlaybackClock = false
 	nativeSample = {start = song:GetSampleStart(), startedAt = GetTimeSinceStart(), target = position}
 	startingNativeSample = true
 	SOUND:StopMusic()
@@ -155,6 +159,7 @@ local function playFrom(position)
 	requestedAt = GetTimeSinceStart()
 	sawAudioDelay = false
 	lastPositionAt = nil
+	positionSettlesAt = nil
 	if nativeSample then
 		nativeSample.target = start
 	elseif canUseNativeSample() then
@@ -196,8 +201,12 @@ local frameWidth = SCREEN_WIDTH - (sidePanelWidth * 2) - (innerPadding * 4)
 local frameHeight = SCREEN_HEIGHT - headerHeight - footerHeight - (innerPadding * 4)
 
 local function updateNoteDisplay(synchronized)
-	local drawing = synchronized ~= false and not isPaused and not reachedEnd and not requestedPosition
-	noteCanvas:visible(drawing)
+	local drawing = synchronized ~= false and requestedPosition == nil
+	if requestedPosition and hasPlaybackClock then
+		-- NoteFieldPreview draws from Etterna's clock. The pending seek only owns the graph cursor.
+		drawing = SOUND:GetMusicPath() == previewAudioPath and not SOUND:IsTimingDelayed()
+	end
+	noteCanvas:visible(drawing and not isPaused and not reachedEnd)
 	noteSprite:visible(hasNoteFrame)
 end
 
@@ -255,9 +264,12 @@ local function updateNativeSample(position, now, rate)
 	if sample.seek then
 		local elapsed = now - sample.seekAt
 		local continued = sample.seekFrom + elapsed * rate
+		local jump = math.abs(position - continued)
+		local early = sample.seek - position
+		local nearTarget = early <= 0.1 or (early <= 0.35 * math.max(1, rate) and jump >= 0.12 * rate)
 		-- A sound replacement cannot overtake a queued native seek to the current sound.
-		if (elapsed < 0.35 and math.abs(position - continued) < 0.06 * rate)
-			or position < sample.seek - 0.1 or position > sample.seek + elapsed * rate + 0.2 then
+		if (elapsed < 0.35 and jump < 0.06 * rate)
+			or not nearTarget or position > sample.seek + elapsed * rate + 0.2 then
 			return false
 		end
 		sample.seek = nil
@@ -293,6 +305,7 @@ local function updatePlaybackPosition()
 		if requestedPosition then
 			previewPosition = position
 			requestedPosition = nil
+			positionSettlesAt = now + 0.4
 		end
 	elseif isPaused then
 		return false
@@ -311,13 +324,17 @@ local function updatePlaybackPosition()
 		end
 		requestedPosition = nil
 		previewPosition = position
+		positionSettlesAt = now + 0.4
 	end
 	if position < previewPosition - 0.05 * rate then
 		-- Etterna can loop files with "loop" in their path even without force loop.
 		if lastPositionAt and previewPosition + (now - lastPositionAt) * rate >= previewEnd then
 			finishPreview()
+			return false
 		end
-		return false
+		-- The first clock sample can overshoot before Etterna settles on the audible position.
+		if not positionSettlesAt or now > positionSettlesAt
+			or previewPosition - position > 0.35 * math.max(1, rate) then return false end
 	end
 	if position >= previewEnd then
 		finishPreview()
@@ -330,7 +347,9 @@ end
 local function updateSync()
 	if not ownsPreview() then return end
 
-	updateNoteDisplay(updatePlaybackPosition())
+	local synchronized = updatePlaybackPosition()
+	if synchronized then hasPlaybackClock = true end
+	updateNoteDisplay(synchronized)
 	if not ownsPreview() then return end
 	local pos = previewPosition
 	applyPreviewPosition(pos)
@@ -477,6 +496,7 @@ local function input(event)
 			updatePlaybackPosition()
 			if not reachedEnd then
 				isPaused = true
+				hasPlaybackClock = false
 				requestedPosition = nil
 				if nativeSample then
 					nativeSample.target = nil
@@ -1003,6 +1023,7 @@ local function closePreview(self, restoreAudio)
 	HV.ChartPreviewActive = false
 	ssm = nil
 	nativeSample = nil
+	hasPlaybackClock = false
 	requestedPosition = nil
 	lastDirection = nil
 	densityVectors, densityStats = nil, nil
@@ -1040,7 +1061,10 @@ local function reloadPreviewChart(self)
 	local changedEnd = ending ~= previewEnd
 	steps, loadedRate = selected, rate
 	previewAudioPath, previewEnd = path, ending
-	if changedAudio then nativeSample = nil end
+	if changedAudio then
+		nativeSample = nil
+		hasPlaybackClock = false
+	end
 	if isPaused then
 		previewPosition = math.min(previewPosition, previewEnd)
 	elseif changedAudio then
@@ -1134,6 +1158,7 @@ local t = Def.ActorFrame {
 		elseif isPaused or reachedEnd then
 			SOUND:StopMusic()
 		else
+			hasPlaybackClock = false
 			playFrom(previewPosition)
 		end
 	end,
