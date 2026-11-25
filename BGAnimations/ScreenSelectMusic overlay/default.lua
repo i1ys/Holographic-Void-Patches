@@ -49,6 +49,8 @@ local searchResult = {query = "", hasMatches = true}
 local searchRefreshActor
 local tagFilter
 local tagKeysChanged = false
+local nativeFilterResults = {}
+local filterCountDirty = false
 
 -- Online top-score entries are not guaranteed to be native HighScore objects;
 -- some Etterna versions return plain tables.  Keep the validation indicator
@@ -157,6 +159,24 @@ local function readySearchWheel()
 	if wheel and wheel:IsSettled() and not wheel:IsLocked() then return wheel, sort end
 end
 
+local function publishFilterCount()
+	if not filterCountDirty or HV.ActiveTab ~= "FILTERS" or searchRefreshPending then return end
+	local wheel, sort = readySearchWheel()
+	local native = sort and nativeFilterResults[sort]
+	if not wheel or not native then return end
+
+	local result = searchResult
+	local matches = result.hasMatches and native.Matches or 0
+	if result.hasMatches and result.matches then
+		matches = 0
+		for _, song in ipairs(wheel:GetSongs()) do
+			if result.matches(song) then matches = matches + 1 end
+		end
+	end
+	filterCountDirty = false
+	MESSAGEMAN:Broadcast("HV_FilterCountUpdated", {Matches = matches, Total = native.Total})
+end
+
 local function queueSearchRefresh()
 	if searchRefreshPending ~= "debouncing" then searchRefreshPending = "waiting" end
 end
@@ -239,6 +259,7 @@ local function refreshMusicSearch()
 	searchResult = {query = query, hasMatches = hasMatches, tagMiss = tagMiss, matches = matches,
 		exactTextMatch = exactSelection and textMatches or nil}
 	if exactSelection and first then wheel:SelectSong(first) end
+	filterCountDirty = true
 	return true
 end
 
@@ -387,6 +408,7 @@ local main_af = Def.ActorFrame {
 		self:SetUpdateFunction(function()
 			focus.update()
 			if searchRefreshPending == "waiting" then refreshAndPublishMusicSearch() end
+			publishFilterCount()
 		end)
 		HV.GameplaySessionValid = false
 		HV.OnlineReplayActive = false
@@ -416,7 +438,13 @@ local main_af = Def.ActorFrame {
 	SelectMusicTabChangedMessageCommand = function(self, params)
 		focus.setTab(params and params.Tab)
 	end,
+	FilterResultsMessageCommand = function(_, params)
+		-- The wheel publishes its song list after this message.
+		nativeFilterResults[GAMESTATE:GetSortOrder()] = params
+		filterCountDirty = true
+	end,
 	SortOrderChangedMessageCommand = function()
+		filterCountDirty = true
 		-- GameState publishes the sort before MusicWheel installs its rows.
 		if requestedSearch ~= "" or tagFilter then queueSearchRefresh() end
 	end,
@@ -696,14 +724,14 @@ main_af[#main_af + 1] = Def.ActorFrame {
 			if math.abs(lastRatePresses[1] - lastRatePresses[2]) < 0.05 and lastRatePresses[1] ~= 0 and lastRatePresses[2] ~= 0 then
 				resetRate()
 			else
-				adjustRate(0.05)
+				adjustRate(HV.GetRateIncrement())
 			end
 		elseif params.Name == "PrevRate" then
 			lastRatePresses[1] = GetTimeSinceStart and GetTimeSinceStart() or os.clock()
 			if math.abs(lastRatePresses[1] - lastRatePresses[2]) < 0.05 and lastRatePresses[1] ~= 0 and lastRatePresses[2] ~= 0 then
 				resetRate()
 			else
-				adjustRate(-0.05)
+				adjustRate(-HV.GetRateIncrement())
 			end
 		elseif params.Name == "FavoriteToggle" then
 			toggleCurrentSongFavorite()

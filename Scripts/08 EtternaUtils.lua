@@ -58,6 +58,7 @@ function getRateDisplayString(x)
 end
 
 function changeMusicRate(amount)
+    --local amount=amount/5
 	local curRate = getCurRateValue()
 	local newRate = curRate + amount
 	if newRate <= 3 and newRate >= 0.05 then
@@ -136,12 +137,12 @@ function HV.GetGradeName(grade)
 	if (pref == "true" or pref == true) and HV.CustomGrades[key] then
 		return HV.CustomGrades[key]
 	end
-	
+
 	-- Safe fallback for THEME:GetString
 	if THEME:HasString("Grade", s) then
 		return THEME:GetString("Grade", s)
 	end
-	
+
 	-- Manual fallback mapping if THEME:HasString is somehow unreliable or missing
 	local fallbacks = {
 		Tier01 = "AAAAA", Tier02 = "AAAA:", Tier03 = "AAAA.", Tier04 = "AAAA",
@@ -294,10 +295,10 @@ for k, v in pairs(clearTypeNames) do clearTypeReverse[v] = k end
 function GetInvalidatingMods(pn)
 	local ps = GAMESTATE:GetPlayerState(pn)
 	if not ps then return {} end
-	
+
 	local mods = {}
 	local modStr = ps:GetPlayerOptionsString("ModsLevel_Current"):lower()
-	
+
 	-- Remove mods (note-reduction)
 	local checks = {
 		["no mines"] = "NoMines", ["nomines"] = "NoMines",
@@ -327,32 +328,32 @@ function GetInvalidatingMods(pn)
 		["twister"] = "Twister", ["holdrolls"] = "HoldRolls",
 		["hold releases"] = "HoldReleases", ["holdreleases"] = "HoldReleases",
 	}
-	
+
 	for pattern, name in pairs(checks) do
 		if modStr:find(pattern) then
 			table.insert(mods, name)
 		end
 	end
-	
+
 	-- Left/Right turns: use word-boundary frontier pattern to avoid false positives
 	if modStr:find("%f[%a]left%f[%A]") then table.insert(mods, "TurnLeft") end
 	if modStr:find("%f[%a]right%f[%A]") then table.insert(mods, "TurnRight") end
-	
+
 	-- Additive Mines: 'mines' present but NOT as 'no mines'
 	if modStr:find("mines") and not modStr:find("no mines") then
 		table.insert(mods, "Mines")
 	end
-	
+
 	-- Gameplay Aids
 	if getAutoplay and getAutoplay() ~= 0 then table.insert(mods, "Autoplay") end
 	if GAMESTATE:IsPracticeMode() then table.insert(mods, "PracticeMode") end
-	
+
 	return mods
 end
 
 function IsScoreInvalid(score)
 	if not score then return false end
-	
+
 	local mods = ""
 	if score.GetModifiers then
 		mods = score:GetModifiers():lower()
@@ -382,15 +383,15 @@ function IsScoreInvalid(score)
 	-- Left/Right turns (word boundary)
 	if mods:find("%f[%a]left%f[%A]") then return true end
 	if mods:find("%f[%a]right%f[%A]") then return true end
-	
+
 	-- Additive mines/holds/rolls
 	if mods:find("mines") and not mods:find("no mines") and not mods:find("nomines") then return true end
 	if mods:find("holds") and not mods:find("no holds") and not mods:find("noholds") then return true end
 	if mods:find("rolls") and not mods:find("no rolls") and not mods:find("norolls") then return true end
-	
+
 	-- 2. J4 Check (Legacy/Fallback)
 	-- If the score is somehow flagged by engine, we can check here
-	
+
 	return false
 end
 
@@ -500,7 +501,7 @@ function GetDisplayScore()
 	local pn = PLAYER_1
 	local steps = GAMESTATE:GetCurrentSteps()
 	if not steps then return nil end
-	
+
 	local currentRateValue = getCurRateValue()
 	local rateTable = getRateTable(pn, steps)
 	if not rateTable then return nil end
@@ -535,7 +536,7 @@ function GetDisplayScore()
 		if scores and #scores > 0 then
 			local rNum = tonumber((rateStr:gsub("x", ""))) or 0
 			local diff = math.abs(rNum - currentRateValue)
-			
+
 			-- Find the best score for this specific rate first
 			local bestInThisRate = nil
 			local bestInThisRatePct = -math.huge
@@ -854,7 +855,7 @@ function getRescoredWife3Judge(version, judgeScale, rst, useCurrent)
 	local ts = (tso and tso[judgeScale]) or 1.0
 	local totalPoints, replayMisses = 0, 0
 	local dvt = rst["dvt"]
-	
+
 	if type(dvt) == "table" then
 		for i = 1, #dvt do
 			local offset = tonumber(dvt[i])
@@ -865,15 +866,15 @@ function getRescoredWife3Judge(version, judgeScale, rst, useCurrent)
 			end
 		end
 	end
-	
+
 	totalPoints = totalPoints - math.max(replayMisses, tonumber(rst.misses) or 0) * 5.5
 
 	-- Penalize holds, rolls, and mines.
-	
+
 	totalPoints = totalPoints + (math.max(0, tonumber(rst["holdsMissed"]) or 0) * -4.5)
 	totalPoints = totalPoints + (math.max(0, tonumber(rst["rollsMissed"]) or 0) * -4.5)
 	totalPoints = totalPoints + (math.max(0, tonumber(rst["minesHit"]) or 0) * -7)
-	
+
 	-- Use notesPassed for live percentage, totalNotes for evaluation.
 	local maxNotes = 0
 	if useCurrent then
@@ -885,10 +886,10 @@ function getRescoredWife3Judge(version, judgeScale, rst, useCurrent)
 		local unplayed = math.max(0, maxNotes - (tonumber(rst["notesPassed"]) or 0))
 		totalPoints = totalPoints - (unplayed * 5.5) -- unhit notes are unhit
 	end
-	
+
 	if maxNotes <= 0 then return 0 end
 	local maxPoints = maxNotes * 2
-	
+
 	return math.min((totalPoints / maxPoints) * 100.0, 100), totalPoints, maxPoints
 end
 
@@ -992,7 +993,7 @@ end
 
 function getRescoreElements(pss, score, offsets)
 	local o = {}
-	
+
 	-- Base counts from PlayerStageStats (Live Stats)
 	if pss then
 		local ok, offsets = pcall(function() return pss:GetOffsetVector() end)
@@ -1001,7 +1002,7 @@ function getRescoreElements(pss, score, offsets)
 		o["holdsMissed"] = hvHoldCount(pss, "HoldNoteScore_LetGo") + hvHoldCount(pss, "HoldNoteScore_MissedHold")
 		o["rollsMissed"] = 0
 		o["minesHit"] = hvTapCount(pss, "TapNoteScore_HitMine")
-		
+
 		-- Count hits
 		local hits = 0
 		for _, name in ipairs({"W1","W2","W3","W4","W5"}) do
@@ -1009,7 +1010,7 @@ function getRescoreElements(pss, score, offsets)
 		end
 		o["tapsHit"] = hits
 		o["notesPassed"] = hits + o["misses"]
-		
+
 		local steps = GAMESTATE:GetCurrentSteps()
 		local radar = steps and steps:GetRadarValues(PLAYER_1)
 		o["totalHolds"] = hvNonNegativeCount(radar and radar:GetValue("RadarCategory_Holds"))
@@ -1023,7 +1024,7 @@ function getRescoreElements(pss, score, offsets)
 		-- Use the Score-based retrieval (Moved from SelectMusic for global use)
 		return getRescoreElementsFromScore(score, offsets)
 	end
-	
+
 	return o
 end
 
@@ -1050,14 +1051,14 @@ function getRescoreElementsFromScore(score, offsets)
 	o["holdsMissed"] = hvHoldCount(score, "HoldNoteScore_LetGo") + hvHoldCount(score, "HoldNoteScore_MissedHold")
 	o["rollsMissed"] = 0
 	o["minesHit"] = hvTapCount(score, "TapNoteScore_HitMine")
-	
+
 	local hits = 0
 	for _, name in ipairs({"W1","W2","W3","W4","W5"}) do
 		hits = hits + hvTapCount(score, "TapNoteScore_"..name)
 	end
 	o["tapsHit"] = hits
 	o["notesPassed"] = hits + o["misses"]
-	
+
 	local steps = score.GetChartKey and SONGMAN:GetStepsByChartKey(score:GetChartKey())
 	local radar = steps and steps:GetRadarValues(PLAYER_1)
 	o["totalHolds"] = hvNonNegativeCount(radar and radar:GetValue("RadarCategory_Holds"))
@@ -1073,7 +1074,7 @@ function getRescoreElementsFromScore(score, offsets)
 	if o["totalNotes"] <= 0 then
 		o["totalNotes"] = o["notesPassed"]
 	end
-	
+
 	return o
 end
 

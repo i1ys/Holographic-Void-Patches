@@ -428,10 +428,10 @@ local function input(event)
 	lastDirection = nil
 
 	if button == "EffectUp" then
-		changeMusicRate(0.05)
+		changeMusicRate(HV.GetRateIncrement())
 		return
 	elseif button == "EffectDown" then
-		changeMusicRate(-0.05)
+		changeMusicRate(-HV.GetRateIncrement())
 		return
 	end
 
@@ -461,11 +461,11 @@ local function input(event)
 		local rateFrame = rootRef:GetChild("HeaderFrame"):GetChild("RateController")
 		if rateFrame then
 			if isOver(rateFrame:GetChild("Dec")) then 
-				changeMusicRate(-0.05)
+				changeMusicRate(-HV.GetRateIncrement())
 				return true 
 			end
 			if isOver(rateFrame:GetChild("Inc")) then 
-				changeMusicRate(0.05)
+				changeMusicRate(HV.GetRateIncrement())
 				return true 
 			end
 		end

@@ -134,6 +134,12 @@ Trace("Holographic Void: 01 Init.lua loaded.")
 -- ============================================================
 -- RATE HELPERS (used across screens)
 -- ============================================================
+HV.RateIncrements = {Small = 0.05, Large = 0.10}
+
+function HV.GetRateIncrement()
+	return INPUTFILTER:IsBeingPressed("/") and HV.RateIncrements.Large or HV.RateIncrements.Small
+end
+
 function getCurRateValue()
 	local so = GAMESTATE:GetSongOptionsObject("ModsLevel_Current")
 	if so and so:MusicRate() then return so:MusicRate() end

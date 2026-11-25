@@ -171,10 +171,13 @@ local function handlePracticeCommand(name)
 	local top = getTop()
 	if not top then return end
 
-	if name == "PracRateUp" then
-		if top.AddToRate then pcall(function() top:AddToRate(0.05) end) else changeMusicRate(0.05) end
-	elseif name == "PracRateDown" then
-		if top.AddToRate then pcall(function() top:AddToRate(-0.05) end) else changeMusicRate(-0.05) end
+	if name == "PracRateUp" or name == "PracRateDown" then
+		local delta = (name == "PracRateUp" and 1 or -1) * HV.GetRateIncrement()
+		if top.AddToRate then
+			pcall(function() top:AddToRate(delta) end)
+		else
+			changeMusicRate(delta)
+		end
 	elseif name == "PracRestart" then
 		setSongPos(loopStartPos or 0, true)
 	elseif name == "PracLoopStart" then

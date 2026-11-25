@@ -231,7 +231,7 @@ local function SharedInputHandler(event)
 						if hx >= overlayW - 260 and hx <= overlayW - 200 then
 							local chart = currentChart(entry)
 							if chart then
-								chart:ChangeRate(hx <= overlayW - 230 and -0.1 or 0.1)
+								chart:ChangeRate((hx <= overlayW - 230 and -1 or 1) * HV.RateIncrements.Large)
 								if chart:GetRate() ~= entry.rate then saveProfile() end
 							end
 							refreshChartView()

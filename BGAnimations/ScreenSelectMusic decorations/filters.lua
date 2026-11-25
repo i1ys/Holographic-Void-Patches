@@ -359,11 +359,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 	end,
 	MouseDownCommand = function(self, params)
 		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
-			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() + 0.1)
+			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() + HV.RateIncrements.Large)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
 		elseif params.event == "DeviceButton_right mouse button" and active and focus.isCurrent() then
-			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() - 0.1)
+			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() - HV.RateIncrements.Large)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
 		end
@@ -391,11 +391,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 	end,
 	MouseDownCommand = function(self, params)
 		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
-			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() + 0.1)
+			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() + HV.RateIncrements.Large)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
 		elseif params.event == "DeviceButton_right mouse button" and active and focus.isCurrent() then
-			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() - 0.1)
+			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() - HV.RateIncrements.Large)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
 		end
@@ -538,7 +538,7 @@ t[#t + 1] = LoadFont("Common Normal") .. {
 		self:halign(0):valign(0):xy(-overlayW / 2 + rightColX, controlsY + 6 + ctrlSpacing * 3):zoom(textzoom)
 			:diffuse(subText):settext("")
 	end,
-	FilterResultsMessageCommand = function(self, msg)
+	HV_FilterCountUpdatedMessageCommand = function(self, msg)
 		if msg then
 			self:settextf(THEME:GetString("Filters", "MatchesFormatted"), msg.Matches or 0, msg.Total or 0)
 		end
