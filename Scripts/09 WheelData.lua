@@ -2,6 +2,8 @@ local grades, sections = {}, {}
 local owner, profile, normalized, midGrades
 local pendingRows = {}
 local sectionBuild
+local sectionRevision = 0
+local numericFilter
 local sectionWorkPerUpdate = 64
 
 HV.WheelData = {}
@@ -14,6 +16,32 @@ end
 
 function WheelData.ClearSections()
 	sections = {}
+	sectionBuild = nil
+	numericFilter = nil
+end
+
+local function getNumericFilterKey()
+	if not FILTERMAN:AnyActiveFilter() then return false end
+	local values = {
+		tostring(FILTERMAN:GetFilterMode()),
+		tostring(FILTERMAN:GetHighestSkillsetsOnly()),
+		tostring(FILTERMAN:GetHighestDifficultyOnly()),
+		FILTERMAN:GetMinFilterRate(),
+		FILTERMAN:GetMaxFilterRate(),
+	}
+	for row = 1, #ms.SkillSets + 2 do
+		values[#values + 1] = FILTERMAN:GetSSFilter(row, 0)
+		values[#values + 1] = FILTERMAN:GetSSFilter(row, 1)
+	end
+	return table.concat(values, ":")
+end
+
+function WheelData.FilterResultsChanged()
+	-- Etterna broadcasts before publishing the new section lists.
+	local currentFilter = getNumericFilterKey()
+	if currentFilter ~= numericFilter then sections = {} end
+	numericFilter = currentFilter
+	sectionRevision = sectionRevision + 1
 	sectionBuild = nil
 end
 
@@ -68,9 +96,9 @@ function WheelData.GetChartGrade(wheel, steps, cachedOnly)
 	return tier and string.format("Grade_Tier%02d", tier) or nil, true
 end
 
-local function buildSection(wheel, name, style, sort, showPlayed, checkpoint)
-	local songs = wheel:GetSongsInGroup(name)
-	local summary = {style = style, sort = sort, showPlayed = showPlayed, count = #songs, cleared = 0, played = 0, grades = {}, bins = {}, charts = 0, avgMSD = 0}
+local function buildSection(songs, style, sort, showPlayed, checkpoint)
+	local summary = {songs = songs, revision = sectionRevision, style = style, sort = sort, showPlayed = showPlayed,
+		count = #songs, cleared = 0, played = 0, grades = {}, bins = {}, charts = 0, avgMSD = 0}
 	local msdTotal, ratedSongs = 0, 0
 	local filterActive = FILTERMAN:AnyActiveFilter()
 	for _, song in ipairs(songs) do
@@ -117,17 +145,36 @@ local function buildSection(wheel, name, style, sort, showPlayed, checkpoint)
 	return summary
 end
 
+local function sameSectionSongs(previous, current)
+	if #previous ~= #current then return false end
+	for i, song in ipairs(current) do
+		if previous[i] ~= song then return false end
+	end
+	return true
+end
+
 function WheelData.GetSection(wheel, name, style, cachedOnly)
 	refreshScoreContext(wheel)
 	local showPlayed = PREFSMAN:GetPreference("PackProgressInWheel")
 	local sort = GAMESTATE:GetSortOrder()
 	if sort == "SortOrder_ModeMenu" then return end
 	local cached = sections[name]
-	if cached and cached.style == style and cached.showPlayed == showPlayed and cached.sort == sort then return cached end
+	local songs
+	if cached and cached.style == style and cached.showPlayed == showPlayed and cached.sort == sort then
+		if cached.revision == sectionRevision then return cached end
+		songs = wheel:GetSongsInGroup(name)
+		if sameSectionSongs(cached.songs, songs) then
+			cached.revision = sectionRevision
+			return cached
+		end
+		sections[name] = nil
+	end
 	if cachedOnly then return end
 
 	local job = sectionBuild
 	if not job or job.name ~= name or job.style ~= style or job.showPlayed ~= showPlayed or job.sort ~= sort then
+		if numericFilter == nil then numericFilter = getNumericFilterKey() end
+		songs = songs or wheel:GetSongsInGroup(name)
 		local work = 0
 		local function checkpoint()
 			if work == sectionWorkPerUpdate then
@@ -137,7 +184,7 @@ function WheelData.GetSection(wheel, name, style, cachedOnly)
 			work = work + 1
 		end
 		job = {name = name, style = style, showPlayed = showPlayed, sort = sort,
-			thread = coroutine.create(function() return buildSection(wheel, name, style, sort, showPlayed, checkpoint) end)}
+			thread = coroutine.create(function() return buildSection(songs, style, sort, showPlayed, checkpoint) end)}
 		sectionBuild = job
 	end
 	local ok, summary = coroutine.resume(job.thread)

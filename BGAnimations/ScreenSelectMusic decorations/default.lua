@@ -335,7 +335,7 @@ t[#t + 1] = Def.Actor {
 	end,
 
 	FilterResultsMessageCommand = function(self)
-		HV.WheelData.ClearSections()
+		HV.WheelData.FilterResultsChanged()
 		chartListSong, chartListType = nil, nil
 		selection.packSummary, selection.renderedGroup = nil, nil
 		self:stoptweening():sleep(0.05):queuecommand("RefreshSelection")
