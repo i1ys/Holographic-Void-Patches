@@ -284,21 +284,15 @@ local t = Def.ActorFrame {
 	SelectMusicTabChangedMessageCommand = function(self, params)
 		replayRequestToken = replayRequestToken + 1
 		if params.Tab == "SCORES" then
-			self:visible(not self:GetVisible())
-			if self:GetVisible() then
-				self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
-				HV.ActiveTab = "SCORES"
-				currentPage = 1
-				currentView = VIEW_LOCAL
-				GetLocalScores()
-				self:playcommand("RefreshScores")
-			else
-				HV.ActiveTab = ""
-			end
+			self:visible(true)
+			self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
+			currentPage = 1
+			currentView = VIEW_LOCAL
+			GetLocalScores()
+			self:playcommand("RefreshScores")
 		else
 			self:visible(false)
 			onlineRequestToken = onlineRequestToken + 1
-			if HV.ActiveTab == "SCORES" then HV.ActiveTab = "" end
 		end
 	end,
 	TabNavigationMessageCommand = function(self, params)

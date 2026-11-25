@@ -163,19 +163,13 @@ local t = Def.ActorFrame {
 	end,
 	SelectMusicTabChangedMessageCommand = function(self, params)
 		if params.Tab == "TAGS" then
-			self:visible(not self:GetVisible())
-			if self:GetVisible() then
-				self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
-				HV.ActiveTab = "TAGS"
-				currentPage = 1
-				RefreshData()
-				self:playcommand("RefreshTags")
-			else
-				HV.ActiveTab = ""
-			end
+			self:visible(true)
+			self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
+			currentPage = 1
+			RefreshData()
+			self:playcommand("RefreshTags")
 		else
 			self:visible(false)
-			if HV.ActiveTab == "TAGS" then HV.ActiveTab = "" end
 		end
 	end,
 	CurrentStepsChangedMessageCommand = function(self)

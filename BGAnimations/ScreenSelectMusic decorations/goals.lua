@@ -166,18 +166,12 @@ local t = Def.ActorFrame {
 	end,
 	SelectMusicTabChangedMessageCommand = function(self, params)
 		if params.Tab == "GOALS" then
-			self:visible(not self:GetVisible())
-			if self:GetVisible() then
-				self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
-				HV.ActiveTab = "GOALS"
-				ind = 0
-				refreshGoals()
-			else
-				HV.ActiveTab = ""
-			end
+			self:visible(true)
+			self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
+			ind = 0
+			refreshGoals()
 		else
 			self:visible(false)
-			if HV.ActiveTab == "GOALS" then HV.ActiveTab = "" end
 		end
 		self:playcommand("GoalTableRefresh")
 	end,

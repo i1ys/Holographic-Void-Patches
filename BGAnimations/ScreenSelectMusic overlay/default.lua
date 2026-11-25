@@ -40,7 +40,9 @@ local bgCard = color("0.06,0.06,0.06,0.9")
 
 local profileOverlayActor = nil
 local globalTooltipActor = nil
-local inputDebugActor = nil
+local focus = LoadActor("input_focus.lua")
+local filterInput
+local searchRefreshPending = false
 local searchString = ""
 local appliedSearch = ""
 local searchHasMatches = true
@@ -91,6 +93,8 @@ local function wheelSearchQuery(query)
 end
 
 local function refreshMusicSearch()
+	searchRefreshPending = not focus.isCurrent()
+	if searchRefreshPending then return end
 	local screen = SCREENMAN:GetTopScreen()
 	local wheel = screen and screen.GetMusicWheel and screen:GetMusicWheel()
 	if not wheel then return end
@@ -201,25 +205,13 @@ local main_af = Def.ActorFrame {
 		ApplySearchCommand = function() HV.RefreshMusicSearch() end,
 		OffCommand = function(self) self:stoptweening() end,
 	},
-	InitCommand = function(self)
-		self:SetUpdateFunction(function(af)
-			-- Hover Logic
-			local virtualX = INPUTFILTER:GetMouseX()
-			local virtualY = INPUTFILTER:GetMouseY()
-			
-			local over = virtualX >= btnCX - btnW/2 and virtualX <= btnCX + btnW/2
-					 and virtualY >= btnCY - btnH/2 and virtualY <= btnCY + btnH/2
-
-			-- Removed: local overlay updating of LoginButtonUI since it was moved to decorations
-		end)
-	end,
 	BeginCommand = function(self)
 		Branch.CloseMultiplayerConnection()
-		-- Store ScreenSelectMusic reference globally for chart preview to use
-		HV = HV or {}
-		HV.SSM = SCREENMAN:GetTopScreen()
-		HV.ActiveTab = ""
-		HV.SuppressSearchCloseEnter = false
+		focus.attach()
+		self:SetUpdateFunction(function()
+			focus.update()
+			if searchRefreshPending and focus.isCurrent() then HV.RefreshMusicSearch() end
+		end)
 		HV.GameplaySessionValid = false
 		HV.OnlineReplayActive = false
 		HV.OnlineReplayName = nil
@@ -243,19 +235,15 @@ local main_af = Def.ActorFrame {
 			DLMAN:RefreshUserData()
 		end
 
-		self:sleep(0.01):queuecommand("OpenPendingStatsScore"):queuecommand("CheckFirstLaunchSSM")
+		self:sleep(0.01):queuecommand("CheckFirstLaunchSSM")
 	end,
-	OpenPendingStatsScoreCommand = function(self)
-		local pending = getenv("HVPendingScoreFromStats")
-		if not pending then return end
-		setenv("HVPendingScoreFromStats", nil)
-		local screen = SCREENMAN:GetTopScreen()
-		if screen and screen.ShowEvalScreenForScore then
-			screen:ShowEvalScreenForScore(pending)
-		elseif STATSMAN:GetCurStageStats() then
-			STATSMAN:GetCurStageStats():GetPlayerStageStats():SetHighScore(pending)
-			SCREENMAN:SetNewScreen("ScreenEvaluation")
-		end
+	SelectMusicTabChangedMessageCommand = function(self, params)
+		focus.setTab(params and params.Tab)
+	end,
+	OffCommand = function(self)
+		focus.dispose()
+		searchRefreshPending = false
+		self:SetUpdateFunction(nil)
 	end,
 	CheckFirstLaunchSSMCommand = function(self)
 		if PROFILEMAN:GetNumLocalProfiles() == 0 then
@@ -292,8 +280,7 @@ local main_af = Def.ActorFrame {
 		end
 	end,
 	EndCommand = function(self)
-		SCREENMAN:set_input_redirected(PLAYER_1, false)
-		SCREENMAN:set_input_redirected(PLAYER_2, false)
+		focus.dispose()
 		if HV.LeftMousePeekHold then
 			HV.LeftMousePeekHold = false
 			HV.LeftMousePeekHoldAllowed = false
@@ -359,6 +346,45 @@ local main_af = Def.ActorFrame {
 
 
 -- LoginButtonUI was moved to decorations/default.lua to nest visually within the profile card.
+
+
+local tabShortcuts = {
+	DeviceButton_1 = "PROFILE",
+	DeviceButton_2 = "SCORES",
+	DeviceButton_3 = "PLAYLISTS",
+	DeviceButton_4 = "SEARCH",
+	DeviceButton_5 = "TAGS",
+	DeviceButton_6 = "GOALS",
+}
+
+local function handleHeaderAndFooter(event, screen, x, y)
+	if x >= 0 and x <= 80 and y >= 0 and y <= 40 then
+		if HV.ActiveTab == "" then
+			screen:Cancel()
+		else
+			focus.hold(event)
+			MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
+		end
+		return true
+	end
+	local searchX = SCREEN_CENTER_X - 150
+	if x >= searchX and x <= searchX + 300 and y >= 6 and y <= 34 then
+		MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "SEARCH"})
+		return true
+	end
+	if y < SCREEN_HEIGHT - footerH or y > SCREEN_HEIGHT then return false end
+	local tab = tabs[math.floor((x - 10) / tabW) + 1]
+	if not tab then return false end
+	if tab == "RANDOM" then
+		selectRandomSong(screen)
+	else
+		local nextTab = tab == HV.ActiveTab and "" or tab
+		if nextTab ~= "" and footerOverlayTabs[nextTab] then PlayWhooshOverlayOpen() end
+		if nextTab == "" then focus.hold(event) end
+		MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = nextTab})
+	end
+	return true
+end
 
 -- Rate adjustment via CodeMessage (EffectUp/EffectDown mapped in metrics.ini)
 local lastRatePresses = {0, 0}
@@ -495,22 +521,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 		end
 	end,
 	BeginCommand = function(self)
-		local screen = SCREENMAN:GetTopScreen()
-		if not screen then return end
-
-		-- Always cleanup any existing callback from a previous load
-		if HV.OverlayInputCallback then
-			pcall(function() screen:RemoveInputCallback(HV.OverlayInputCallback) end)
-		end
-
-		HV.OverlayInputCallback = function(event)
-			-- Strict nil checks to prevent script crashes
-			if not event or not event.DeviceInput then return false end
-
-			-- Screen state awareness: Only handle input if we are the top screen
-			-- This prevents blocking overlays like ScreenTextEntry (naming/login)
-			local top = SCREENMAN:GetTopScreen()
-			if not top or top:GetName() ~= "ScreenSelectMusic" then return false end
+		focus.bind(function(event, screen)
 			
 			-- Banish inputs processing if chart preview is active so clicks don't leak through
 			if HV.ChartPreviewActive then return false end
@@ -533,21 +544,19 @@ main_af[#main_af + 1] = Def.ActorFrame {
 					MESSAGEMAN:Broadcast("HVLeftMousePeekHoldChanged", {Held = nextHeld, Allowed = allowed})
 				end
 			end
-			local isEnter = (event.button == "Start" or btn:lower() == "devicebutton_enter" or btn:lower() == "devicebutton_kp enter")
-			
-			-- After search confirm closes the tab, keep swallowing only the triggering Enter/Start
-			-- until its release event arrives. This avoids leaking the confirm input into the
-			-- native music wheel without trapping unrelated keyboard input.
-			if HV.SuppressSearchCloseEnter and isEnter then
-				if evType == "InputEventType_Release" then
-					HV.SuppressSearchCloseEnter = false
+			local logicalBtn = event.GameButton or event.button or ""
+			local isEnter = logicalBtn == "Start" or btn == "DeviceButton_enter" or btn == "DeviceButton_kp enter"
+			local ctrl = INPUTFILTER:IsBeingPressed("left ctrl") or INPUTFILTER:IsBeingPressed("right ctrl")
+			if ctrl and evType == "InputEventType_FirstPress" then
+				local tab = tabShortcuts[btn]
+				if tab then
+					if tab ~= "SEARCH" and HV.ActiveTab ~= tab then PlayWhooshOverlayOpen() end
+					MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = tab})
+					return true
+				elseif btn == "DeviceButton_7" then
+					selectRandomSong(screen)
+					return true
 				end
-				return true
-			end
-			
-			-- Log to the isolated debugger if it's loaded
-			if HV_DEBUG_LOG then
-				HV_DEBUG_LOG(string.format("Input: %s (%s)", tostring(btn), tostring(evType)))
 			end
 
 			-- 2. Mouse Click
@@ -582,20 +591,21 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				local virtualX = INPUTFILTER:GetMouseX()
 				local virtualY = INPUTFILTER:GetMouseY()
 
+				if handleHeaderAndFooter(event, screen, virtualX, virtualY) then return true end
+
 				-- If PROFILE tab is open, handle click-outside to close
 				if HV.ActiveTab == "PROFILE" then
 					if not IsMouseOverCentered(SCREEN_CENTER_X, SCREEN_CENTER_Y, overlayW, overlayH) then
+						focus.hold(event)
 						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
 						return true
 					end
 				end
 
-				-- Keep Profile tab controls reachable; other decoration tabs own their input.
+				if HV.ActiveTab == "FILTERS" then return filterInput(event) end
+				-- Other decoration tabs handle their own input.
 				if HV.ActiveTab ~= "" and HV.ActiveTab ~= "PROFILE" then return false end
 
-				local virtualX = INPUTFILTER:GetMouseX()
-				local virtualY = INPUTFILTER:GetMouseY()
-				
 				-- Check Login Button logic (btnCX/btnCY defined above)
 				local loginOver = virtualX >= btnCX - btnW/2 and virtualX <= btnCX + btnW/2
 						 and virtualY >= btnCY - btnH/2 and virtualY <= btnCY + btnH/2
@@ -618,55 +628,6 @@ main_af[#main_af + 1] = Def.ActorFrame {
 					SCREENMAN:SetNewScreen("ScreenAssetSettings")
 					return true
 				end
-
-				-- Check Header `< BACK` Button (0 to 80, 0 to 40)
-				if virtualX >= 0 and virtualX <= 80 and virtualY >= 0 and virtualY <= 40 then
-					screen:Cancel()
-					return true
-				end
-
-				-- Check Header `SEARCH` Bar (Center)
-				local searchStartX = SCREEN_WIDTH / 2 - 150
-				local searchStartY = 6
-				if virtualX >= searchStartX and virtualX <= searchStartX + 300 
-				   and virtualY >= searchStartY and virtualY <= searchStartY + 28 then
-					if evType == "InputEventType_FirstPress" then
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "SEARCH"})
-					end
-					return true
-				end
-
-				-- Check Footer Tab Buttons (Uses top-level 'tabs', 'tabW', 'footerH')
-				local footerY = SCREEN_HEIGHT - footerH
-				for i, tabName in ipairs(tabs) do
-					local tx = 10 + (i - 1) * tabW
-					if virtualX >= tx and virtualX <= tx + tabW and virtualY >= footerY and virtualY <= SCREEN_HEIGHT then
-						local target = tabName:upper()
-						
-						if target == "RANDOM" then
-							selectRandomSong(screen)
-							return true
-						end
-
-						if target == "PROFILE" then target = "SOCIAL" end 
-
-						local nextTab = ""
-						if HV.ActiveTab == tabName:upper() then
-							nextTab = ""
-						else
-							nextTab = tabName:upper()
-						end
-
-						if nextTab ~= "" and footerOverlayTabs[nextTab] then
-							PlayWhooshOverlayOpen()
-						end
-
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = nextTab})
-						return true
-					end
-				end
-
-
 
 				-- --- PROFILE TAB SPECIFIC CLICKS ---
 				if HV.ActiveTab == "PROFILE" then
@@ -748,6 +709,8 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				end
 			end
 			
+			if HV.ActiveTab == "FILTERS" and filterInput(event) then return true end
+
 			-- 2.6 Mouse Wheel & Keyboard Navigation
 			-- BLOCKED if an overlay tab is open
 			local navigationBtns = {
@@ -766,7 +729,6 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				["Left"] = -1,
 				["Right"] = 1,
 			}
-			local logicalBtn = event.button or ""
 			
 			local dir = navigationBtns[btn] or gameBtnDirs[logicalBtn]
 			
@@ -817,6 +779,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				if button == "devicebutton_backspace" then
 					if editing then
 						if searchString == "" then
+							focus.hold(event)
 							MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
 						else
 							setSearchText(searchString:gsub("[^\128-\191][\128-\191]*$", ""), instant, true)
@@ -832,20 +795,20 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				if isEnter then
 					if evType == "InputEventType_FirstPress" then
 						setSearchText(searchString, true)
-						HV.SuppressSearchCloseEnter = true
+						focus.hold(event)
 						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
 					end
 					return true
 				end
-				if event.button == "Back" or button == "devicebutton_escape" then
+				if logicalBtn == "Back" or button == "devicebutton_escape" then
 					if evType == "InputEventType_FirstPress" then
+						focus.hold(event)
 						setSearchText("", true)
 						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
 					end
 					return true
 				end
 
-				local ctrl = INPUTFILTER:IsBeingPressed("left ctrl") or INPUTFILTER:IsBeingPressed("right ctrl")
 				if ctrl then
 					if editing and evType == "InputEventType_FirstPress" and button == "devicebutton_v"
 						and Arch and Arch.getClipboard then
@@ -872,41 +835,8 @@ main_af[#main_af + 1] = Def.ActorFrame {
 				-- Close any active tab on Escape or Back
 				if btn == "DeviceButton_escape" or logicalBtn == "Back" then
 					if HV.ActiveTab ~= "" then
+						focus.hold(event)
 						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
-						return true
-					end
-				end
-
-				local ctrl = INPUTFILTER:IsBeingPressed("left ctrl") or INPUTFILTER:IsBeingPressed("right ctrl")
-				if ctrl then
-					if btn == "DeviceButton_1" then
-						if HV.ActiveTab ~= "PROFILE" then PlayWhooshOverlayOpen() end
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "PROFILE"})
-						return true
-					elseif btn == "DeviceButton_2" then
-						if HV.ActiveTab ~= "SCORES" then PlayWhooshOverlayOpen() end
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "SCORES"})
-						return true
-					elseif btn == "DeviceButton_3" then
-						if HV.ActiveTab ~= "PLAYLISTS" then PlayWhooshOverlayOpen() end
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "PLAYLISTS"})
-						return true
-					elseif btn == "DeviceButton_4" then
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "SEARCH"})
-						return true
-					elseif btn == "DeviceButton_5" then
-						if HV.ActiveTab ~= "TAGS" then PlayWhooshOverlayOpen() end
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "TAGS"})
-						return true
-					elseif btn == "DeviceButton_6" then
-						if HV.ActiveTab ~= "GOALS" then PlayWhooshOverlayOpen() end
-						MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = "GOALS"})
-						return true
-					elseif btn == "DeviceButton_7" then
-						selectRandomSong(screen)
-						return true
-					elseif btn == "DeviceButton_0" then
-						MESSAGEMAN:Broadcast("ToggleInputDebugger")
 						return true
 					end
 				end
@@ -929,8 +859,7 @@ main_af[#main_af + 1] = Def.ActorFrame {
 			end
 			
 			return false
-		end -- end of HV.OverlayInputCallback
-		screen:AddInputCallback(HV.OverlayInputCallback)
+		end)
 	end
 }
 
@@ -1614,23 +1543,7 @@ local profileOverlay = Def.ActorFrame {
 	-- Core Logic Signals
 	UpdateOverlayUIMessageCommand = function(self) self:playcommand("UpdateAllScores") end,
 	SelectMusicTabChangedMessageCommand = function(self, params)
-		HV.ActiveTab = params and params.Tab or ""
 		local targetTab = params and params.Tab or ""
-		
-		-- Set input redirection for ALL tabs to block the C++ MusicWheel
-		-- Force redirection if tab is NOT empty, otherwise turn it off
-		local redirected = (targetTab ~= "")
-		
-		if redirected then
-			-- Cancel any pending unlock so we don't accidentally unlock if we switch tabs rapidly
-			self:stoptweening()
-			SCREENMAN:set_input_redirected(PLAYER_1, true)
-			SCREENMAN:set_input_redirected(PLAYER_2, true)
-		else
-			-- Unlock is driven by the hide tween path below. Do not queue it here,
-			-- because the subsequent stoptweening() for the fade-out would cancel it.
-		end
-
 		if targetTab == "PROFILE" then
 			self:visible(true):stoptweening()
 				:diffusealpha(0):linear(0.15):diffusealpha(1)
@@ -1638,18 +1551,10 @@ local profileOverlay = Def.ActorFrame {
 			self:GetChild("GradeSidebar"):playcommand("UpdatePlayCounts")
 			self:playcommand("UpdateAllScores")
 		else
-			self:stoptweening():linear(0.1):diffusealpha(0):queuecommand("UnlockInput"):queuecommand("Hide")
+			self:stoptweening():linear(0.1):diffusealpha(0):queuecommand("Hide")
 		end
 	end,
 	HideCommand = function(self) self:visible(false) end,
-
-	UnlockInputCommand = function(self)
-		-- Only unlock if we are still not in an active tab (safety check)
-		if (HV.ActiveTab or "") == "" then
-			SCREENMAN:set_input_redirected(PLAYER_1, false)
-			SCREENMAN:set_input_redirected(PLAYER_2, false)
-		end
-	end,
 
 	NextScorePageMessageCommand = function(self)
 		if self.isRecentMode then self.recentPage = self.recentPage + 1
@@ -1999,13 +1904,12 @@ main_af[#main_af + 1] = LoadActor("bgm.lua")
 
 main_af[#main_af + 1] = LoadActor("../ScreenChartPreview overlay/default.lua")
 
--- Load Isolated Input Debugger (Always on top with draworder 9999)
-main_af[#main_af + 1] = LoadActor("input_debugger.lua")
-
 -- Load Decoration Overlays (Initially hidden, using standard Toggle[NAME]Overlay messages)
 local decorOverlays = {"scores", "filters", "playlists", "tags", "goals"}
 for _, name in ipairs(decorOverlays) do
-	main_af[#main_af + 1] = LoadActor("../ScreenSelectMusic decorations/" .. name .. ".lua")
+	local panel, onInput = LoadActor("../ScreenSelectMusic decorations/" .. name .. ".lua", focus)
+	main_af[#main_af + 1] = panel
+	if name == "filters" then filterInput = onInput end
 end
 
 main_af[#main_af + 1] = LoadActor("../_cursor")
@@ -2014,12 +1918,10 @@ main_af[#main_af + 1] = LoadActor("../_cursor")
 main_af[#main_af + 1] = Def.ActorFrame {
 	Name = "MasterInputSink",
 	BeginCommand = function(self)
-		local screen = SCREENMAN:GetTopScreen()
 		local preview = self:GetParent():GetChild("ChartPreviewRoot")
-		if not screen or not preview then return end
+		if not preview then return end
 
-		screen:AddInputCallback(function(event)
-			if SCREENMAN:GetTopScreen() ~= screen or not event or not event.DeviceInput then return false end
+		focus.bind(function(event)
 			local btn = event.DeviceInput.button or ""
 			local button = event.GameButton or event.button
 			local firstPress = event.type == "InputEventType_FirstPress"

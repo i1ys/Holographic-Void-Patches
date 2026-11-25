@@ -2,6 +2,7 @@
 -- Rebuilt from Til Death's implementation using UIElements for proper mouse/keyboard input.
 -- Uses FILTERMAN singleton for per-skillset MSD filtering, rate bounds, filter mode, and wheel refresh.
 
+local focus = ...
 local accentColor = HVColor.Accent
 local dimText = color("0.45,0.45,0.45,1")
 local subText = color("0.65,0.65,0.65,1")
@@ -11,7 +12,6 @@ local bgCard = color("0.04,0.04,0.04,0.97")
 
 local overlayW = 680
 local overlayH = 400
-local filtersActor = nil
 local active = false
 
 local hoverAlpha = 0.6
@@ -39,7 +39,6 @@ local function beginEdit(row, bound)
 	ActiveSS, activebound = row, bound
 	boundText = formatBound(FILTERMAN:GetSSFilter(row, bound))
 	MESSAGEMAN:Broadcast("HV_NumericInputActive")
-	SCREENMAN:set_input_redirected(PLAYER_1, true)
 end
 
 local function setBoundLabel(self, row, bound)
@@ -49,21 +48,24 @@ local function setBoundLabel(self, row, bound)
 	self:diffuse(value <= 0 and not editing and dimText or brightText)
 end
 
-local function releaseFilterInputRedirection()
-	if (HV.ActiveTab or "") ~= "" then return end
-	if HV.SuppressSearchCloseEnter then return end
-	SCREENMAN:set_input_redirected(PLAYER_1, false)
+local function finishEdit(apply)
+	if ActiveSS == 0 then return end
+	ActiveSS, activebound = 0, 0
+	if apply then refreshWheel(false) end
+	MESSAGEMAN:Broadcast("HV_NumericInputEnded")
 end
 
 -- Numeric input handler (runs when a filter cell is being edited)
 local function FilterInput(event)
 	if event.type == "InputEventType_Release" or ActiveSS == 0 or not active then return end
 	local button = event.DeviceInput.button or ""
-	if event.button == "Start" or event.button == "Back" or button == "DeviceButton_escape" then
-		ActiveSS = 0
-		refreshWheel(false)
-		MESSAGEMAN:Broadcast("HV_NumericInputEnded")
-		releaseFilterInputRedirection()
+	local logical = event.GameButton or event.button
+	if logical == "Start" or logical == "Back" or button == "DeviceButton_escape"
+		or button == "DeviceButton_enter" or button == "DeviceButton_kp enter" then
+		if event.type == "InputEventType_FirstPress" then
+			focus.hold(event)
+			finishEdit(true)
+		end
 		return
 	end
 
@@ -117,39 +119,26 @@ local t = Def.ActorFrame {
 	},
 	Name = "FiltersOverlay",
 	InitCommand = function(self)
-		filtersActor = self
 		self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):visible(false)
 	end,
 	SelectMusicTabChangedMessageCommand = function(self, params)
-		if params.Tab == "FILTERS" then
-			self:visible(not self:GetVisible())
-			if self:GetVisible() then
-				self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
-				HV.ActiveTab = "FILTERS"
-				active = true
-				self:playcommand("Set")
-			else
-				HV.ActiveTab = ""
-				active = false
-				ActiveSS = 0
-				releaseFilterInputRedirection()
-			end
-		else
-			self:visible(false)
-			if HV.ActiveTab == "FILTERS" then HV.ActiveTab = "" end
-			active = false
-			ActiveSS = 0
-			releaseFilterInputRedirection()
+		local wasActive = active
+		active = params.Tab == "FILTERS"
+		self:visible(active)
+		if active and not wasActive then
+			self:stoptweening():diffusealpha(0):linear(0.2):diffusealpha(1)
+			self:playcommand("Set")
+		elseif not active then
+			finishEdit(false)
 		end
 	end,
+	OffCommand = function()
+		active = false
+		finishEdit(false)
+	end,
 
-	MouseRightClickMessageCommand = function(self)
-		if active then
-			ActiveSS = 0
-			MESSAGEMAN:Broadcast("HV_NumericInputEnded")
-			MESSAGEMAN:Broadcast("HV_FilterUpdated")
-			releaseFilterInputRedirection()
-		end
+	MouseRightClickMessageCommand = function()
+		if active and focus.isCurrent() then finishEdit(true) end
 	end,
 
 	-- Background card
@@ -257,7 +246,7 @@ local function CreateFilterInputBox(i)
 				end
 			end,
 			MouseDownCommand = function(self, params)
-				if params.event == "DeviceButton_left mouse button" and active then
+				if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
 					beginEdit(i, 0)
 				end
 			end,
@@ -300,7 +289,7 @@ local function CreateFilterInputBox(i)
 				end
 			end,
 			MouseDownCommand = function(self, params)
-				if params.event == "DeviceButton_left mouse button" and active then
+				if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
 					beginEdit(i, 1)
 				end
 			end,
@@ -369,11 +358,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			:zoomto(140, spacingY - 2):diffusealpha(0)
 	end,
 	MouseDownCommand = function(self, params)
-		if params.event == "DeviceButton_left mouse button" and active then
+		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
 			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() + 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
-		elseif params.event == "DeviceButton_right mouse button" and active then
+		elseif params.event == "DeviceButton_right mouse button" and active and focus.isCurrent() then
 			FILTERMAN:SetMaxFilterRate(FILTERMAN:GetMaxFilterRate() - 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
@@ -401,11 +390,11 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			:zoomto(140, ctrlSpacing - 2):diffusealpha(0)
 	end,
 	MouseDownCommand = function(self, params)
-		if params.event == "DeviceButton_left mouse button" and active then
+		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
 			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() + 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
-		elseif params.event == "DeviceButton_right mouse button" and active then
+		elseif params.event == "DeviceButton_right mouse button" and active and focus.isCurrent() then
 			FILTERMAN:SetMinFilterRate(FILTERMAN:GetMinFilterRate() - 0.1)
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
 			refreshWheel(false)
@@ -441,7 +430,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			:zoomto(120, spacingY - 2):diffusealpha(0)
 	end,
 	MouseDownCommand = function(self, params)
-		if params.event == "DeviceButton_left mouse button" and active then
+		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
 			FILTERMAN:ToggleFilterMode()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
@@ -487,7 +476,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			:zoomto(180, ctrlSpacing - 2):diffusealpha(0)
 	end,
 	MouseDownCommand = function(self, params)
-		if params.event == "DeviceButton_left mouse button" and active and not FILTERMAN:GetFilterMode() then
+		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() and not FILTERMAN:GetFilterMode() then
 			FILTERMAN:ToggleHighestSkillsetsOnly()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
@@ -533,7 +522,7 @@ t[#t + 1] = UIElements.QuadButton(1, 1) .. {
 			:zoomto(180, ctrlSpacing - 2):diffusealpha(0)
 	end,
 	MouseDownCommand = function(self, params)
-		if params.event == "DeviceButton_left mouse button" and active and not FILTERMAN:GetFilterMode() then
+		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() and not FILTERMAN:GetFilterMode() then
 			FILTERMAN:ToggleHighestDifficultyOnly()
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
 			MESSAGEMAN:Broadcast("HV_FilterUpdated")
@@ -577,7 +566,7 @@ t[#t + 1] = UIElements.TextButton(1, 1, "Common Normal") .. {
 	end,
 	ClickCommand = function(self, params)
 		if params.update ~= "OnMouseDown" then return end
-		if params.event == "DeviceButton_left mouse button" and active then
+		if params.event == "DeviceButton_left mouse button" and active and focus.isCurrent() then
 			FILTERMAN:ResetAllFilters()
 			activebound = 0
 			ActiveSS = 0
@@ -585,59 +574,28 @@ t[#t + 1] = UIElements.TextButton(1, 1, "Common Normal") .. {
 			MESSAGEMAN:Broadcast("HV_ResetFilter")
 			MESSAGEMAN:Broadcast("HV_NumericInputEnded")
 			MESSAGEMAN:Broadcast("HV_FilterModeChanged")
-			releaseFilterInputRedirection()
 			refreshWheel(false)
 		end
 	end,
 }
 
--- Input callback handler
-local function SharedInputHandler(event)
-	if not filtersActor or not filtersActor:GetVisible() then return false end
-	if not event or not event.DeviceInput then return false end
-
-	local top = SCREENMAN:GetTopScreen()
-	if not top or top:GetName() ~= "ScreenSelectMusic" then return false end
-
-	-- If numeric input is active, delegate to FilterInput
+local function handleInput(event)
+	if not active then return false end
+	local button = event.DeviceInput.button
+	if event.DeviceInput.is_mouse or (button and button:find("mouse", 1, true)) then
+		if event.type == "InputEventType_FirstPress" and button == "DeviceButton_left mouse button"
+			and not IsMouseOverCentered(SCREEN_CENTER_X, SCREEN_CENTER_Y, overlayW, overlayH) then
+			focus.hold(event)
+			MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
+			return true
+		end
+		return false
+	end
 	if ActiveSS > 0 then
 		FilterInput(event)
 		return true
 	end
-
-	if event.type ~= "InputEventType_FirstPress" then return false end
-	local btn = event.DeviceInput.button
-
-	-- Click outside the overlay to close it
-	if btn == "DeviceButton_left mouse button" then
-		if not IsMouseOverCentered(SCREEN_CENTER_X, SCREEN_CENTER_Y, overlayW, overlayH) then
-			ActiveSS = 0
-			MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
-			return true
-		end
-	end
-
-	-- Escape/Back closes the overlay
-	if event.button == "Back" or btn == "DeviceButton_escape" then
-		ActiveSS = 0
-		MESSAGEMAN:Broadcast("SelectMusicTabChanged", {Tab = ""})
-		return true
-	end
-
 	return false
 end
 
--- Register input callback
-t[#t + 1] = Def.ActorFrame {
-	BeginCommand = function(self)
-		local screen = SCREENMAN:GetTopScreen()
-		if not screen then return end
-		if HV.FiltersInputCallback then
-			pcall(function() screen:RemoveInputCallback(HV.FiltersInputCallback) end)
-		end
-		HV.FiltersInputCallback = function(event) return SharedInputHandler(event) end
-		screen:AddInputCallback(HV.FiltersInputCallback)
-	end,
-}
-
-return t
+return t, handleInput
