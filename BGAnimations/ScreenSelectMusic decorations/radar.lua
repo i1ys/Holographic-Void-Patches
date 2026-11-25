@@ -320,6 +320,13 @@ local function calculateRadarValues()
 	}
 end
 
+local function drawRadar(self, progress)
+	for i = 1, 6 do displayedValues[i] = oldValues[i] + (targetValues[i] - oldValues[i]) * progress end
+	for i = 1, 4 do displayedColor[i] = oldColor[i] + (targetColor[i] - oldColor[i]) * progress end
+	self:playcommand("UpdateRadar")
+	if hoverActive then showTooltips() end
+end
+
 -- actor tree
 
 local t = Def.ActorFrame {
@@ -332,12 +339,20 @@ local t = Def.ActorFrame {
 		self:visible(show)
 		self:GetChild("RadarFill"):visible(ready)
 		self:GetChild("RadarOutline"):visible(ready)
-		if not ready then hideTooltips() end
+		if not ready then
+			self:stoptweening()
+			hideTooltips()
+		end
 	end,
 	SetCommand = function(self)
+		if previewVisible or not selection.song or not selection.steps or not selection.detailsReady then
+			self:playcommand("SetGraphVisibility")
+			return
+		end
+
+		local animate = self:GetChild("RadarFill"):IsVisible()
+		self:stoptweening()
 		refreshCategoryColors()
-		self:playcommand("SetGraphVisibility")
-		if previewVisible or not selection.song or not selection.steps or not selection.detailsReady then return end
 
 		for i = 1, 6 do oldValues[i] = displayedValues[i] end
 		for i = 1, 4 do oldColor[i] = displayedColor[i] end
@@ -359,26 +374,20 @@ local t = Def.ActorFrame {
 		
 		local nc = categories[maxIdx].color
 		for i = 1, 4 do targetColor[i] = nc[i] end
-		if not hoverActive then hideTooltips() end
-		currentStep = 0
-		self:stoptweening():queuecommand("AnimateStep")
+		if animate then
+			currentStep = 0
+			self:queuecommand("AnimateStep")
+		else
+			drawRadar(self, 1)
+			self:playcommand("SetGraphVisibility")
+		end
 	end,
 	AnimateStepCommand = function(self)
 		currentStep = currentStep + 1
-		local p = smoothstep(currentStep / TWEEN_STEPS)
-		for i = 1, 6 do displayedValues[i] = oldValues[i] + (targetValues[i]-oldValues[i])*p end
-		for i = 1, 4 do displayedColor[i] = oldColor[i] + (targetColor[i]-oldColor[i])*p end
-		self:queuecommand("UpdateRadar")
-		if currentStep == 1 then self:playcommand("SetGraphVisibility") end
-		if hoverActive then showTooltips() end
+		drawRadar(self, smoothstep(currentStep / TWEEN_STEPS))
 		if currentStep < TWEEN_STEPS then self:sleep(STEP_TIME):queuecommand("AnimateStep") end
 	end,
-	InstantChartUpdateMessageCommand = function(self)
-		if not selection.detailsReady then
-			self:stoptweening()
-		end
-		self:playcommand("SetGraphVisibility")
-	end,
+	InstantChartUpdateMessageCommand = function(self) self:playcommand("SetGraphVisibility") end,
 	HV_SelectionDetailsReadyMessageCommand = function(self) self:stoptweening():queuecommand("Set") end,
 	TabChangedMessageCommand          = function(self) self:stoptweening():queuecommand("Set") end,
 	NoteFieldVisibleMessageCommand    = function(self) previewVisible = true; self:playcommand("SetGraphVisibility") end,
