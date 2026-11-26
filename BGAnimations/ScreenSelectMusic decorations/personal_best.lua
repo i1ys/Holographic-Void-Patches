@@ -39,13 +39,48 @@ local pbJudgments = {
 	{"W4", "GOOD"}, {"W5", "BAD"}, {"Miss", "MISS"},
 }
 
+local function getHoveredScore(frame)
+	local screen = frame.reviewScreen
+	if not screen or SCREENMAN:GetTopScreen() ~= screen or screen:IsTransitioning()
+		or HV.ChartPreviewActive or (HV.ActiveTab or "") ~= "" then return end
+	if not selection.detailsReady or not selection.song or not selection.steps
+		or selection.song ~= GAMESTATE:GetCurrentSong() or selection.steps ~= GAMESTATE:GetCurrentSteps()
+		or selection.rate ~= getCurRateValue() then return end
+	local label = frame:GetChild("PBScore")
+	local score = label.displayedScore
+	if not score or score ~= selection.pbScore or not isOver(label) then return end
+	local wheel = screen:GetMusicWheel()
+	if screen:GetSelectionState() == 0 and wheel and wheel:IsSettled() then return score end
+end
+
 return Def.ActorFrame {
 	Name = "PersonalBestFrame",
 	InitCommand = function(self)
 		self.isHovering = false
 	end,
+	BeginCommand = function(self)
+		local screen = SCREENMAN:GetTopScreen()
+		if self.reviewScreen or not screen or screen:GetName() ~= "ScreenSelectMusic" then return end
+		self.reviewScreen = screen
+		self.reviewInput = function(event)
+			local device = event and event.DeviceInput
+			if not device or not IsMouseLeftClick(device.button) or event.type ~= "InputEventType_FirstPress" then
+				return false
+			end
+			local score = getHoveredScore(self)
+			if not score then return false end
+			HV.Score.OpenLocalEvaluation(screen, score)
+			return true
+		end
+		screen:AddInputCallback(self.reviewInput)
+	end,
 	OnCommand = function(self)
 		self:queuecommand("Tick")
+	end,
+	OffCommand = function(self)
+		if self.reviewScreen then self.reviewScreen:RemoveInputCallback(self.reviewInput) end
+		self.reviewScreen, self.reviewInput = nil, nil
+		self:stoptweening()
 	end,
 	InstantChartUpdateMessageCommand = function(self)
 		local show = selection.detailsReady == true and selection.song ~= nil
@@ -69,6 +104,12 @@ return Def.ActorFrame {
 		if isH ~= self.isHovering then
 			self.isHovering = isH
 			self:playcommand("Set")
+		end
+		local label = self:GetChild("PBScore")
+		local canReview = getHoveredScore(self) ~= nil
+		if canReview ~= label.reviewHovered then
+			label.reviewHovered = canReview
+			label:diffuse(canReview and accentColor or (label.displayedScore and brightText or dimText))
 		end
 		self:sleep(0.05):queuecommand("Tick")
 	end,
@@ -144,8 +185,10 @@ return Def.ActorFrame {
 		end,
 		SetCommand = function(self)
 			local view = getPBView(self:GetParent())
+			self.displayedScore = view and view.score
 			if view then
-				self:settext(view.wife and HV.Score.FormatEvaluationWifePercent(view.wife) or "-"):diffuse(brightText)
+				self:settext(view.wife and HV.Score.FormatEvaluationWifePercent(view.wife) or "-")
+					:diffuse(self.reviewHovered and accentColor or brightText)
 			else
 				self:settext(THEME:GetString("ScreenSelectMusic", "NoScore")):diffuse(dimText)
 			end

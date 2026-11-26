@@ -188,18 +188,6 @@ local function FetchOnlineScores()
 	)
 end
 
-local function ViewScore(score)
-	if not score then return end
-	local screen = SCREENMAN:GetTopScreen()
-	if screen and screen.ShowEvalScreenForScore then
-		HV.OnlineReplayActive = false
-		HV.OnlineReplayName = nil
-		HV.OnlineEvaluationActive = nil
-		HV.OnlineEvaluationName = nil
-		screen:ShowEvalScreenForScore(score)
-	end
-end
-
 local function GetOnlineScoreID(score)
 	if not score then return nil end
 	for _, getterName in ipairs({"GetOnlineScoreID", "GetScoreid", "GetScoreID", "GetID"}) do
@@ -845,7 +833,7 @@ t[#t + 1] = Def.ActorFrame {
 								if not OpenOnlineScore(ss) then ms.ok("Online score page unavailable") end
 							else
 								if currentView == VIEW_LOCAL then
-									ViewScore(ss)
+									HV.Score.OpenLocalEvaluation(screen, ss)
 								elseif not ShowScoreOffsetPlot(ss) then
 									ms.ok("Replay not available")
 								end

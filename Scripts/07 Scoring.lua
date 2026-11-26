@@ -63,6 +63,39 @@ function HV.Score.GetEvaluationOpeningScore(steps, stageStats, replayPlayback)
 	if score and score:GetChartKey() == chartKey then return score end
 end
 
+function HV.Score.OpenLocalEvaluation(screen, score)
+	if not screen or screen ~= SCREENMAN:GetTopScreen() or screen:IsTransitioning()
+		or not screen.ShowEvalScreenForScore or not score then return false end
+	local steps = GAMESTATE:GetCurrentSteps()
+	if not steps or score:GetScoreKey() == "" or score:GetChartKey() ~= steps:GetChartKey() then return false end
+
+	-- The native call sets autoplay and changes the most recent score before loading the replay.
+	local replay = score:HasReplayData() and score:GetReplay()
+	local loaded
+	if replay then
+		-- LoadAllData rejects reprioritized rows after a custom-window rescore.
+		if replay:UsingReprioritizedNoteRows() then
+			loaded = replay:IsLoaded()
+		else
+			loaded = replay:LoadAllData()
+		end
+	end
+	if not loaded then
+		ms.ok(THEME:GetString("ScreenSelectMusic", "ScoreReplayUnavailable"))
+		return false
+	end
+
+	local autoplay = PREFSMAN:GetPreference("AutoPlay")
+	HV.OnlineReplayActive = false
+	HV.OnlineReplayName = nil
+	HV.OnlineEvaluationActive = nil
+	HV.OnlineEvaluationName = nil
+	if screen:ShowEvalScreenForScore(score) then return true end
+	-- Etterna reports the failed transition. Restore the option it may have changed before failing.
+	PREFSMAN:SetPreference("AutoPlay", autoplay)
+	return false
+end
+
 local function finite(value)
 	return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
