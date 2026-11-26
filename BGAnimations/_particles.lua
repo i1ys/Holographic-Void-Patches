@@ -27,10 +27,7 @@ local particleLayer = Def.ActorFrame {
 		self:visible(showParticles)
 	end,
 	ThemePrefChangedMessageCommand = function(self, params)
-		if params and (params.Name == "HV_Particles" or params.Name == "HV_BGAnimIntensity" or params.Name == "HV_AccentColor") then
-			if params.Name == "HV_AccentColor" then
-				HVColor.RefreshAccent()
-			end
+		if params and (params.Name == "HV_Particles" or params.Name == "HV_BGAnimIntensity") then
 			local showParticles = tostring(ThemePrefs.Get("HV_Particles")) == "true"
 			self:visible(showParticles)
 			self:playcommand("Refresh")
@@ -73,11 +70,6 @@ for i = 1, numParticles do
 				:addy(dist * (math.random() > 0.5 and 1 or -1))
 				:queuecommand("Move")
 		end,
-		ThemePrefChangedMessageCommand = function(self, params)
-			if params and params.Name == "HV_AccentColor" then
-				self:diffuse(HVColor.Accent)
-			end
-		end
 	}
 end
 

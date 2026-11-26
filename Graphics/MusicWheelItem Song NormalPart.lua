@@ -142,12 +142,6 @@ return Def.ActorFrame {
 	FavoritesUpdatedMessageCommand = updateFavorite,
 	FavoriteSongToggledMessageCommand = updateFavorite,
 	PermamirrorUpdatedMessageCommand = updateMirror,
-	ColorThemeChangedMessageCommand = function(self)
-		self.shownDifficulty, self.ratingRate, self.shownGrade = nil, nil, false
-		updateTitleColor(self)
-		updateChart(self)
-	end,
-
 	Def.Quad {
 		Name = "BgQuad",
 		InitCommand = function(self)

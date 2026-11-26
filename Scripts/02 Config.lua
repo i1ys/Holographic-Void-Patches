@@ -23,6 +23,12 @@ local function decodeSettings(text, path)
 	if ok and type(result) == "table" then return result end
 end
 
+function Config.ReadTable(path)
+	if FILEMAN:DoesFileExist(path) then
+		return decodeSettings(readFile(path), path)
+	end
+end
+
 function Config.IsFinite(value)
 	return type(value) == "number" and value == value and math.abs(value) < math.huge
 end
@@ -138,6 +144,8 @@ local function normalizeTheme(data)
 	data.HV_AutoFailThreshold_Wife = nil
 	data.HV_AutoFailThreshold_Count = nil
 	data.HV_UseCustomGrades = nil
+	data.HV_ColorEditSyncAccent = nil
+	data.HV_GoalTrackerColorStyle = nil
 	for key, definition in pairs(themeDefinitions) do
 		local value = Config.NormalizePreference(definition, data[key])
 		if value == nil then

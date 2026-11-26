@@ -322,23 +322,4 @@ function PracticeMode()
 end
 _G["PracticeMode"] = PracticeMode
 
--- Listen for pref changes and refresh accent color
-local function OnThemePrefChanged(params)
-	if params and params.Name == "HV_AccentColor" then
-		if HVColor and HVColor.RefreshAccent then
-			HVColor.RefreshAccent()
-		end
-		if HVCustomColors and HVCustomColors.SyncAccentLinkedColors then
-			HVCustomColors.SyncAccentLinkedColors(ThemePrefs.Get("HV_AccentColor"))
-		end
-	end
-end
-
--- Hook into the broadcast system
--- This is called from _Fallback when a ThemePref is saved
-if MESSAGEMAN then
-	-- We can't directly subscribe here, but themes handle this
-	-- via the ThemePrefChangedMessageCommand on actors
-end
-
 Trace("Holographic Void: 04 ThemePrefsRows.lua loaded.")

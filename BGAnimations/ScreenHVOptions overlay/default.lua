@@ -253,19 +253,4 @@ t[#t + 1] = LoadFont("Common Normal") .. {
 	end
 }
 
--- ============================================================
--- LISTEN FOR PREF CHANGES (refresh accent in real-time)
--- ============================================================
-t[#t + 1] = Def.Actor {
-	ThemePrefChangedMessageCommand = function(self, params)
-		if params and params.Name == "HV_AccentColor" then
-			if HVColor and HVColor.RefreshAccent then
-				HVColor.RefreshAccent()
-			end
-			-- Save prefs immediately
-			ThemePrefs.ForceSave()
-		end
-	end
-}
-
 return t

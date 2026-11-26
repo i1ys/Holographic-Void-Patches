@@ -5,6 +5,7 @@ HV.TitleState = HV.TitleState or {}
 HV.TitleState.player = HV.TitleState.player or { song = nil, paused = true, offset = 0, lastStart = 0, duration = 0, history = {}, lastToggleAt = 0 }
 HV.TitleState.selectedProfile = HV.TitleState.selectedProfile or 0
 
+local choiceLabels = {"START", "MULTI", "PACK DOWNLOADER", "OPTIONS", "EXIT"}
 local accentColor = HVColor.Accent
 local dimText = color("0.45,0.45,0.45,1")
 local subText = color("0.65,0.65,0.65,1")
@@ -106,7 +107,7 @@ local t = Def.ActorFrame {
 			HV.TitleState.keyboardIndex = selectedIndex
 
 			-- Update custom label colors based on selection state
-			for i = 1, 6 do
+			for i = 1, #choiceLabels do
 				local lbl = af:GetChild("ChoiceLabel" .. i)
 				if lbl then
 					if i == selectedIndex then
@@ -142,19 +143,19 @@ local t = Def.ActorFrame {
 	end,
 	MenuUpCommand = function(self)
 		HV.TitleState.keyboardIndex = HV.TitleState.keyboardIndex - 1
-		if HV.TitleState.keyboardIndex < 1 then HV.TitleState.keyboardIndex = 6 end
+		if HV.TitleState.keyboardIndex < 1 then HV.TitleState.keyboardIndex = #choiceLabels end
 	end,
 	MenuDownCommand = function(self)
 		HV.TitleState.keyboardIndex = HV.TitleState.keyboardIndex + 1
-		if HV.TitleState.keyboardIndex > 6 then HV.TitleState.keyboardIndex = 1 end
+		if HV.TitleState.keyboardIndex > #choiceLabels then HV.TitleState.keyboardIndex = 1 end
 	end,
 	Player1UpCommand = function(self)
 		HV.TitleState.keyboardIndex = HV.TitleState.keyboardIndex - 1
-		if HV.TitleState.keyboardIndex < 1 then HV.TitleState.keyboardIndex = 6 end
+		if HV.TitleState.keyboardIndex < 1 then HV.TitleState.keyboardIndex = #choiceLabels end
 	end,
 	Player1DownCommand = function(self)
 		HV.TitleState.keyboardIndex = HV.TitleState.keyboardIndex + 1
-		if HV.TitleState.keyboardIndex > 6 then HV.TitleState.keyboardIndex = 1 end
+		if HV.TitleState.keyboardIndex > #choiceLabels then HV.TitleState.keyboardIndex = 1 end
 	end,
 	LoginMessageCommand = function(self)
 		local user = DLMAN:GetUsername()
@@ -293,8 +294,6 @@ local function jukeboxToggle()
 end
 
 --- Title Menu Text Labels (Custom rendering to bypass engine scroller text issues)
-local choiceLabels = {"START", "MULTI", "COLOR THEME", "PACK DOWNLOADER", "OPTIONS", "EXIT"}
-local choiceKeys = {"Start", "Multi", "ColorTheme", "PackDownloader", "Options", "Quit"}
 for i, label in ipairs(choiceLabels) do
 	local iy = SCREEN_CENTER_Y + 40 * (i - ((#choiceLabels + 1) / 2))
 	t[#t + 1] = LoadFont("Common Normal") .. {

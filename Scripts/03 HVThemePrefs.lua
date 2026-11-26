@@ -73,13 +73,6 @@ local HVPrefs = {
 		Values = {false, true}
 	},
 
-	-- Gameplay: MSD Color Scale (HolographicVoid or TilDeath)
-	HV_MSDColorScaleV3 = {
-		Default = "Holographic",
-		Choices = {"Holographic", "Classic", "None", "Monochrome", "Accent Color"},
-		Values = {"Holographic", "Classic", "None", "Monochrome", "Accent"}
-	},
-
 	-- Visual: Enable glow/bloom effects on active elements
 	HV_EnableGlow = {
 		Default = true,
@@ -244,48 +237,9 @@ local HVPrefs = {
 	-- Gameplay: Mini (Receptor Size)
 	HV_Mini = { Default = 100 },
 
-	-- Visual: Accent color hex
-	HV_AccentColor = { Default = "#5ABAFF" },
-	HV_ColorEditSyncAccent = { Default = false },
-
 	-- Auth: Saved EtternaOnline username and login token
 	HV_Username = { Default = "" },
 	HV_PasswordToken = { Default = "" },
-
-	-- Visual: Grade Coloring Style
-	HV_GradeColorStyle = {
-		Default = "Holographic",
-		Choices = {"Holographic", "Classic", "Custom"},
-		Values = {"Holographic", "Classic", "Custom"}
-	},
-	
-	-- Judgment Color Style
-	HV_JudgmentColorStyle = {
-		Default = "Holographic",
-		Choices = {"Holographic", "Classic", "Custom"},
-		Values = {"Holographic", "Classic", "Custom"}
-	},
-
-	-- Difficulty Color Style
-	HV_DifficultyColorStyle = {
-		Default = "Holographic",
-		Choices = {"Holographic", "Classic", "Custom"},
-		Values = {"Holographic", "Classic", "Custom"}
-	},
-
-	-- Clear Type Color Style
-	HV_ClearTypeColorStyle = {
-		Default = "Holographic",
-		Choices = {"Holographic", "Classic", "Custom"},
-		Values = {"Holographic", "Classic", "Custom"}
-	},
-
-	-- Goal Tracker Color Style
-	HV_GoalTrackerColorStyle = {
-		Default = "Custom",
-		Choices = {"Custom"},
-		Values = {"Custom"}
-	},
 
 	-- Visual: Show scrolling quotes/tips on Title Screen
 	HV_QuotesMode = {
@@ -441,16 +395,6 @@ local ThemePrefs = {
 	end,
 }
 HV.LegacyPrefs = ThemePrefs
-
--- After loading, refresh accent colors and style palettes
-if HVColor then
-	if HVColor.RefreshAccent then HVColor.RefreshAccent() end
-	if HVColor.RefreshDifficultyColors then HVColor.RefreshDifficultyColors() end
-	if HVColor.RefreshJudgmentColors then HVColor.RefreshJudgmentColors() end
-	if HVColor.RefreshClearTypeColors then HVColor.RefreshClearTypeColors() end
-	if HVColor.RefreshGradeColors then HVColor.RefreshGradeColors() end
-	if HVColor.RefreshGoalTrackerColors then HVColor.RefreshGoalTrackerColors() end
-end
 
 -- ==========================================================================
 -- Consistency Helpers

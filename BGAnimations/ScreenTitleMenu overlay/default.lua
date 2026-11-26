@@ -1,7 +1,7 @@
 --- Holographic Void: ScreenTitleMenu Overlay
 -- Rebuilt to focus only on custom cursor and jukebox shortcuts.
 
-local choiceNames = {"Start", "Multi", "ColorTheme", "PackDownloader", "Options", "Quit"}
+local choiceNames = {"Start", "Multi", "PackDownloader", "Options", "Quit"}
 
 local t = Def.ActorFrame {}
 
@@ -32,7 +32,7 @@ t[#t+1] = Def.ActorFrame {
 -- Menu Click Handler
 t[#t+1] = UIElements.QuadButton(1) .. {
 	InitCommand = function(self)
-		self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):zoomto(300, 240):diffusealpha(0)
+		self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):zoomto(300, 40 * #choiceNames):diffusealpha(0)
 	end,
 	MouseDownCommand = function(self, params)
 		if params.event == "DeviceButton_left mouse button" then

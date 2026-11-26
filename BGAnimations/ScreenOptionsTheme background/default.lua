@@ -29,14 +29,6 @@ t[#t + 1] = Def.Quad {
 	end
 }
 
-t[#t + 1] = Def.Actor {
-	ThemePrefChangedMessageCommand = function(self, params)
-		if params and params.Name == "HV_AccentColor" then
-			HVColor.RefreshAccent()
-		end
-	end
-}
-
 -- Load Shared Background Particles
 t[#t + 1] = LoadActor("../_particles.lua")
 

@@ -88,13 +88,6 @@ local t = Def.ActorFrame {
 	end,
 	UpdateSectionCommand = function(self) refreshSection(self, false) end,
 	HV_WheelScoresChangedMessageCommand = function(self) refreshSection(self, true) end,
-	ColorThemeChangedMessageCommand = function(self)
-		if not self.section then return end
-		local row = self:GetParent()
-		local title = row:GetChild(self:GetName():gsub("NormalPart$", ""))
-		if title then title:diffuse(HVColor.Accent) end
-		self:GetChild("BgAccent"):diffuse(HVColor.Accent)
-	end,
 	Def.Quad {
 		Name = "BgQuad",
 		InitCommand = function(self)

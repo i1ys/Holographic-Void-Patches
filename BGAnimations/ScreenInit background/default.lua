@@ -1,10 +1,6 @@
 --- Holographic Void: ScreenInit Background
 -- Modernized, sleek initialization screen with a holographic vibe.
 
-if HVColor and HVColor.RefreshAccent then
-	HVColor.RefreshAccent()
-end
-
 local t = Def.ActorFrame {
 	InitCommand = function(self)
 		if self.SortByDrawOrder then
