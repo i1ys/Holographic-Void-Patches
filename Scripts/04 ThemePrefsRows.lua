@@ -341,21 +341,4 @@ if MESSAGEMAN then
 	-- via the ThemePrefChangedMessageCommand on actors
 end
 
--- Auto-Fail / Restart Option Rows for ScreenPlayerOptions
-function OptionRowAutoFailMode()
-	return HV.OptionRow("HV_AutoFailMode", "Auto-Fail/Restart Action")
-end
-function OptionRowAutoFailCondition()
-	return HV.OptionRow("HV_AutoFailCondition", "Auto-Fail Condition")
-end
-function OptionRowAutoFailJudgement()
-	return HV.OptionRow("HV_AutoFailJudgement", "Judgement Criteria")
-end
-function OptionRowAutoFailThresholdWife()
-	return HV.OptionRow("HV_AutoFailThreshold_Wife", "Wife% Threshold")
-end
-function OptionRowAutoFailThresholdCount()
-	return HV.OptionRow("HV_AutoFailThreshold_Count", "Judgement Limit")
-end
-
 Trace("Holographic Void: 04 ThemePrefsRows.lua loaded.")

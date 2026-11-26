@@ -1515,16 +1515,7 @@ root[#root + 1] = Def.ActorFrame {
 
 			local bg = actor:GetChild("PeekSongBackground")
 			if bg and bg:GetVisible() then
-				local mx = INPUTFILTER:GetMouseX() or SCREEN_CENTER_X
-				local my = INPUTFILTER:GetMouseY() or SCREEN_CENTER_Y
-				local nx = (mx / SCREEN_WIDTH) - 0.5
-				local ny = (my / SCREEN_HEIGHT) - 0.5
-				local moveScale = 1 - actor.hv_holdLerp
-				local zoom = 1.10 + (0.12 * actor.hv_holdLerp)
-				bg:xy(
-					SCREEN_CENTER_X + (nx * 2 * 40 * moveScale),
-					SCREEN_CENTER_Y + (ny * 2 * 24 * moveScale)
-				)
+				local zoom = 1 + (0.22 * actor.hv_holdLerp)
 				bg:zoomto(SCREEN_WIDTH * zoom, SCREEN_HEIGHT * zoom)
 				bg:diffusealpha(actor.hv_holdLerp)
 			end
@@ -1579,7 +1570,7 @@ root[#root + 1] = Def.ActorFrame {
 		Name = "PeekSongBackground",
 		InitCommand = function(self)
 			self.lastPath = ""
-			self:diffusealpha(0)
+			self:Center():diffusealpha(0)
 		end
 	}
 }

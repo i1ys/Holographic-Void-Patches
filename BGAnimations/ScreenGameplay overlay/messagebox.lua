@@ -82,8 +82,6 @@ return Def.ActorFrame {
 				"a: "..transStr("LeaderboardPosition"),
 				"s: "..transStr("LeaderboardSize"),
 				"f: "..transStr("ReplayButtonPosition"),
-				"g: "..transStr("AutoFailPosition"),
-				"h: "..transStr("AutoFailSize"),
 				"x: "..transStr("BPMPosition"),
 				"c: "..transStr("BPMSize"),
 				"v: "..transStr("RatePosition"),

@@ -1,7 +1,6 @@
 local gameplay = ...
 local gameplayCoord = gameplay.gameplayCoord
 local gameplaySize = gameplay.gameplaySize
-local ThemePrefs = HV.LegacyPrefs
 local Config = HV.Config
 
 local function hideFallbackLifeBar()
@@ -68,8 +67,6 @@ return Def.ActorFrame {
 		HV.OnlineEvaluationActive = nil
 		HV.OnlineEvaluationName = nil
 		gameplay.failSoundPlayed = false
-		gameplay.autofailStopped = false
-		gameplay.autofailJudgments = { W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0 }
 		-- Re-check sync mode via SCREENMAN now that it's safer
 		local curScreen = SCREENMAN:GetTopScreen()
 		if curScreen and curScreen:GetName():find("Sync") then
@@ -97,27 +94,12 @@ return Def.ActorFrame {
 
 		HV.GameplaySessionValid = true
 
-		-- Properly initialize total chart points once song/steps are loaded
-		gameplay.maxPoints = (getMaxNotes(PLAYER_1) or 1) * 2
-		gameplay.pointsLost = 0
 		gameplay.judgeScale = PREFSMAN:GetPreference("TimingWindowScale") or 1.0
 		if HV.IsReplayPlayback and HV.IsReplayPlayback() and curScreen and curScreen.GetReplayScore then
 			local replayScore = curScreen:GetReplayScore(PLAYER_1)
 			if replayScore and type(replayScore.GetJudgeScale) == "function" then
 				local ok, scale = pcall(replayScore.GetJudgeScale, replayScore)
 				if ok and tonumber(scale) then gameplay.judgeScale = tonumber(scale) end
-			end
-		end
-
-		-- Initialize Auto-Fail Personal Best threshold if needed
-		local condition = ThemePrefs.Get("HV_AutoFailCondition")
-		if condition == "Personal Best" then
-			local best = GetDisplayScore()
-			if best then
-				gameplay.pbThreshold = getJ4NormalizedPercentage(best)
-			else
-				-- Fallback to Wife Percent threshold if no PB exists
-				gameplay.pbThreshold = tonumber(ThemePrefs.Get("HV_AutoFailThreshold_Wife")) or 93.00
 			end
 		end
 	end,
@@ -207,64 +189,6 @@ return Def.ActorFrame {
 		end
 	end,
 
-	-- Shared PointsLost Accumulator (Wife3 Adherent)
-	-- Fully compliant with Etterna's internal wife3 scoring and evaluation mechanics
-	JudgmentMessageCommand = function(self, params)
-		if params.Player ~= PLAYER_1 then return end
-		if gameplay.autofailStopped then return end
-
-		-- Exclude non-tap judgements that don't affect points
-		local s = params.TapNoteScore
-		if params.HoldNoteScore or not s or s == "TapNoteScore_None" or s == "TapNoteScore_AvoidMine" or
-		   s == "TapNoteScore_CheckpointHit" or s == "TapNoteScore_CheckpointMiss" then
-			return
-		end
-
-		if s == "TapNoteScore_HitMine" then
-			-- Match Etterna engine internal Wife3 rescoring logic (-350% weight = 7.0 points lost)
-			gameplay.pointsLost = gameplay.pointsLost + 7.0
-		elseif params.TapNoteOffset then
-			local offset = math.abs(params.TapNoteOffset) * 1000
-			local weight = wife3(offset, gameplay.judgeScale, "Wife3")
-			gameplay.pointsLost = gameplay.pointsLost + (2.0 - weight)
-		elseif s == "TapNoteScore_Miss" then
-			-- A full miss loses 7.5 points relative to the 2.0 potential max per tap (2.0 - (-5.5) = 7.5)
-			gameplay.pointsLost = gameplay.pointsLost + 7.5
-		end
-
-		if s == "TapNoteScore_W2" then
-			gameplay.autofailJudgments.W2 = gameplay.autofailJudgments.W2 + 1
-		elseif s == "TapNoteScore_W3" then
-			gameplay.autofailJudgments.W3 = gameplay.autofailJudgments.W3 + 1
-		elseif s == "TapNoteScore_W4" then
-			gameplay.autofailJudgments.W4 = gameplay.autofailJudgments.W4 + 1
-		elseif s == "TapNoteScore_W5" then
-			gameplay.autofailJudgments.W5 = gameplay.autofailJudgments.W5 + 1
-		elseif s == "TapNoteScore_Miss" then
-			gameplay.autofailJudgments.Miss = gameplay.autofailJudgments.Miss + 1
-		end
-
-		MESSAGEMAN:Broadcast("HV_PointsUpdate")
-	end,
-
-	HoldNoteScoreMessageCommand = function(self, params)
-		if params.Player ~= PLAYER_1 then return end
-		if gameplay.autofailStopped then return end
-		-- The engine applies the hold penalty even if the head was completely missed
-		if params.HoldNoteScore == "HoldNoteScore_LetGo" or params.HoldNoteScore == "HoldNoteScore_MissedHold" then
-			gameplay.pointsLost = gameplay.pointsLost + 4.5
-			MESSAGEMAN:Broadcast("HV_PointsUpdate")
-		end
-	end,
-
-	RollNoteScoreMessageCommand = function(self, params)
-		if params.Player ~= PLAYER_1 then return end
-		if gameplay.autofailStopped then return end
-		if params.RollNoteScore == "RollNoteScore_LetGo" or params.RollNoteScore == "RollNoteScore_MissedRoll" then
-			gameplay.pointsLost = gameplay.pointsLost + 4.5
-			MESSAGEMAN:Broadcast("HV_PointsUpdate")
-		end
-	end,
 	PlayingUpdateMessageCommand = function(self)
 		hideFallbackLifeBar()
 	end

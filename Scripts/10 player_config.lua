@@ -33,8 +33,6 @@ local defaultGameplayCoordinates = {
 	PracticeCDGraphY = 85,
 	BPMTextX = SCREEN_CENTER_X,
 	BPMTextY = SCREEN_BOTTOM - 20,
-	AutoFailDisplayX = 10,
-	AutoFailDisplayY = SCREEN_CENTER_Y + 40,
 	NotefieldX = 0,
 	NotefieldY = 0
 }
@@ -51,7 +49,6 @@ local defaultGameplaySizes = {
 	LeaderboardWidth = 1.0,
 	LeaderboardHeight = 1.0,
 	BPMTextZoom = 1.0,
-	AutoFailDisplayZoom = 1.0,
 	NotefieldWidth = 1.0,
 	NotefieldHeight = 1.0,
 	NotefieldSpacing = 0.0,

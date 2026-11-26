@@ -2,12 +2,7 @@ local loadingScreen = Var "LoadingScreen" or ""
 local gameplay = {
 	player = GAMESTATE:GetEnabledPlayers()[1] or PLAYER_1,
 	isSync = loadingScreen:find("Sync") ~= nil,
-	pointsLost = 0,
-	maxPoints = 1,
-	pbThreshold = 0,
 	judgeScale = 1.0,
-	autofailJudgments = { W2 = 0, W3 = 0, W4 = 0, W5 = 0, Miss = 0 },
-	autofailStopped = false,
 	failSoundPlayed = false,
 	accentColor = HVColor.Accent,
 	dimText = color("0.45,0.45,0.45,1"),

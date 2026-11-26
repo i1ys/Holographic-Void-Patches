@@ -26,7 +26,6 @@ t[#t + 1] = LoadActor("elements/toasty.lua", gameplay)
 if not gameplay.isSync then
 	if HV.ApplyLaneCoverModifiers then HV.ApplyLaneCoverModifiers() end
 	t[#t + 1] = LoadActor("scoretracking")
-	t[#t + 1] = LoadActor("elements/autofaildisplay.lua", gameplay)
 	t[#t + 1] = LoadActor("npscalc")
 	t[#t + 1] = LoadActor("leaderboard")
 	t[#t + 1] = LoadActor("avatar")
@@ -36,7 +35,6 @@ t[#t + 1] = LoadActor("intro")
 t[#t + 1] = LoadActor("messagebox")
 t[#t + 1] = LoadActor("elements/ngindicator.lua", gameplay)
 t[#t + 1] = LoadActor("elements/syncchallenge.lua", gameplay)
-t[#t + 1] = LoadActor("elements/autofail.lua", gameplay)
 t[#t + 1] = LoadActor("elements/nowplaying.lua")
 
 return t

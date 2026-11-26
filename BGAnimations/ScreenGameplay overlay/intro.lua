@@ -249,71 +249,30 @@ t[#t+1] = LoadFont("Common Normal") .. {
 }
 
 -- ============================================================
--- TARGET GOAL & AUTO-FAIL DISPLAY (above banner)
+-- TARGET GOAL (above banner)
 -- ============================================================
 t[#t+1] = Def.ActorFrame{
 	Name = "IntroBannerExtra",
 	CurrentSongChangedMessageCommand = function(self)
-		local targetActor = self:GetChild("TargetGoal")
-		local failActor = self:GetChild("AutoFail")
-		local bg = self:GetChild("ExtraBG")
-		
-		-- Target Goal
-		local showGoal = ThemePrefs.Get("HV_ShowGoalTracker")
-		if showGoal then
-			local pacemakerMode = ThemePrefs.Get("HV_PacemakerTargetType") or "Target"
-			if pacemakerMode == "PB" or pacemakerMode == "PBReplay" then
-				local best = GetDisplayScore()
-				if best then
-					targetActor:settext("Target: PB " .. formatIntroPercent(getJ4NormalizedPercentage(best)))
-				else
-					local goal = ThemePrefs.Get("HV_PacemakerTargetGoal") or 93
-					targetActor:settext("Target: " .. formatIntroPercent(goal))
-				end
-			else
-				local goal = ThemePrefs.Get("HV_PacemakerTargetGoal") or 93
-				targetActor:settext("Target: " .. formatIntroPercent(goal))
-			end
-			targetActor:visible(true)
-		else
-			targetActor:visible(false)
-		end
-		
-		-- Auto-Fail
-		local failMode = ThemePrefs.Get("HV_AutoFailMode")
-		local hasFail = not GAMESTATE:IsPracticeMode() and failMode and failMode ~= "Off"
-		if hasFail then
-			local condition = ThemePrefs.Get("HV_AutoFailCondition")
-			local threshold = ""
-			if condition == "Wife Percent" or condition == "Sync to Goal" then
-				local goal = condition == "Sync to Goal" and (tonumber(ThemePrefs.Get("HV_PacemakerTargetGoal")) or 93) or (ThemePrefs.Get("HV_AutoFailThreshold_Wife") or 93)
-				threshold = (condition == "Sync to Goal" and "Goal < " or "< ") .. formatIntroPercent(goal)
-			elseif condition == "Judgement Count" then
-				local judge = ThemePrefs.Get("HV_AutoFailJudgement") or "Miss"
-				local judgeName = THEME:GetString("TapNoteScore", judge)
-				threshold = string.format("> %d %s", ThemePrefs.Get("HV_AutoFailThreshold_Count") or 10, judgeName)
-			elseif condition == "Personal Best" then
-				local best = GetDisplayScore()
-				local pbStr = ""
-				if best then
-					pbStr = " (" .. formatIntroPercent(getJ4NormalizedPercentage(best)) .. ")"
-				end
-				threshold = "PB" .. pbStr
-			end
-			failActor:settext(string.format("Auto-Fail: %s (%s)", failMode, threshold))
-			failActor:visible(true)
-		else
-			failActor:visible(false)
-		end
+		local showGoal = ThemePrefs.Get("HV_ShowGoalTracker") == true
+		self:visible(showGoal)
+		if not showGoal then return end
 
-		-- Background visibility
-		bg:visible(showGoal or hasFail)
+		local mode = ThemePrefs.Get("HV_PacemakerTargetType")
+		local best = (mode == "PB" or mode == "PBReplay") and GetDisplayScore()
+		local target = self:GetChild("TargetGoal")
+		if best then
+			target:settext("Target: PB " .. formatIntroPercent(getJ4NormalizedPercentage(best)))
+		else
+			local goal = ThemePrefs.Get("HV_PacemakerTargetGoal") or 93
+			target:settext("Target: " .. formatIntroPercent(goal))
+		end
 	end,
 
 	Def.Quad{
 		Name = "ExtraBG",
 		InitCommand = function(self)
-			self:y(-48):zoomto(totalW + 20, 26)
+			self:y(-42):zoomto(totalW + 20, 14)
 			self:diffuse(color("#000000")):diffusealpha(0.5)
 			self:fadeleft(0.4):faderight(0.4)
 		end
@@ -326,13 +285,6 @@ t[#t+1] = Def.ActorFrame{
 			self:shadowlength(1):shadowcolor(color("0,0,0,0.5"))
 		end
 	},
-	LoadFont("Common Normal") .. {
-		Name = "AutoFail",
-		InitCommand = function(self)
-			self:y(-54):zoom(0.35):diffuse(color("#FF8888")):diffusealpha(0.8)
-			self:shadowlength(1):shadowcolor(color("0,0,0,0.5"))
-		end
-	}
 }
 
 return t

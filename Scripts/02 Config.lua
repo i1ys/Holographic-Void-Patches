@@ -130,6 +130,13 @@ function Config.NormalizePreference(definition, value)
 end
 
 local function normalizeTheme(data)
+	-- Drop retired keys the next time HV2 saves its settings.
+	data.HV_Parallax = nil
+	data.HV_AutoFailMode = nil
+	data.HV_AutoFailCondition = nil
+	data.HV_AutoFailJudgement = nil
+	data.HV_AutoFailThreshold_Wife = nil
+	data.HV_AutoFailThreshold_Count = nil
 	for key, definition in pairs(themeDefinitions) do
 		local value = Config.NormalizePreference(definition, data[key])
 		if value == nil then
