@@ -19,7 +19,7 @@ t[#t + 1] = Def.Sprite {
 	Name = "SongBackground",
 	InitCommand = function(self)
 		self:Center():zoomto(SCREEN_WIDTH * parallaxZoom, SCREEN_HEIGHT * parallaxZoom)
-			:diffusealpha(0)
+			:diffusealpha(0):visible(false)
 		self.hv_curX = SCREEN_CENTER_X
 		self.hv_curY = SCREEN_CENTER_Y
 		self.hv_targetX = SCREEN_CENTER_X
@@ -28,11 +28,13 @@ t[#t + 1] = Def.Sprite {
 		self.hv_holdTarget = 0
 	end,
 	OnCommand = function(self)
-		self:playcommand("Set")
 		self:stoptweening()
 		self:queuecommand("ParallaxTick")
 	end,
 	CurrentSongChangedMessageCommand = function(self)
+		self:visible(false)
+	end,
+	HV_SelectionDetailsReadyMessageCommand = function(self)
 		self:playcommand("Set")
 	end,
 	OffCommand = function(self)
@@ -72,18 +74,19 @@ t[#t + 1] = Def.Sprite {
 	end,
 	SetCommand = function(self)
 		local song = GAMESTATE:GetCurrentSong()
-		-- Always load the texture when a song provides one.  BGBrightness is
-		-- applied through alpha below, so 0% keeps it hidden without preventing
-		-- mouse-hold zoom from revealing it.
-		if song and song:GetBackgroundPath() then
-			self:visible(true):Load(song:GetBackgroundPath())
-			self:zoomto(SCREEN_WIDTH * parallaxZoom, SCREEN_HEIGHT * parallaxZoom)
-			local brightness = HV.GetSongBackgroundBrightness()
-			local boosted = brightness + ((1 - brightness) * self.hv_holdLerp)
-			self:diffusealpha(boosted)
-		else
-			self:diffusealpha(0)
+		local brightness = HV.GetSongBackgroundBrightness()
+		local path = brightness > 0 and song and song:GetBackgroundPath()
+		if not path or path == "" then
+			self:visible(false)
+			return
 		end
+		if path ~= self.lastPath then
+			self:Load(path)
+			self.lastPath = path
+			self:zoomto(SCREEN_WIDTH * parallaxZoom, SCREEN_HEIGHT * parallaxZoom)
+		end
+		local boosted = brightness + ((1 - brightness) * self.hv_holdLerp)
+		self:diffusealpha(boosted):visible(true)
 	end
 }
 

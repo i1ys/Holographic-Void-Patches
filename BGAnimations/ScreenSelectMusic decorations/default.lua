@@ -430,7 +430,7 @@ local function GetCurrentBannerPath()
 end
 
 local function GetCurrentSongBackgroundPath()
-	local song = (selection and selection.song) or GAMESTATE:GetCurrentSong()
+	local song = GAMESTATE:GetCurrentSong()
 	if song and song.GetBackgroundPath then
 		local bgPath = song:GetBackgroundPath()
 		if bgPath and bgPath ~= "" then
@@ -1789,12 +1789,16 @@ root[#root + 1] = Def.ActorFrame {
 		local allowed = held and HV.LeftMousePeekHoldAllowed == true
 		self.hv_holdTarget = allowed and 1 or 0
 		if allowed then
-			self:playcommand("UpdateBanner")
+			self:playcommand("UpdateBackground")
 		end
 	end,
-	UpdateBannerCommand = function(self)
+	UpdateBackgroundCommand = function(self)
 		local bg = self:GetChild("PeekSongBackground")
-		if not bg then return end
+		local wheel = getNativeWheel()
+		if wheel and not wheel:IsSettled() then
+			bg:visible(false)
+			return
+		end
 		local bgPath = GetCurrentSongBackgroundPath()
 		if not bgPath then
 			bg:visible(false)
@@ -1812,13 +1816,11 @@ root[#root + 1] = Def.ActorFrame {
 		self:playcommand("Set")
 	end,
 	CurrentSongChangedMessageCommand = function(self)
-		if self:GetVisible() then
-			self:playcommand("UpdateBanner")
-		end
+		self:GetChild("PeekSongBackground"):visible(false)
 	end,
 	HV_SelectionDetailsReadyMessageCommand = function(self)
-		if self:GetVisible() then
-			self:playcommand("UpdateBanner")
+		if self.hv_holdTarget == 1 then
+			self:playcommand("UpdateBackground")
 		end
 	end,
 	Def.Quad {
