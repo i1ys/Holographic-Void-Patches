@@ -1,5 +1,3 @@
-local ThemePrefs = HV.LegacyPrefs
-
 --- Holographic Void: Etterna Utility Functions
 -- Consolidates grade calculation, clear types, score retrieval,
 -- rate management, timing stats, and judge rescoring.
@@ -70,88 +68,13 @@ function changeMusicRate(amount)
 end
 
 ------------------------------------------------------------
--- GRADE CALCULATION & CUSTOM NAMES
+-- GRADE CALCULATION & LABELS
 ------------------------------------------------------------
-local function trimGradeLabel(s)
-	if type(s) ~= "string" then return "" end
-	local out, count, i = "", 0, 1
-	while i <= #s and count < 5 do
-		local c = s:byte(i)
-		local n = (c < 128 and 1) or (c < 224 and 2) or (c < 240 and 3) or 4
-		out = out .. s:sub(i, i + n - 1)
-		i = i + n
-		count = count + 1
-	end
-	return out
-end
-
-local gradeDefaults = {}
-do
-	local ok, data = pcall(dofile, "Scripts/CustomGrades.lua")
-	if ok and type(data) == "table" then gradeDefaults = data end
-end
-if next(gradeDefaults) == nil then
-	local fallback = {"AAAAA", "AAAA:", "AAAA.", "AAAA", "AAA:", "AAA.", "AAA", "AA:", "AA.", "AA", "A:", "A.", "A", "B", "C", "D"}
-	for i, value in ipairs(fallback) do gradeDefaults[string.format("Grade_Tier%02d", i)] = value end
-	gradeDefaults.Grade_Tier17, gradeDefaults.Grade_Failed, gradeDefaults.Grade_None = "Grade_Tier17", "F", "None"
-end
-local gradeConfigPath = HV.Config.SaveDirectory .. "/CustomGrades.lua"
-local gradeConfig = nil
-if FILEMAN:DoesFileExist(gradeConfigPath) then
-	local f = RageFileUtil.CreateRageFile()
-	if f:Open(gradeConfigPath, 1) then
-		local chunk = loadstring(f:Read())
-		if chunk then local ok, data = pcall(chunk); if ok and type(data) == "table" then gradeConfig = data end end
-		f:Close()
-	end
-	f:destroy()
-end
-HV.CustomGrades = {}
-for key, value in pairs(gradeDefaults) do HV.CustomGrades[key] = trimGradeLabel((gradeConfig and gradeConfig[key]) or value) end
-function HV.GetTitleChoiceNames()
-	local names = "Start,Multi,ColorTheme,PackDownloader,Options,Quit"
-	local enabled = ThemePrefs.Get("HV_UseCustomGrades")
-	if enabled == true or enabled == "true" then names = names .. ",CustomGrades" end
-	return names
-end
-
-function HV.SaveCustomGrades()
-	if FILEMAN.CreateDir then FILEMAN:CreateDir(HV.Config.SaveDirectory) end
-	local f = RageFileUtil.CreateRageFile()
-	if f:Open(gradeConfigPath, 2) then
-		local out = "return {\n"
-		for key, value in pairs(HV.CustomGrades) do out = out .. string.format("\t[%q] = %q,\n", key, trimGradeLabel(value)) end
-		f:Write(out .. "}\n"); f:Close()
-	end
-	f:destroy()
-end
-
 function HV.GetGradeName(grade)
 	if not grade then return "" end
-	-- Safely extract the short name (e.g. "Tier01", "Failed")
-	-- grade may be "Grade_Tier09" (full enum) or "Tier09" (already short)
-	local s = grade:gsub("^Grade_", "")
-	local key = "Grade_" .. s
-
-	local pref = ThemePrefs.Get("HV_UseCustomGrades")
-	if (pref == "true" or pref == true) and HV.CustomGrades[key] then
-		return HV.CustomGrades[key]
-	end
-
-	-- Safe fallback for THEME:GetString
-	if THEME:HasString("Grade", s) then
-		return THEME:GetString("Grade", s)
-	end
-
-	-- Manual fallback mapping if THEME:HasString is somehow unreliable or missing
-	local fallbacks = {
-		Tier01 = "AAAAA", Tier02 = "AAAA:", Tier03 = "AAAA.", Tier04 = "AAAA",
-		Tier05 = "AAA:", Tier06 = "AAA.", Tier07 = "AAA", Tier08 = "AA:",
-		Tier09 = "AA.", Tier10 = "AA", Tier11 = "A:", Tier12 = "A.",
-		Tier13 = "A", Tier14 = "B", Tier15 = "C", Tier16 = "D",
-		Failed = "F", None = "None"
-	}
-	return fallbacks[s] or s
+	local key = grade:gsub("^Grade_", "")
+	if THEME:HasString("Grade", key) then return THEME:GetString("Grade", key) end
+	return key
 end
 
 WifeTiers = {

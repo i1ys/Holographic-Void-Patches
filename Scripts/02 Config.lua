@@ -137,6 +137,7 @@ local function normalizeTheme(data)
 	data.HV_AutoFailJudgement = nil
 	data.HV_AutoFailThreshold_Wife = nil
 	data.HV_AutoFailThreshold_Count = nil
+	data.HV_UseCustomGrades = nil
 	for key, definition in pairs(themeDefinitions) do
 		local value = Config.NormalizePreference(definition, data[key])
 		if value == nil then

@@ -252,13 +252,6 @@ local HVPrefs = {
 	HV_Username = { Default = "" },
 	HV_PasswordToken = { Default = "" },
 
-	-- Custom Grades
-	HV_UseCustomGrades = {
-		Default = false,
-		Choices = {"Off", "On"},
-		Values = {false, true}
-	},
-
 	-- Visual: Grade Coloring Style
 	HV_GradeColorStyle = {
 		Default = "Holographic",
