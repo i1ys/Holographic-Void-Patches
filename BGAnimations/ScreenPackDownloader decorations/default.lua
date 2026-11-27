@@ -100,19 +100,8 @@ local function isPackInstalled(pack)
 	return SONGMAN:DoesSongGroupExist(pack:GetName())
 end
 
--- Check the active download list separately from the queued state. A pack is
--- removed from the queue once its download starts, so IsQueued() alone is not
--- enough to describe its current status.
 local function isPackDownloading(pack)
-	if not pack then return false end
-	local downloadingPacks = DLMAN:GetDownloadingPacks()
-	if not downloadingPacks then return false end
-	for _, downloadingPack in ipairs(downloadingPacks) do
-		if downloadingPack:GetName() == pack:GetName() then
-			return true
-		end
-	end
-	return false
+	return pack ~= nil and pack:GetDownload() ~= nil
 end
 
 -- ============================================================
@@ -314,83 +303,54 @@ t[#t + 1] = Def.ActorFrame {
 -- ============================================================
 -- DOWNLOAD STATUS
 -- ============================================================
+local function cancelButton(name, offset, label, enabledColor)
+	return Def.ActorFrame {
+		Name = name,
+		InitCommand = function(self) self:x(offset) end,
+		SetEnabledCommand = function(self, params)
+			local enabled = params.enabled
+			self:GetChild("BG"):diffusealpha(enabled and 0.8 or 0.2)
+			self:GetChild("Label"):diffuse(enabled and enabledColor or dimText)
+		end,
+		Def.Quad {
+			Name = "BG",
+			InitCommand = function(self)
+				self:zoomto(80, 20):diffuse(color("0.15,0.05,0.05,0.2"))
+			end
+		},
+		LoadFont("Common Normal") .. {
+			Name = "Label",
+			InitCommand = function(self)
+				self:zoom(0.24):settext(label):diffuse(dimText)
+			end
+		}
+	}
+end
+
 t[#t + 1] = Def.ActorFrame {
 	Name = "DownloadStatusBar",
 	InitCommand = function(self) self:xy(SCREEN_WIDTH * 0.92, searchBarY) end,
-
-	-- Cancel Current Button
-	Def.ActorFrame {
-		Name = "CancelCurrent",
-		InitCommand = function(self) self:x(-120) end,
-		Def.Quad {
-			Name = "BG",
-			InitCommand = function(self)
-				self:zoomto(80, 20):diffuse(color("0.15,0.05,0.05,0.8"))
-			end,
-			UpdateCommand = function(self)
-				local dls = DLMAN:GetDownloads()
-				if dls and #dls > 0 then
-					self:diffusealpha(0.8)
-				else
-					self:diffusealpha(0.2)
-				end
-			end
-		},
-		LoadFont("Common Normal") .. {
-			InitCommand = function(self)
-				self:zoom(0.24):settext("CANCEL CUR"):diffuse(mainText)
-			end,
-			UpdateCommand = function(self)
-				local dls = DLMAN:GetDownloads()
-				if dls and #dls > 0 then
-					self:diffuse(color("1,0.5,0.5,1"))
-				else
-					self:diffuse(dimText)
-				end
-			end
-		}
-	},
-
-	-- Cancel All Button
-	Def.ActorFrame {
-		Name = "CancelAll",
-		InitCommand = function(self) self:x(-30) end,
-		Def.Quad {
-			Name = "BG",
-			InitCommand = function(self)
-				self:zoomto(80, 20):diffuse(color("0.15,0.05,0.05,0.8"))
-			end,
-			UpdateCommand = function(self)
-				local queued = DLMAN:GetQueuedPacks()
-				local dls = DLMAN:GetDownloads()
-				if (queued and #queued > 0) or (dls and #dls > 0) then
-					self:diffusealpha(0.8)
-				else
-					self:diffusealpha(0.2)
-				end
-			end
-		},
-		LoadFont("Common Normal") .. {
-			InitCommand = function(self)
-				self:zoom(0.24):settext("CANCEL ALL"):diffuse(mainText)
-			end,
-			UpdateCommand = function(self)
-				local queued = DLMAN:GetQueuedPacks()
-				local dls = DLMAN:GetDownloads()
-				if (queued and #queued > 0) or (dls and #dls > 0) then
-					self:diffuse(color("1,0.2,0.2,1"))
-				else
-					self:diffuse(dimText)
-				end
-			end
-		}
-	},
-
 	OnCommand = function(self)
+		local currentButton = self:GetChild("CancelCurrent")
+		local allButton = self:GetChild("CancelAll")
+		local currentEnabled, allEnabled
 		self:SetUpdateFunction(function()
-			self:playcommand("Update")
+			local status = HV.DownloadStatus
+			local canCancelCurrent = status ~= nil and status.current ~= nil
+			local canCancelAll = status ~= nil and status.hasWork == true
+			if currentEnabled ~= canCancelCurrent then
+				currentEnabled = canCancelCurrent
+				currentButton:playcommand("SetEnabled", {enabled = currentEnabled})
+			end
+			if allEnabled ~= canCancelAll then
+				allEnabled = canCancelAll
+				allButton:playcommand("SetEnabled", {enabled = allEnabled})
+			end
 		end)
-	end
+	end,
+	OffCommand = function(self) self:SetUpdateFunction(nil) end,
+	cancelButton("CancelCurrent", -120, "CANCEL CUR", color("1,0.5,0.5,1")),
+	cancelButton("CancelAll", -30, "CANCEL ALL", color("1,0.2,0.2,1")),
 }
 
 -- ============================================================
@@ -954,12 +914,16 @@ t[#t + 1] = Def.ActorFrame {
 t[#t + 1] = Def.ActorFrame {
 	Name = "InputHandler",
 	BeginCommand = function(self)
+		local owner = SCREENMAN:GetTopScreen()
+		if not owner or self.inputCallback then return end
+
 		-- Initial search: show all packs
 		packList:FilterAndSearch("", {}, true, packsPerPage)
 		self:GetParent():GetChild("LoadingText"):playcommand("ShowLoading")
 
 		local inputCallback = function(event)
-			if event.type == "InputEventType_Release" then return end
+			if SCREENMAN:GetTopScreen() ~= owner or owner:IsTransitioning()
+				or event.type == "InputEventType_Release" or not event.DeviceInput then return false end
 
 			local btn = event.DeviceInput.button
 			local gameBtn = event.button
@@ -1088,29 +1052,35 @@ t[#t + 1] = Def.ActorFrame {
 				-- Check if click is on Cancel Current
 				local ccX = SCREEN_WIDTH * 0.92 - 120
 				if mx >= ccX - 40 and mx <= ccX + 40 and my >= searchBarY - 10 and my <= searchBarY + 10 then
-					local dls = DLMAN:GetDownloads()
-					if dls and dls[1] then
-						dls[1]:Stop()
+					if event.type == "InputEventType_FirstPress" then
+						local displayed = HV.DownloadStatus and HV.DownloadStatus.current
+						if displayed then
+							-- The manager may have finished the displayed transfer since the last draw.
+							for _, download in ipairs(DLMAN:GetDownloads()) do
+								if download == displayed then
+									download:Stop()
+									break
+								end
+							end
+						end
 					end
-					return
+					return true
 				end
 
 				-- Check if click is on Cancel All
 				local caX = SCREEN_WIDTH * 0.92 - 30
 				if mx >= caX - 40 and mx <= caX + 40 and my >= searchBarY - 10 and my <= searchBarY + 10 then
-					for _, p in ipairs(DLMAN:GetQueuedPacks()) do
-						p:RemoveFromQueue()
+					if event.type == "InputEventType_FirstPress" then
+						for _, pack in ipairs(DLMAN:GetQueuedPacks()) do
+							pack:RemoveFromQueue()
+						end
+						for _, download in ipairs(DLMAN:GetDownloads()) do
+							download:Stop()
+						end
 					end
-					for _, p in ipairs(DLMAN:GetDownloads()) do
-						p:Stop()
-					end
-					for _, p in ipairs(DLMAN:GetDownloadingPacks()) do
-						local dl = p:GetDownload()
-						if dl then dl:Stop() end
-					end
-					return
+					return true
 				end
-				
+
 				-- Check if click is on the search bar
 				local sbX = SCREEN_WIDTH * 0.28
 				local sbW = searchBarW
@@ -1213,18 +1183,15 @@ t[#t + 1] = Def.ActorFrame {
 			end
 		end
 
-		SCREENMAN:GetTopScreen():AddInputCallback(inputCallback)
-
-		-- Store callback reference for cleanup
-		self.inputCallback = inputCallback
-
+		owner:AddInputCallback(inputCallback)
+		self.inputScreen, self.inputCallback = owner, inputCallback
 		self:GetParent():GetChild("SearchBar"):playcommand("UpdateSearch")
 	end,
 
 	OffCommand = function(self)
-		-- Remove input callback when screen exits to prevent crash
 		if self.inputCallback then
-			SCREENMAN:GetTopScreen():RemoveInputCallback(self.inputCallback)
+			self.inputScreen:RemoveInputCallback(self.inputCallback)
+			self.inputScreen, self.inputCallback = nil, nil
 		end
 	end,
 

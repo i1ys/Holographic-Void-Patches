@@ -17,6 +17,7 @@ local queueRowH = 18           -- height per queued pack row
 local maxQueueDisplay = 50     -- max queued items to show
 local hoverZoneH = 28          -- hitbox height at screen bottom for hover detection
 local panelPadding = 8
+local downloadStatus = {}
 
 local t = Def.ActorFrame {
 	Name = "DownloadOverlay",
@@ -152,6 +153,7 @@ t[#t + 1] = queuePanel
 -- MAIN UPDATE FUNCTION
 -- ============================================================
 t.OnCommand = function(self)
+	HV.DownloadStatus = downloadStatus
 	local bg = self:GetChild("BG")
 	local bar = self:GetChild("BarFill")
 	local status = self:GetChild("StatusText")
@@ -187,12 +189,19 @@ t.OnCommand = function(self)
 		local screenName = screen and screen:GetName() or ""
 		local isGameplay = screenName:find("Gameplay") ~= nil
 		
-		local dls = DLMAN:GetDownloads()
-		local queued = DLMAN:GetQueuedPacks()
-		local hasDL = dls and #dls > 0
-		local hasQueued = queued and #queued > 0
+		local currentDownload, queued
+		if not isGameplay then
+			currentDownload = DLMAN:GetDownloads()[1]
+			queued = DLMAN:GetQueuedPacks()
+		end
+		local queueCount = queued and #queued or 0
+		local hasDL = currentDownload ~= nil
+		local hasQueued = queueCount > 0
 		local hasLocalLoad = localLoadActive and localLoadText ~= ""
 		local shouldShow = (hasDL or hasQueued or hasLocalLoad) and not isGameplay
+
+		downloadStatus.current = currentDownload
+		downloadStatus.hasWork = hasDL or hasQueued
 
 		-- Show/hide the compact bar
 		if shouldShow and not wasVisible then
@@ -215,24 +224,23 @@ t.OnCommand = function(self)
 
 		if not shouldShow then return end
 
-		-- Update compact bar
+		-- Pack order and transfer order are independent in the native manager.
+		local dlPacks = hasDL and DLMAN:GetDownloadingPacks() or {}
 		if hasDL then
-			local dl = dls[1]
+			local dl = currentDownload
 			local dlKB = dl:GetKBDownloaded() / 1024
 			local totalKB = dl:GetTotalKB() / 1024
 			local kbsec = dl:GetKBPerSecond()
-			local percent = 0
-			if totalKB > 0 then
-				percent = dlKB / totalKB
-			end
+			local percent = totalKB > 0 and math.max(0, math.min(1, dlKB / totalKB)) or 0
 
-			local dlPacks = DLMAN:GetDownloadingPacks()
 			local packName = "pack"
-			if dlPacks and #dlPacks > 0 then
-				packName = dlPacks[1]:GetName()
+			for _, pack in ipairs(dlPacks) do
+				if pack:GetDownload() == dl then
+					packName = pack:GetName()
+					break
+				end
 			end
 
-			local queueCount = queued and #queued or 0
 			if queueCount > 0 then
 				status:settextf(THEME:GetString("DownloadOverlay", "DownloadingQueuedFormatted"),
 					packName, dlKB, totalKB, kbsec, queueCount)
@@ -282,7 +290,6 @@ t.OnCommand = function(self)
 		local hoverTarget = SCREEN_BOTTOM - hoverZoneH
 		-- If expanded, extend hover zone to cover the full panel
 		local panelH = 0
-		local queueCount = queued and #queued or 0
 		local displayCount = math.min(queueCount, maxQueueDisplay)
 
 		if isExpanded then
@@ -313,11 +320,8 @@ t.OnCommand = function(self)
 		if isExpanded then
 			-- Build the full list: downloading packs first, then queued
 			local allItems = {}
-			local dlPacks = DLMAN:GetDownloadingPacks()
-			if dlPacks then
-				for _, p in ipairs(dlPacks) do
-					allItems[#allItems + 1] = { name = p:GetName(), status = THEME:GetString("DownloadOverlay", "StatusDownloading") }
-				end
+			for _, pack in ipairs(dlPacks) do
+				allItems[#allItems + 1] = { name = pack:GetName(), status = THEME:GetString("DownloadOverlay", "StatusDownloading") }
 			end
 			if queued then
 				for _, p in ipairs(queued) do
@@ -353,6 +357,11 @@ t.OnCommand = function(self)
 			end
 		end
 	end)
+end
+
+t.OffCommand = function(self)
+	self:SetUpdateFunction(nil)
+	if HV.DownloadStatus == downloadStatus then HV.DownloadStatus = nil end
 end
 
 -- HidePanel command used after collapse animation
