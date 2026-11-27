@@ -230,10 +230,6 @@ return Def.ActorFrame {
 			self:halign(0):valign(0):y(52):zoom(0.40):diffuse(mainText)
 		end,
 		SetCommand = function(self)
-			if not HV.ShowMSD() then
-				self:settext("")
-				return
-			end
 			local ssr = selection.pbSSR
 			if ssr and ssr > 0 then
 				self:settext(string.format("%.2f", ssr))

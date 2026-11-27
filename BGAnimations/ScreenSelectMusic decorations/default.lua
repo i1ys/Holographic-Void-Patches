@@ -842,8 +842,6 @@ t[#t + 1] = Def.ActorFrame {
 	Name = "MSDFrame",
 	InitCommand = function(self)
 		self:xy(panelX + 16, msdY)
-		local show = ThemePrefs.Get("HV_ShowMSD")
-		self:visible(show == "true" or show == true)
 	end,
 
 	LoadFont("Common Normal") .. {
@@ -867,8 +865,6 @@ t[#t + 1] = Def.ActorFrame {
 	Name = "MSDRow_Overall",
 	InitCommand = function(self)
 		self:xy(panelX + 16, msdY + 18)
-		local show = ThemePrefs.Get("HV_ShowMSD")
-		self:visible(show == "true" or show == true)
 	end,
 
 	LoadFont("Common Large") .. {
@@ -1055,7 +1051,7 @@ t[#t + 1] = Def.ActorFrame {
 			-- The label is at msdY and the number is at msdY + 18 with zoom ~0.45.
 			-- The text height is around 40px, so 18 + 40 = 58.
 			local isHovering = IsMouseOver(panelX + 10, msdY + 14, 120, 48)
-			if isHovering and HV.ShowMSD() then
+			if isHovering then
 				local mx, my = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
 				local wasHidden = not msdTooltipActor:GetVisible()
 				msdTooltipActor:visible(true):xy(mx + 5, my - 15)
@@ -1272,9 +1268,7 @@ t[#t + 1] = Def.ActorFrame {
 			self:stoptweening():linear(self.transitionDuration * 0.5):diffusealpha(1)
 		end,
 		SetCommand = function(self)
-			local showProfileStats = HV.ShowProfileStats()
-			local showMSD = HV.ShowMSD()
-			if not (showProfileStats == "true" or showProfileStats == true) or not showMSD then
+			if not HV.ShowProfileStats() then
 				self:settext("")
 				return
 			end

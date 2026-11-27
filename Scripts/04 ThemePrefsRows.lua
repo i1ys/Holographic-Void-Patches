@@ -114,10 +114,6 @@ function OptionRowSongSelectBGM()
 end
 _G["OptionRowSongSelectBGM"] = OptionRowSongSelectBGM
 
-function OptionRowShowMSD()
-	return HV.OptionRow("HV_ShowMSD", "Show MSD Ratings")
-end
-
 function OptionRowShowProfileStats()
 	return HV.OptionRow("HV_ShowProfileStats", "Show Profile Stats")
 end

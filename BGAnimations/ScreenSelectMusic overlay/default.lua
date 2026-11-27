@@ -1283,7 +1283,6 @@ local profileOverlay = Def.ActorFrame {
 				Name = "Rating",
 				InitCommand = function(self) self:y(54):zoom(0.55):diffuse(accentColor) end,
 				UpdateOverlaySkillsetsMessageCommand = function(self)
-					if not HV.ShowMSD() then self:visible(false); return end
 					local val = 0
 					local prof = PROFILEMAN:GetProfile(PLAYER_1)
 					if DLMAN:IsLoggedIn() and profileOverlayActor.isOnlineMode then 
@@ -1329,7 +1328,7 @@ local profileOverlay = Def.ActorFrame {
 						Name = "Rank",
 						InitCommand = function(self) self:halign(1):x(profileSidebarW/2 - 20):y(-6):zoom(0.3):diffuse(subText):visible(false) end,
 						UpdateOverlaySkillsetsMessageCommand = function(self)
-							if not HV.ShowMSD() or not DLMAN:IsLoggedIn() or not profileOverlayActor.isOnlineMode then
+							if not DLMAN:IsLoggedIn() or not profileOverlayActor.isOnlineMode then
 								self:visible(false)
 								return
 							end
@@ -1345,7 +1344,6 @@ local profileOverlay = Def.ActorFrame {
 						Name = "Val",
 						InitCommand = function(self) self:halign(1):x(profileSidebarW/2 - 20):y(0):zoom(0.4):diffuse(mainText) end,
 						UpdateOverlaySkillsetsMessageCommand = function(self)
-							if not HV.ShowMSD() then self:visible(false); return end
 							self:y(profileOverlayActor.isOnlineMode and 6 or 0)
 							local val = 0
 							local prof = PROFILEMAN:GetProfile(PLAYER_1)
@@ -1710,7 +1708,11 @@ local profileOverlay = Def.ActorFrame {
 				end
 				
 				local ssrLabel = row:GetChild("SSR")
-				ssrLabel:settext(string.format("%.2f", ssr)):diffuse(HVColor.GetMSDRatingColor(ssr)):visible(HV.ShowMSD())
+				if ssr and ssr > 0 then
+					ssrLabel:settextf("%.2f", ssr):diffuse(HVColor.GetMSDRatingColor(ssr))
+				else
+					ssrLabel:settext("-"):diffuse(subText)
+				end
 				row:GetChild("Title"):settext(title)
 				row:GetChild("Details"):settext(string.format("%s · %.2fx · %s", diff, rate, date))
 				

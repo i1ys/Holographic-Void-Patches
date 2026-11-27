@@ -419,7 +419,6 @@ t[#t + 1] = Def.ActorFrame {
 	LoadFont("Common Normal") .. {
 		InitCommand = function(self)
 			self:halign(1):x(colAvgX):zoom(0.24):diffuse(dimText):settext("AVG MSD")
-			if not HV.ShowMSD() then self:visible(false) end
 		end
 	},
 	LoadFont("Common Normal") .. {
@@ -585,10 +584,6 @@ for i = 1, packsPerPage do
 					:zoom(0.38):diffuse(subText)
 			end,
 			["UpdateRow" .. i .. "Command"] = function(self)
-				if not HV.ShowMSD() then
-					self:visible(false)
-					return
-				end
 				local pack = currentPacks[i]
 				if pack then
 					local avg = pack:GetAvgDifficulty()
@@ -601,7 +596,7 @@ for i = 1, packsPerPage do
 						self:settext("-")
 						self:diffuse(subText)
 					end
-					self:visible(HV.ShowMSD())
+					self:visible(true)
 				else
 					self:visible(false)
 				end

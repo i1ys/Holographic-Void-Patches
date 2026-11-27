@@ -15,20 +15,13 @@ local function matchingChart(song, stepsType, difficulty, filtered)
 	return best
 end
 
-local function updateRating(self, rate, showMSD)
+local function updateRating(self, rate)
 	local rating = self:GetChild("MSDDisplay")
-	local chart = self.chart
-	if not chart then
-		rating:settext("")
-	elseif showMSD then
-		local msd = chart:GetMSD(rate, 1)
-		if msd > 0 then
-			rating:settextf("%.2f", msd):diffuse(HVColor.GetMSDRatingColor(msd))
-		else
-			rating:settext("-"):diffuse(dim)
-		end
+	local msd = self.chart and self.chart:GetMSD(rate, 1)
+	if msd and msd > 0 then
+		rating:settextf("%.2f", msd):diffuse(HVColor.GetMSDRatingColor(msd))
 	else
-		rating:settext(tostring(chart:GetMeter())):diffuse(neutral)
+		rating:settext("-"):diffuse(dim)
 	end
 end
 
@@ -91,10 +84,9 @@ local function updateChart(self)
 		self.shownDifficulty = difficulty
 	end
 	local rate = getCurRateValue()
-	local showMSD = HV.ShowMSD()
-	if chartChanged or self.ratingRate ~= rate or self.ratingShowsMSD ~= showMSD then
-		updateRating(self, rate, showMSD)
-		self.ratingRate, self.ratingShowsMSD = rate, showMSD
+	if chartChanged or self.ratingRate ~= rate then
+		updateRating(self, rate)
+		self.ratingRate = rate
 	end
 	updateGrade(self, true)
 	if chartChanged then updateMirror(self) end

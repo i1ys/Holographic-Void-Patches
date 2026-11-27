@@ -395,7 +395,7 @@ local function updateSync()
 			end
 		end
 		
-		if hoveredSteps and HV.ShowMSD() then
+		if hoveredSteps then
 			local mx2, my2 = INPUTFILTER:GetMouseX(), INPUTFILTER:GetMouseY()
 			msdTooltipActor:visible(true):xy(mx2 + 5, my2 - 15)
 			msdTooltipActor:playcommand("SetHover", {steps = hoveredSteps})
@@ -580,9 +580,6 @@ local function skillsetPanel()
 	local skillsets = {"Overall", "Stream", "Jumpstream", "Handstream", "Stamina", "JackSpeed", "Chordjack", "Technical"}
 	return Def.ActorFrame {
 		Name = "SkillsetPanel",
-		InitCommand = function(self)
-			self:visible(HV.ShowMSD())
-		end,
 		Def.Quad { InitCommand = function(self) self:zoomto(sidePanelWidth, 240):diffuse(bgCard):diffusealpha(0.8) end },
 		LoadFont("Common Normal") .. { InitCommand = function(self) self:y(-135):settext("SKILLSETS"):zoom(0.4):diffuse(accentColor) end },
 		Def.ActorFrame {
@@ -706,15 +703,13 @@ local function chartPanel()
 						UpdateCommand = function(self)
 							local panel = self:GetParent():GetParent():GetParent()
 							local s = panel.available and panel.available[d]
-							if s then
-								if HV.ShowMSD() then
-									local val = s:GetMSD(getCurRateValue(), 1)
-									self:settextf("%.2f", val):diffuse(HVColor.GetMSDRatingColor(val)):visible(true)
-								else
-									self:settext(tostring(s:GetMeter())):diffuse(textMain):visible(true)
-								end
+							self:visible(s ~= nil)
+							if not s then return end
+							local val = s:GetMSD(getCurRateValue(), 1)
+							if val and val > 0 then
+								self:settextf("%.2f", val):diffuse(HVColor.GetMSDRatingColor(val))
 							else
-								self:visible(false)
+								self:settext("-"):diffuse(textDim)
 							end
 						end
 					},

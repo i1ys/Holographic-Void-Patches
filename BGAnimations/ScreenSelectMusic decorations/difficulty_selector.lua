@@ -147,15 +147,11 @@ for i = 1, visibleRows do
 			bg:diffuse(tint):diffusealpha(alpha)
 			author:settext(entry.author)
 
-			if HV.ShowMSD() then
-				local msd = steps:GetMSD(selection.rate, 1) or 0
-				if msd > 0 then
-					rating:settextf("%.2f", msd):diffuse(HVColor.GetMSDRatingColor(msd))
-				else
-					rating:settext("-"):diffuse(dimText)
-				end
+			local msd = steps:GetMSD(selection.rate, 1)
+			if msd and msd > 0 then
+				rating:settextf("%.2f", msd):diffuse(HVColor.GetMSDRatingColor(msd))
 			else
-				rating:settext(tostring(steps:GetMeter())):diffuse(mainText)
+				rating:settext("-"):diffuse(dimText)
 			end
 		end,
 		Def.Quad {

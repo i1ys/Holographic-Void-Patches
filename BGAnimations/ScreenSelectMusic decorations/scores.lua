@@ -442,7 +442,7 @@ local t = Def.ActorFrame {
 		LoadFont("Common Normal") .. { InitCommand = function(self) self:halign(0):zoom(0.32):diffuse(dimText):settext("#") end },
 		LoadFont("Common Normal") .. { Name = "HdrName", InitCommand = function(self) self:halign(0):x(30):zoom(0.32):diffuse(dimText):settext(THEME:GetString("Scores", "PlayerColumn")) end },
 		LoadFont("Common Normal") .. { InitCommand = function(self) self:halign(0):x(190):zoom(0.32):diffuse(dimText):settext(THEME:GetString("Scores", "WifeColumn")) end },
-		LoadFont("Common Normal") .. { InitCommand = function(self) self:halign(0):x(280):zoom(0.32):diffuse(dimText):settext(THEME:GetString("Scores", "SSRColumn")):visible(HV.ShowMSD()) end },
+		LoadFont("Common Normal") .. { InitCommand = function(self) self:halign(0):x(280):zoom(0.32):diffuse(dimText):settext(THEME:GetString("Scores", "SSRColumn")) end },
 		LoadFont("Common Normal") .. { InitCommand = function(self) self:halign(0):x(345):zoom(0.32):diffuse(dimText):settext(THEME:GetString("Scores", "GradeColumn")) end },
 		LoadFont("Common Normal") .. { InitCommand = function(self) self:halign(0):x(415):zoom(0.32):diffuse(dimText):settext(THEME:GetString("Scores", "RateColumn")) end },
 		LoadFont("Common Normal") .. { InitCommand = function(self) self:halign(0):x(485):zoom(0.32):diffuse(dimText):settext(THEME:GetString("Scores", "ClearColumn")) end },
@@ -511,7 +511,7 @@ for i = 1, pageSize do
 		LoadFont("Common Normal") .. { Name = "Wife", InitCommand = function(self) self:halign(0):valign(0.5):x(190):y(rowH/2 - 5):zoom(0.40):diffuse(brightText) end },
 		LoadFont("Common Normal") .. { Name = "Judge", InitCommand = function(self) self:halign(1):valign(0.5):x(185):y(rowH/2 - 5):zoom(0.30):diffuse(subText) end },
 		LoadFont("Common Normal") .. { Name = "Judgments", InitCommand = function(self) self:halign(0):valign(0.5):x(190):y(rowH/2 + 8):zoom(0.28):diffuse(subText) end },
-		LoadFont("Common Normal") .. { Name = "SSR", InitCommand = function(self) self:halign(0):valign(0.5):x(280):y(rowH/2):zoom(0.50):diffuse(brightText):visible(HV.ShowMSD()) end },
+		LoadFont("Common Normal") .. { Name = "SSR", InitCommand = function(self) self:halign(0):valign(0.5):x(280):y(rowH/2):zoom(0.50):diffuse(brightText) end },
 		LoadFont("Common Normal") .. { Name = "Grade", InitCommand = function(self) self:halign(0):valign(0.5):x(345):y(rowH/2):zoom(0.38) end },
 		LoadFont("Common Normal") .. { Name = "Rate", InitCommand = function(self) self:halign(0):valign(0.5):x(415):y(rowH/2):zoom(0.38):diffuse(mainText) end },
 		LoadFont("Common Normal") .. { Name = "Clear", InitCommand = function(self) self:halign(0):valign(0.5):x(485):y(rowH/2):zoom(0.35) end },
@@ -556,8 +556,9 @@ for i = 1, pageSize do
 				self:GetChild("Date"):settext(entry.date)
 				local wifeFormat = entry.wife and (entry.wife >= 99.7 and "%.4f%%" or "%.2f%%")
 				self:GetChild("Wife"):settext(wifeFormat and string.format(wifeFormat, entry.wife) or "-")
-				self:GetChild("SSR"):settext(entry.ssr and string.format("%.2f", entry.ssr) or "-")
-					:diffuse(entry.ssr and HVColor.GetMSDRatingColor(entry.ssr) or subText):visible(HV.ShowMSD())
+				local ssr = entry.ssr and entry.ssr > 0 and entry.ssr
+				self:GetChild("SSR"):settext(ssr and string.format("%.2f", ssr) or "-")
+					:diffuse(ssr and HVColor.GetMSDRatingColor(ssr) or subText)
 
 				if currentView == VIEW_LOCAL then
 					self:GetChild("Player"):settext(THEME:GetString("Common", "You"))

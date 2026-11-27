@@ -1212,8 +1212,9 @@ local function createScoreBoard(pn, frameW, pad)
 						self.offlineRating = profile and profile:GetPlayerRating() or nil
 					end,
 					OnCommand = function(self)
-						if isOnlineEvaluation() or not HV.ShowMSD() then self:visible(false); return end
-						if not profile then return end
+						local showRating = profile ~= nil and not isOnlineEvaluation()
+						self:visible(showRating)
+						if not showRating then return end
 
 						if not self.onlineRating or self.onlineRating <= 0 then
 							self:settextf("%.2f", self.offlineRating)
@@ -1306,12 +1307,11 @@ local function createScoreBoard(pn, frameW, pad)
 				OnCommand = function(self)
 					if steps then
 						local msd = steps:GetMSD(curScore and curScore:GetMusicRate() or getCurRateValue(), 1)
-						if HV.ShowMSD() and msd > 0 then
+						if msd and msd > 0 then
 							self:settextf("%.2f", msd)
 							self:diffuse(HVColor.GetMSDRatingColor(msd))
-							self:diffuse(HVColor.GetMSDRatingColor(msd))
 						else
-							self:settext(tostring(steps:GetMeter()))
+							self:settext("-")
 							self:diffuse(brightText)
 						end
 					end
@@ -1436,15 +1436,13 @@ local function createScoreBoard(pn, frameW, pad)
 		LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(0):valign(0):xy(10, 45):zoom(1.05):diffuse(subText):diffusealpha(0) end,
 			OnCommand = function(self)
-				if HV.ShowMSD() then
-					local ssr = curScore and curScore:GetSkillsetSSR("Overall") or 0
-					self:settextf("%.2f", ssr)
-					self:diffuse(HVColor.GetMSDRatingColor(ssr))
-					self:sleep(0.4):linear(0.2):diffusealpha(1)
+				local ssr = curScore and curScore:GetSkillsetSSR("Overall")
+				if ssr and ssr > 0 then
+					self:settextf("%.2f", ssr):diffuse(HVColor.GetMSDRatingColor(ssr))
 				else
-					self:settext("")
-					self:visible(false)
+					self:settext("-"):diffuse(subText)
 				end
+				self:sleep(0.4):linear(0.2):diffusealpha(1)
 			end
 		},
 

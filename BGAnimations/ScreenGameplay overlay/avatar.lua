@@ -147,12 +147,12 @@ local t = Def.ActorFrame {
 		BeginCommand = function(self) self:queuecommand("Set") end,
 		SetCommand = function(self)
 			local steps = GAMESTATE:GetCurrentSteps()
-			local meter = steps:GetMSD(getCurRateValue(), 1)
-			local showMSD = HV.ShowMSD() and meter > 0
-			self:visible(showMSD)
-			if showMSD then
-				self:settextf("%5.2f", meter)
-				self:diffuse(HVColor.GetMSDRatingColor(meter))
+			local msd = steps and steps:GetMSD(getCurRateValue(), 1)
+			local hasMSD = msd ~= nil and msd > 0
+			self:visible(hasMSD)
+			if hasMSD then
+				self:settextf("%5.2f", msd)
+				self:diffuse(HVColor.GetMSDRatingColor(msd))
 			end
 		end,
 		CurrentRateChangedMessageCommand = function(self) self:queuecommand("Set") end,

@@ -158,7 +158,7 @@ local displayFn = {
 -- tooltip hover
 
 local function showTooltips()
-	if not HV.ShowMSD() or not selection.detailsReady or preparedMSDs ~= selection.skillsetMSDs then return end
+	if not selection.detailsReady or preparedMSDs ~= selection.skillsetMSDs then return end
 	hoverActive = true
 	for i = 1, 6 do
 		if tooltipActors[i] then

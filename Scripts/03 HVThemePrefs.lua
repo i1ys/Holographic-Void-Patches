@@ -44,13 +44,6 @@ local HVPrefs = {
 		Values = {0, 1, 2}
 	},
 
-	-- Gameplay: Show MSD ratings on music wheel
-	HV_ShowMSD = {
-		Default = true,
-		Choices = {"Off", "On"},
-		Values = {false, true}
-	},
-
 
 	-- Gameplay: Show player profile stats on select music
 	HV_ShowProfileStats = {
@@ -417,11 +410,6 @@ end
 function HV.GetBGAnimIntensity()
 	local val = tonumber(ThemePrefs.Get("HV_BGAnimIntensity"))
 	return val and HV.Clamp(val, 0, 2) or 1
-end
-
---- Check if MSD ratings should be shown.
-function HV.ShowMSD()
-	return isTrue(ThemePrefs.Get("HV_ShowMSD"))
 end
 
 

@@ -138,6 +138,7 @@ end
 local function normalizeTheme(data)
 	-- Drop retired keys the next time HV2 saves its settings.
 	data.HV_Parallax = nil
+	data.HV_ShowMSD = nil
 	data.HV_AutoFailMode = nil
 	data.HV_AutoFailCondition = nil
 	data.HV_AutoFailJudgement = nil
