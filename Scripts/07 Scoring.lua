@@ -24,6 +24,10 @@ function HV.Judgment.ClassifyOffset(offsetMs, windows)
 	return "Miss"
 end
 
+function HV.Score.IsAutoplayController(controller)
+	return controller == "PlayerController_Autoplay" or controller == "PlayerController_Cpu"
+end
+
 function HV.Score.GetLiveWifePercent(message, player)
 	-- Replay resume broadcasts a snapshot with the raw player index.
 	local replaySnapshot = message.FromReplay == true
@@ -33,7 +37,7 @@ function HV.Score.GetLiveWifePercent(message, player)
 	-- The engine sends judgments for these controllers without recording a live score.
 	local state = GAMESTATE:GetPlayerState(player)
 	local controller = state and state:GetPlayerController()
-	if controller == "PlayerController_Autoplay" or controller == "PlayerController_Cpu" then return end
+	if HV.Score.IsAutoplayController(controller) then return end
 
 	local percent = message.WifePercent
 	if type(percent) ~= "number" or percent ~= percent or math.abs(percent) == math.huge then return end

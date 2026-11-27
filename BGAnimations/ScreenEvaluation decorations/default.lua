@@ -13,77 +13,35 @@ local steps = GAMESTATE:GetCurrentSteps()
 local pn = GAMESTATE:GetEnabledPlayers()[1]
 local profile = PROFILEMAN:GetProfile(pn)
 
--- Autoplay results are not player scores.  Keep this local to the evaluation
--- screen so autoplay can still be used normally during gameplay.
+local isReplay = HV.IsReplayPlayback() or HV.OnlineReplayActive == true
+local openingIsOnline = HV.OnlineEvaluationActive == true or HV.OnlineReplayActive == true
+
 local function isAutoplayEvaluation()
-	-- Replay evaluations (including online replays) are playback of an
-	-- existing score.  Their replay/controller metadata may contain
-	-- autoplay-like values, but they must never be treated as autoplay runs.
-	if HV.IsReplayPlayback and HV.IsReplayPlayback() then return false end
-	if HV.OnlineReplayActive == true or HV.OnlineEvaluationActive == true then return false end
-
-	-- A score opened from Song Select's Scores tab is a historical score
-	-- view, not the result of the current gameplay session.  This gate keeps
-	-- the persistent autoplay setting from affecting those evaluations.
-	if HV.GameplaySessionValid ~= true then return false end
-
-	if type(getAutoplay) == "function" then
-		local ok, value = pcall(getAutoplay)
-		if ok and tonumber(value) and tonumber(value) ~= 0 then return true end
-	end
-	if GAMESTATE.IsAutoplay then
-		local ok, value = pcall(GAMESTATE.IsAutoplay, GAMESTATE)
-		if ok and value == true then return true end
-	end
-	for _, player in ipairs(GAMESTATE:GetEnabledPlayers() or {}) do
-		local state = GAMESTATE:GetPlayerState(player)
-		if state and state.GetPlayerController then
-			local ok, controller = pcall(state.GetPlayerController, state)
-			if ok and tostring(controller):lower():find("autoplay", 1, true) then return true end
-		end
-	end
-	local stageScore = pss and pss.GetHighScore and pss:GetHighScore()
-	if stageScore and stageScore.GetModifiers then
-		local ok, mods = pcall(stageScore.GetModifiers, stageScore)
-		if ok and tostring(mods):lower():find("autoplay", 1, true) then return true end
-	end
-	return false
+	if isReplay or openingIsOnline or not HV.GameplaySessionValid then return false end
+	-- The controller can be switched back to human before Evaluation.
+	if HV.GameplayUsedAutoplay and pss:IsDisqualified() then return true end
+	local state = GAMESTATE:GetPlayerState(pn)
+	return HV.Score.IsAutoplayController(PREFSMAN:GetPreference("AutoPlay"))
+		or (state and HV.Score.IsAutoplayController(state:GetPlayerController()))
 end
 
-local scoringVoided = isAutoplayEvaluation()
-HV.EvaluationScoringVoided = scoringVoided
-
-if scoringVoided then
-	return Def.ActorFrame {
-		Def.Quad {
-			InitCommand = function(self)
-				self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y)
-					:zoomto(SCREEN_WIDTH, SCREEN_HEIGHT)
-					:diffuse(color("0.01,0.01,0.02,0.94"))
-			end
-		},
-		LoadFont("Common Large") .. {
-			InitCommand = function(self)
-				self:xy(SCREEN_CENTER_X, SCREEN_CENTER_Y):zoom(1.1)
-					:diffuse(HVColor.Accent):settext("Why are you lying to yourself?")
-			end
-		}
+local openingIsAutoplay = isAutoplayEvaluation()
+local scoringVoided = openingIsAutoplay
+local openingScore, stageOffsets
+if not openingIsAutoplay then
+	openingScore = HV.Score.GetEvaluationOpeningScore(steps, pss, isReplay)
+	stageOffsets = {
+		rows = pss:GetNoteRowVector(),
+		tracks = pss:GetTrackVector(),
+		types = pss:GetTapNoteTypeVector(),
+		offsets = pss:GetOffsetVector(),
+		taps = pss:GetTotalTaps(),
 	}
 end
-
-local isReplay = HV.IsReplayPlayback() or HV.OnlineReplayActive == true
-local openingScore = HV.Score.GetEvaluationOpeningScore(steps, pss, isReplay)
 local curScore = openingScore
-local stageOffsets = {
-	rows = pss:GetNoteRowVector(),
-	tracks = pss:GetTrackVector(),
-	types = pss:GetTapNoteTypeVector(),
-	offsets = pss:GetOffsetVector(),
-	taps = pss:GetTotalTaps(),
-}
 local stageRadar
 local noteTypeRadars = {"RadarCategory_Holds", "RadarCategory_Rolls", "RadarCategory_Lifts", "RadarCategory_Mines"}
-if (isReplay and openingScore) or (not isReplay and HV.GameplaySessionValid == true) then
+if (isReplay and openingScore) or (not isReplay and not openingIsAutoplay and HV.GameplaySessionValid == true) then
 	stageRadar = {actual = {}, possible = {}}
 	local actual, possible = pss:GetRadarActual(), pss:GetRadarPossible()
 	for _, radar in ipairs(noteTypeRadars) do
@@ -142,7 +100,6 @@ local maniaRescore = nil
 local refreshEvaluationDisplays
 local clearRatioCache
 
-local openingIsOnline = HV.OnlineEvaluationActive == true or HV.OnlineReplayActive == true
 local selectedOnline = openingIsOnline
 local function isOnlineEvaluation()
 	return selectedOnline
@@ -152,7 +109,7 @@ end
 HV.ResetManiaMode()
 
 local function isManiaModeEnabled()
-	return HV.ManiaState and HV.ManiaState.enabled == true
+	return not scoringVoided and HV.ManiaState and HV.ManiaState.enabled == true
 end
 
 local function editManiaOD()
@@ -251,6 +208,7 @@ local function setDPTextActors(wholeActor, decimalActor, dp, precision)
 end
 
 local function wifePercentAtJudge(targetJudge)
+	if scoringVoided then return end
 	if targetJudge == nativeWifeJudge() then return evaluationWifeScore() * 100 end
 	if rescore.data then return getRescoredWife3Judge(3, targetJudge, rescore.data) end
 end
@@ -274,6 +232,7 @@ local function refreshRescoredPercentage()
 end
 
 local function displayedWifePercent()
+	if scoringVoided then return end
 	if rescore.percent ~= nil then return rescore.percent end
 	if judge == nativeWifeJudge() then return evaluationWifeScore() * 100 end
 end
@@ -553,7 +512,7 @@ end
 -- LA/RA Ratio calculation (ported from Til Death)
 -- Calculates Ludicrous Attack and Ridiculous Attack ratios from replay offsets
 local function calculateRatios(score)
-	if scoringVoided then return -1, -1, -1, -1, 0, 0 end
+	if not score then return -1, -1, -1, -1, 0, 0 end
 	local replay = score:GetReplay()
 	if not replay then return -1, -1, -1, -1 end
 	pcall(function() replay:LoadAllData() end)
@@ -635,7 +594,7 @@ local function failedProgressText()
 end
 
 local function evaluationWifePoints()
-	if isOnlineEvaluation() or usingCustomWindows or isManiaModeEnabled() then return end
+	if scoringVoided or isOnlineEvaluation() or usingCustomWindows or isManiaModeEnabled() then return end
 	if rescore.earned then return rescore.earned, rescore.possible end
 	if judge == playedJudge then return HV.Score.GetEvaluationWifePoints(curScore, songMaxPoints) end
 	if normalized and curScore and judge == 4 and rescore.data then
@@ -675,7 +634,13 @@ local function nearestGradeComparison(percent)
 	local thresholdDP = (WifeTiers[target] or 0) * songMaxPoints
 	return string.format("%s %+0.2f", HV.GetGradeName(target), wifeDP - thresholdDP)
 end
-local clearType = scoringVoided and nil or getClearType(pn, steps, curScore)
+local function gradeComparisonText()
+	if scoringVoided then return THEME:GetString("ScreenEvaluation", "AutoplayResult") end
+	return nearestGradeComparison(displayedWifePercent())
+end
+
+local clearType
+if not scoringVoided then clearType = getClearType(pn, steps, curScore) end
 
 local accentColor = HVColor.Accent
 local brightText = color("1,1,1,1")
@@ -690,7 +655,7 @@ local judgmentColors = {
 	HVColor.GetJudgmentColor("W4"), HVColor.GetJudgmentColor("W5"), HVColor.GetJudgmentColor("Miss")
 }
 local function getDisplayedJudgeCount(judgeName, judgeIndex)
-	if scoringVoided then return 0 end
+	if scoringVoided then return end
 	local key = judgeName:gsub("TapNoteScore_", "")
 	if usingCustomWindows and lastSnapshot then
 		return lastSnapshot.counts[key] or 0
@@ -832,7 +797,6 @@ local function isOver(actor)
 end
 
 local function selectEvaluationScore(score, online, refreshReplay)
-	if scoringVoided then return false end
 	if not score or not steps or score:GetChartKey() ~= steps:GetChartKey() or score:GetScoreKey() == "" then return false end
 	local sameScore = curScore and score:GetScoreKey() == curScore:GetScoreKey()
 	if refreshReplay then
@@ -855,6 +819,7 @@ local function selectEvaluationScore(score, online, refreshReplay)
 	else
 		curScore, selectedOnline = score, online == true
 	end
+	scoringVoided = false
 	playedJudge = getJudgeForScore(curScore)
 	judge = defaultJudge()
 	clearType = getClearType(pn, steps, curScore)
@@ -911,8 +876,9 @@ local t = Def.ActorFrame {
 	Def.Actor {
 		Name = "SessionGradeLogger",
 		OnCommand = function()
-			local countPlay = HV.GameplaySessionValid and not isReplay
+			local countPlay = HV.GameplaySessionValid and not isReplay and not openingIsOnline and not openingIsAutoplay
 			HV.GameplaySessionValid = false
+			HV.GameplayUsedAutoplay = false
 			if countPlay and GRADECOUNTERSTORAGE then
 				local grade = normalized and openingScore and openingScore:GetWifeGrade() or pss:GetWifeGrade()
 				GRADECOUNTERSTORAGE:incrementSession(grade)
@@ -1454,11 +1420,11 @@ local function createScoreBoard(pn, frameW, pad)
 			InitCommand = function(self) self:halign(0):valign(0):xy(1, 25):zoom(0.38):diffuse(subText):diffusealpha(0) end,
 			OnCommand = function(self)
 				self:visible(not usingCustomWindows and not isManiaModeEnabled())
-				self:settext(nearestGradeComparison(displayedWifePercent())):sleep(0.3):linear(0.2):diffusealpha(1)
+				self:settext(gradeComparisonText()):sleep(0.3):linear(0.2):diffusealpha(1)
 			end,
 			SetJudgeCommand = function(self)
 				self:visible(not usingCustomWindows and not isManiaModeEnabled())
-				self:settext(nearestGradeComparison(displayedWifePercent()))
+				self:settext(gradeComparisonText())
 			end,
 			ToggleCustomWindowsMessageCommand = function(self) self:playcommand("SetJudge") end,
 			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
@@ -2075,7 +2041,7 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 				self:playcommand("UpdateResult"):sleep(0.65 + i * 0.05):linear(0.2):diffusealpha(1)
 			end,
 			ScoreChangedMessageCommand = function(self) self:playcommand("UpdateResult") end,
-			UpdateResultCommand = function(self) self:settext(getCount()) end,
+			UpdateResultCommand = function(self) self:settext(scoringVoided and "-" or getCount()) end,
 		}
 	end
 
@@ -2156,6 +2122,7 @@ t[#t + 1] = Def.ActorFrame {
 	OnCommand = function(self)
 		self:sleep(0.25):linear(0.4):x(rightX):diffusealpha(1)
 		SCREENMAN:GetTopScreen():AddInputCallback(function(event)
+			if scoringVoided then return false end
 			if event.DeviceInput and event.type == "InputEventType_FirstPress" then
 				if event.DeviceInput.button == "DeviceButton_backspace" then
 					local wasEnabled = HV.ManiaState and HV.ManiaState.enabled

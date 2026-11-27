@@ -234,7 +234,6 @@ return Def.ActorFrame {
 		end)
 	end,
 	OnCommand = function()
-		HV.EvaluationScoringVoided = false
 		local countPlay = HV.GameplaySessionValid and not HV.IsReplayPlayback()
 		HV.GameplaySessionValid = false
 		if countPlay and GRADECOUNTERSTORAGE then

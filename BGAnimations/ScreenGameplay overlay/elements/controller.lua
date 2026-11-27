@@ -93,6 +93,7 @@ return Def.ActorFrame {
 		end
 
 		HV.GameplaySessionValid = true
+		HV.GameplayUsedAutoplay = false
 
 		gameplay.judgeScale = PREFSMAN:GetPreference("TimingWindowScale") or 1.0
 		if HV.IsReplayPlayback and HV.IsReplayPlayback() and curScreen and curScreen.GetReplayScore then
@@ -187,6 +188,12 @@ return Def.ActorFrame {
 				co:Reverse(0)
 			end
 		end
+	end,
+
+	JudgmentMessageCommand = function(self, params)
+		if params.Player ~= PLAYER_1 or HV.GameplayUsedAutoplay then return end
+		local state = GAMESTATE:GetPlayerState(PLAYER_1)
+		HV.GameplayUsedAutoplay = state and HV.Score.IsAutoplayController(state:GetPlayerController())
 	end,
 
 	PlayingUpdateMessageCommand = function(self)
