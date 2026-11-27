@@ -98,7 +98,7 @@ local lastSnapshot = nil
 local showRATally = false
 local maniaRescore = nil
 local refreshEvaluationDisplays
-local clearRatioCache
+local tightCounts, tightCountsJudge
 
 local selectedOnline = openingIsOnline
 local function isOnlineEvaluation()
@@ -326,6 +326,8 @@ end
 
 
 local function updateVectors()
+	tightCounts, tightCountsJudge = nil, nil
+	rescore.data = nil
 	plotMisses = nil
 	if scoringVoided then
 		nrv, dvt, ctt, ntt, totalTaps = {}, {}, {}, {}, 0
@@ -363,7 +365,6 @@ local function updateVectors()
 		end
 	end
 	offsetStats = HV.Judgment.GetEvaluationOffsetStats(dvt, ntt)
-	rescore.data = nil
 	if not (HV.ManiaState and HV.ManiaState.enabled) then
 		local hits = 0
 		for _, key in ipairs({"W1", "W2", "W3", "W4", "W5"}) do
@@ -385,7 +386,6 @@ end
 
 refreshEvaluationDisplays = function()
 	updateVectors()
-	clearRatioCache()
 	refreshRescoredPercentage()
 	MESSAGEMAN:Broadcast("RefreshJudgeDisplay")
 	MESSAGEMAN:Broadcast("ManiaModeChanged")
@@ -507,62 +507,6 @@ local function getKeycountLabelForSteps(curSteps)
 
 	if not keys or keys <= 0 then return nil end
 	return tostring(math.floor(keys + 0.5)) .. "K"
-end
-
--- LA/RA Ratio calculation (ported from Til Death)
--- Calculates Ludicrous Attack and Ridiculous Attack ratios from replay offsets
-local function calculateRatios(score)
-	if not score then return -1, -1, -1, -1, 0, 0 end
-	local replay = score:GetReplay()
-	if not replay then return -1, -1, -1, -1 end
-	pcall(function() replay:LoadAllData() end)
-	local offsetTable = replay:GetOffsetVector()
-	local typeTable = replay:GetTapNoteTypeVector()
-	if not offsetTable or #offsetTable == 0 or not typeTable or #typeTable == 0 then
-		return -1, -1, -1, -1
-	end
-
-	-- Define judgment windows based on current judge
-	local marvWindow = 22.5 * (ms.JudgeScalers[judge] or 1)
-	local raThreshold = marvWindow / 2
-	local laThreshold = raThreshold / 2
-
-	local ludic = 0
-	local ridicLA = 0
-	local ridic = 0
-	local marvRA = 0
-
-	for i, o in ipairs(offsetTable) do
-		if typeTable[i] == "TapNoteType_Tap" or typeTable[i] == "TapNoteType_HoldHead" then
-			local off = math.abs(o) -- Already ms
-			if off <= raThreshold then
-				ridic = ridic + 1
-			elseif off <= marvWindow then
-				marvRA = marvRA + 1
-			end
-			if off <= laThreshold then
-				ludic = ludic + 1
-			elseif off <= raThreshold then
-				ridicLA = ridicLA + 1
-			end
-		end
-	end
-
-	local ra = marvRA > 0 and (ridic / marvRA) or -1
-	local la = ridicLA > 0 and (ludic / ridicLA) or -1
-	return ra, la, ridic, marvRA, ludic, ridicLA
-end
-
-local hjudges = {"HoldNoteScore_Held","HoldNoteScore_LetGo","HoldNoteScore_MissedHold"}
--- Cache for RA/LA ratios to avoid repeated replay loading
-local cachedRatios = nil
-clearRatioCache = function() cachedRatios = nil end
-local function getRatios()
-	if not cachedRatios then
-		local ra, la, ridic, marvRA, ludic, ridicLA = calculateRatios(curScore)
-		cachedRatios = {ra, la, ridic, marvRA, ludic, ridicLA}
-	end
-	return unpack(cachedRatios)
 end
 
 local songTotalNotes = steps:GetRadarValues(pn):GetValue("RadarCategory_Notes")
@@ -691,23 +635,47 @@ local function judgmentFraction(count, total)
 	if count and total and total > 0 then return count / total end
 end
 
-local function displayedJudgmentFraction(judgeName, judgeIndex)
-	local total = usingCustomWindows and lastSnapshot and lastSnapshot.totalTaps
-		or (maniaRescore and totalTaps or songTotalNotes)
-	return judgmentFraction(getDisplayedJudgeCount(judgeName, judgeIndex), total)
+local function getTightJudgmentCounts()
+	if usingCustomWindows or isManiaModeEnabled() then return end
+	if tightCountsJudge == judge then return tightCounts end
+	tightCountsJudge, tightCounts = judge, nil
+
+	local hits = rescore.data and rescore.data.dvt
+	if not hits or #hits == 0 then return end
+	local marvelous = HV.Judgment.GetWindows(ms.JudgeScalers[judge]).W1
+	local ridiculous, ludicrous = marvelous / 2, marvelous / 4
+	local ludic, ridic, marv = 0, 0, 0
+	for _, offset in ipairs(hits) do
+		local absolute = math.abs(offset)
+		if absolute <= ludicrous then
+			ludic = ludic + 1
+		elseif absolute <= ridiculous then
+			ridic = ridic + 1
+		elseif absolute <= marvelous then
+			marv = marv + 1
+		end
+	end
+
+	-- Only show the split if these windows reproduce the displayed W1 total.
+	if ludic + ridic + marv == getDisplayedJudgeCount(judges[1], 1) then
+		tightCounts = {ludic, ridic, marv}
+	end
+	return tightCounts
 end
 
-local function getRATallyCount(rowIndex)
-	if scoringVoided then return 0 end
-	local ra, la, ridic, marvRA, ludic, ridicLA = getRatios()
-	if rowIndex == 1 then return ludic
-	elseif rowIndex == 2 then return ridicLA
-	elseif rowIndex == 3 then return marvRA
-	elseif rowIndex == 4 then return evaluationTapCount("TapNoteScore_W2")
-	elseif rowIndex == 5 then return evaluationTapCount("TapNoteScore_W3")
-	elseif rowIndex == 6 then return evaluationTapCount("TapNoteScore_Miss")
+local function displayedTallyCount(index)
+	local tight = showRATally and getTightJudgmentCounts()
+	if tight then
+		if index <= 3 then return tight[index] end
+		if index <= 5 then index = index - 2 end
 	end
-	return 0
+	return getDisplayedJudgeCount(judges[index], index)
+end
+
+local function displayedJudgmentFraction(index)
+	local total = usingCustomWindows and lastSnapshot and lastSnapshot.totalTaps
+		or (maniaRescore and totalTaps or songTotalNotes)
+	return judgmentFraction(displayedTallyCount(index), total)
 end
 
 -- Combo Graph Configuration
@@ -803,7 +771,6 @@ local function selectEvaluationScore(score, online, refreshReplay)
 		if not sameScore or not selectedOnline then return false end
 		curScore = score
 		updateVectors()
-		clearRatioCache()
 		refreshRescoredPercentage()
 		MESSAGEMAN:Broadcast("ScoreChanged", {score = score, judge = judge})
 		return true
@@ -824,7 +791,6 @@ local function selectEvaluationScore(score, online, refreshReplay)
 	judge = defaultJudge()
 	clearType = getClearType(pn, steps, curScore)
 	updateVectors()
-	clearRatioCache()
 	refreshRescoredPercentage()
 
 	if hadCustomWindows then
@@ -868,7 +834,6 @@ local t = Def.ActorFrame {
 		playedJudge = getJudgeForScore(curScore)
 		judge = defaultJudge()
 		updateVectors()
-		clearRatioCache()
 		refreshRescoredPercentage()
 		self:RunCommandsOnChildren(function(self) self:playcommand("SetJudge") end)
 	end,
@@ -1770,14 +1735,7 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 			
 			-- Handle hover logic via direct update function to avoid command overhead
 			self:SetUpdateFunction(function(self)
-				if usingCustomWindows or isManiaModeEnabled() then
-					if showRATally then 
-						showRATally = false 
-						self:playcommand("RATallyChanged") 
-					end
-					return
-				end
-				local over = isOver(self:GetChild("HoverArea"))
+				local over = isOver(self:GetChild("HoverArea")) and getTightJudgmentCounts() ~= nil
 				if over ~= showRATally then
 					showRATally = over
 					self:playcommand("RATallyChanged")
@@ -1815,197 +1773,116 @@ local function addScoreBoardStats(board, pn, frameW, pad)
 			InitCommand = function(self)
 				self:halign(0):xy(col1X - 2, jy):zoomto(0, rowH - 2):diffuse(rowColor):diffusealpha(0.2)
 			end,
-			ManiaModeChangedMessageCommand = function(self)
-				self:playcommand("SetJudge")
-			end,
-			OnCommand = function(self)
-				local pct = displayedJudgmentFraction(v, k) or 0
-				self:zoomto((col2X - pad - col1X) * pct, rowH - 2)
-			end,
+			OnCommand = function(self) self:playcommand("SetJudge") end,
 			SetJudgeCommand = function(self)
-				local pct = displayedJudgmentFraction(v, k) or 0
+				local tight = showRATally and getTightJudgmentCounts()
+				local pct = displayedJudgmentFraction(k) or 0
+				self:diffuse(tight and raColors[k] or rowColor):diffusealpha(0.2)
 				self:finishtweening():linear(0.2):zoomto((col2X - pad - col1X) * pct, rowH - 2)
 			end,
-			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
-			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
-			RATallyChangedCommand = function(self)
-				local pct
-				if showRATally then
-					pct = judgmentFraction(getRATallyCount(k), totalTaps)
-				else
-					pct = displayedJudgmentFraction(v, k)
-				end
-				self:diffuse(showRATally and raColors[k] or rowColor):diffusealpha(0.2)
-				pct = pct or 0
-				self:finishtweening():linear(0.2):zoomto((col2X - pad - col1X) * pct, rowH - 2)
-			end,
-			ResetJudgeMessageCommand = function(self) self:playcommand("On") end
+			RATallyChangedCommand = function(self) self:playcommand("SetJudge") end,
+			ResetJudgeMessageCommand = function(self) self:playcommand("SetJudge") end
 		}
 		-- Label
 		tallyFrame[#tallyFrame + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self)
-				self:halign(0):xy(col1X, jy):zoom(0.45):diffuse(rowColor)
-					self:settext(getEvaluationJudgeLabel(v, k))
+				self:halign(0):xy(col1X, jy):zoom(0.45)
+				self:playcommand("SetJudge")
 			end,
-			ManiaModeChangedMessageCommand = function(self) self:settext(getEvaluationJudgeLabel(v, k)):diffuse(rowColor) end,
-			RATallyChangedCommand = function(self)
-				if showRATally then
-					self:settext(raLabels[k]):diffuse(raColors[k])
-				elseif usingCustomWindows then
-					if getCustomWindowConfigJudgmentName then self:settext(getCustomWindowConfigJudgmentName(v)) end
-					self:diffuse(rowColor)
-				elseif maniaRescore then
-					self:settext(getEvaluationJudgeLabel(v, k)):diffuse(rowColor)
-				else
-					self:settext(getJudgeStrings(v)):diffuse(rowColor)
+			SetJudgeCommand = function(self)
+				local tight = showRATally and getTightJudgmentCounts()
+				local label = getEvaluationJudgeLabel(v, k)
+				if tight then
+					label = raLabels[k]
+				elseif usingCustomWindows and getCustomWindowConfigJudgmentName then
+					label = getCustomWindowConfigJudgmentName(v) or label
 				end
+				self:settext(label):diffuse(tight and raColors[k] or rowColor)
 			end,
-			LoadedCustomWindowMessageCommand = function(self)
-				if getCustomWindowConfigJudgmentName then self:settext(getCustomWindowConfigJudgmentName(v)) end
-			end,
-			UnloadedCustomWindowMessageCommand = function(self) self:settext(getJudgeStrings(v)) end
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
+			RATallyChangedCommand = function(self) self:playcommand("SetJudge") end,
 		}
 		-- Count
 		tallyFrame[#tallyFrame + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(1):xy(col2X - pad - 40, jy):zoom(0.55):diffuse(brightText) end,
-			ManiaModeChangedMessageCommand = function(self)
-				self:playcommand("SetJudge")
-			end,
-			OnCommand = function(self) self:settext(getDisplayedJudgeCount(v, k) or "-") end,
-			SetJudgeCommand = function(self) 
-				local count = getDisplayedJudgeCount(v, k)
-				self:settext(count or "-")
-			end,
+			OnCommand = function(self) self:playcommand("SetJudge") end,
+			SetJudgeCommand = function(self) self:settext(displayedTallyCount(k) or "-") end,
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
-			RATallyChangedCommand = function(self)
-				if showRATally then
-					self:settext(getRATallyCount(k))
-				else
-					self:playcommand("SetJudge")
-				end
-			end,
-			LoadedCustomWindowMessageCommand = function(self)
-				if lastSnapshot then
-					local jName = v:gsub("TapNoteScore_", "")
-					self:settext(lastSnapshot.counts[jName] or 0)
-				end
-			end,
-			ResetJudgeMessageCommand = function(self) self:playcommand("On") end
+			RATallyChangedCommand = function(self) self:playcommand("SetJudge") end,
+			ResetJudgeMessageCommand = function(self) self:playcommand("SetJudge") end
 		}
 		-- Percentage
 		tallyFrame[#tallyFrame + 1] = LoadFont("Common Normal") .. {
 			InitCommand = function(self) self:halign(1):xy(col2X - pad - 5, jy):zoom(0.35):diffuse(dimText) end,
-			ManiaModeChangedMessageCommand = function(self)
-				self:playcommand("SetJudge")
-			end,
-			OnCommand = function(self)
-				self:playcommand("SetJudge")
-			end,
+			OnCommand = function(self) self:playcommand("SetJudge") end,
 			SetJudgeCommand = function(self)
-				local pct = displayedJudgmentFraction(v, k)
+				local pct = displayedJudgmentFraction(k)
 				self:settext(pct and string.format("%.1f%%", pct * 100) or "-")
 			end,
-			LoadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
-			UnloadedCustomWindowMessageCommand = function(self) self:playcommand("SetJudge") end,
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
-			RATallyChangedCommand = function(self)
-				if showRATally then
-					local pct = judgmentFraction(getRATallyCount(k), totalTaps)
-					self:settext(pct and string.format("%.1f%%", pct * 100) or "")
-				else
-					self:playcommand("SetJudge")
-				end
-			end,
-			ResetJudgeMessageCommand = function(self) self:playcommand("On") end
+			RATallyChangedCommand = function(self) self:playcommand("SetJudge") end,
+			ResetJudgeMessageCommand = function(self) self:playcommand("SetJudge") end
 		}
 	end
 
-	-- Ratios (Bottom Column 1 - 2x2 Grid)
 	local ratioStartY = statsStartY + 28 + (#judges * rowH) + 12
 	local ratioLabels = {"LA", "RA", "MA", "PA"}
 	local ratioColors = {color("#FF69B4"), color("#FFD700"), color("#FFFFFF"), color("#E0E0A0")}
-	local function getManiaRatioText(index)
-		if not maniaRescore then return nil end
-		local a = maniaRescore.counts[index] or 0
-		local b = maniaRescore.counts[index + 1] or 0
-		if b == 0 then return a > 0 and "-" or "-" end
-		return string.format("%.2f:1", a / b)
+	local function formatRatio(numerator, denominator)
+		if numerator == nil or denominator == nil or denominator <= 0 then return "-" end
+		return string.format("%.2f:1", numerator / denominator)
 	end
-	for ri, rlabel in ipairs(ratioLabels) do
-		local col = (ri - 1) % 2
-		local row = math.floor((ri - 1) / 2)
-		local rx = col1X + col * 75
-		if col == 1 then rx = rx + 35 end
-		local ry = ratioStartY + row * 26
-		
+	local function ratioText(index)
+		if index <= 2 then
+			local tight = getTightJudgmentCounts()
+			if not tight then return "-" end
+			if index == 1 then return formatRatio(tight[1], tight[2]) end
+			return formatRatio(tight[1] + tight[2], tight[3])
+		end
+		local first = maniaRescore and index or index - 2
+		return formatRatio(getDisplayedJudgeCount(judges[first], first), getDisplayedJudgeCount(judges[first + 1], first + 1))
+	end
+
+	local ratioColumnWidth = (col2X - pad - col1X) / 2
+	for i, label in ipairs(ratioLabels) do
+		local col = (i - 1) % 2
+		local row = math.floor((i - 1) / 2)
+		local x = col1X + col * ratioColumnWidth
+		local y = ratioStartY + row * 26
+
 		board[#board + 1] = LoadFont("Common Normal") .. {
-			InitCommand = function(self) self:halign(col == 1 and 1 or 0):xy(col == 1 and rx + 20 or rx, ry):zoom(0.48):diffuse(ratioColors[ri]):settext(rlabel .. ":"):diffusealpha(0):visible(ri > 2) end,
-			OnCommand = function(self)
-				self:visible(ri > 2 or not usingCustomWindows)
-				self:stoptweening():sleep(0.65 + ri * 0.05):linear(0.2):diffusealpha(1)
+			InitCommand = function(self)
+				self:halign(0):xy(x, y):zoom(0.48):diffuse(ratioColors[i]):settext(label .. ":"):diffusealpha(0)
 			end,
-			ManiaModeChangedMessageCommand = function(self) self:visible(ri > 2 or not isManiaModeEnabled()) end,
-			CustomWindowStateChangedMessageCommand = function(self) self:visible(ri > 2 or not usingCustomWindows) end,
-			LoadedCustomWindowMessageCommand = function(self) self:visible(ri > 2) end,
-			UnloadedCustomWindowMessageCommand = function(self) self:visible(ri > 2) end
+			OnCommand = function(self)
+				self:playcommand("SetJudge"):stoptweening():sleep(0.65 + i * 0.05):linear(0.2):diffusealpha(1)
+			end,
+			SetJudgeCommand = function(self) self:visible(i > 2 or not (usingCustomWindows or isManiaModeEnabled())) end,
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
 		}
 		board[#board + 1] = LoadFont("Common Normal") .. {
-			InitCommand = function(self) self:halign(col == 1 and 1 or 0):xy(col == 1 and rx + 75 or rx + 40, ry):zoom(0.5):diffuse(mainText):diffusealpha(0):visible(true) end,
-			ManiaModeChangedMessageCommand = function(self)
-				self:visible(ri > 2 or not isManiaModeEnabled())
-				self:playcommand("SetJudge")
+			Name = label .. "Ratio",
+			InitCommand = function(self)
+				self:halign(1):xy(x + ratioColumnWidth - 5, y):zoom(0.50)
+					:maxwidth(math.max(1, ratioColumnWidth - 24) / 0.50):diffusealpha(0)
 			end,
-			CustomWindowStateChangedMessageCommand = function(self)
-				self:visible(ri > 2 or not usingCustomWindows)
-				self:playcommand("SetJudge")
-			end,
-			LoadedCustomWindowMessageCommand = function(self) self:visible(ri > 2); self:playcommand("SetJudge") end,
-			UnloadedCustomWindowMessageCommand = function(self) self:visible(ri > 2); self:playcommand("SetJudge") end,
 			OnCommand = function(self)
-				if maniaRescore then
-					self:settext(getManiaRatioText(ri)):diffuse(ratioColors[ri])
-				elseif ri == 1 then
-					local ra, la, ridic, marvRA, ludic, ridicLA = getRatios()
-					if ridicLA == 0 then self:settext(ludic > 0 and "No Ridics" or "-"):diffuse(ludic > 0 and color("#FFFFFF") or dimText)
-					else self:settextf("%.2f:1", la):rainbow() end
-				elseif ri == 2 then
-					local ra, la, ridic, marvRA, ludic, ridicLA = getRatios()
-					if marvRA == 0 then self:settext(ridic > 0 and "No Marvs" or "-"):diffuse(ridic > 0 and ratioColors[2] or dimText)
-					else self:settextf("%.2f:1", ra):diffuse(ratioColors[2]) end
-				elseif ri == 3 then
-					local w1 = evaluationTapCount("TapNoteScore_W1")
-					local w2 = evaluationTapCount("TapNoteScore_W2")
-					if w2 == 0 then self:settext(w1 > 0 and "-" or "-"):diffuse(w1 > 0 and color("#FFFFFF") or dimText)
-					else self:settextf("%.2f:1", w1 / w2):diffuse(ratioColors[3]) end
-				elseif ri == 4 then
-					local w3 = evaluationTapCount("TapNoteScore_W3")
-					if w3 == 0 then self:settext(evaluationTapCount("TapNoteScore_W2") > 0 and "-" or "-"):diffuse(dimText)
-					else self:settextf("%.2f:1", evaluationTapCount("TapNoteScore_W2") / w3):diffuse(ratioColors[4]) end
-				end
-				self:sleep(0.7 + ri * 0.05):linear(0.2):diffusealpha(1)
+				self:playcommand("SetJudge"):sleep(0.7 + i * 0.05):linear(0.2):diffusealpha(1)
 			end,
 			SetJudgeCommand = function(self)
-				self:stoptweening()
-				if maniaRescore then
-					self:settext(getManiaRatioText(ri)):diffuse(ratioColors[ri])
-				elseif ri == 3 or ri == 4 then
-					local counts = rescore.counts
-					if judge == playedJudge then
-						counts = {
-							W1 = evaluationTapCount("TapNoteScore_W1"),
-							W2 = evaluationTapCount("TapNoteScore_W2"),
-							W3 = evaluationTapCount("TapNoteScore_W3"),
-						}
-					end
-					local numerator = counts and (ri == 3 and counts.W1 or counts.W2)
-					local denominator = counts and (ri == 3 and counts.W2 or counts.W3)
-					self:settext(denominator and denominator > 0 and string.format("%.2f:1", numerator / denominator) or "-")
-				else
-					self:playcommand("On")
-				end
+				self:visible(i > 2 or not (usingCustomWindows or isManiaModeEnabled()))
+				local text = ratioText(i)
+				self:settext(text):diffuse(text == "-" and dimText or ratioColors[i])
 			end,
-			ResetJudgeMessageCommand = function(self) self:playcommand("On") end
+			ManiaModeChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
+			CustomWindowStateChangedMessageCommand = function(self) self:playcommand("SetJudge") end,
+			ResetJudgeMessageCommand = function(self) self:playcommand("SetJudge") end,
 		}
 	end
 
